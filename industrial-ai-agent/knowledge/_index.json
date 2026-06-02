@@ -1,0 +1,149 @@
+{
+  "version": "1.0.0",
+  "description": "Bilgi tabanının tüm konularını, olgunluk seviyelerini ve durumlarını takip eder.",
+  "maturity_levels": ["Stub", "Temel", "Orta", "İleri", "Uzman"],
+  "last_updated": "2026-06-01",
+
+  "domains": {
+
+    "protocols": {
+      "description": "Endüstriyel haberleşme protokolleri",
+      "_synthesis": { "seviye": "Stub", "açıklama": "Tüm protokollerin karşılaştırmalı sentezi" },
+      "opc-ua": {
+        "_synthesis":         { "seviye": "Stub" },
+        "01_architecture":    { "seviye": "Stub", "başlık": "OPC-UA Mimarisi" },
+        "02_address_space":   { "seviye": "Stub", "başlık": "Adres Uzayı Tasarımı" },
+        "03_security":        { "seviye": "Stub", "başlık": "Güvenlik ve Kimlik Doğrulama" },
+        "04_subscriptions":   { "seviye": "Stub", "başlık": "Subscription Mekanizması" },
+        "05_codesys_server":  { "seviye": "Stub", "başlık": "CODESYS OPC-UA Sunucu Konfigürasyonu" },
+        "06_clients":         { "seviye": "Stub", "başlık": "İstemci Implementasyonları" }
+      },
+      "modbus-tcp": {
+        "_synthesis":         { "seviye": "Stub" },
+        "01_protocol_basics": { "seviye": "Stub", "başlık": "Modbus TCP Protokol Temelleri" },
+        "02_register_model":  { "seviye": "Stub", "başlık": "Register Modeli ve Adresleme" },
+        "03_function_codes":  { "seviye": "Stub", "başlık": "Fonksiyon Kodları" },
+        "04_codesys_slave":   { "seviye": "Stub", "başlık": "CODESYS Modbus Slave Konfigürasyonu" },
+        "05_clients":         { "seviye": "Stub", "başlık": "İstemci Implementasyonları" }
+      },
+      "tcp-socket": {
+        "_synthesis":           { "seviye": "Stub" },
+        "01_basics":            { "seviye": "Stub", "başlık": "TCP Socket Temelleri" },
+        "02_codesys_impl":      { "seviye": "Stub", "başlık": "CODESYS Socket Programlama" },
+        "03_protocol_design":   { "seviye": "Stub", "başlık": "Özel Protokol Tasarımı" }
+      },
+      "mqtt": {
+        "_synthesis":           { "seviye": "Stub" },
+        "01_basics":            { "seviye": "Stub", "başlık": "MQTT Temelleri" },
+        "02_industrial_usage":  { "seviye": "Stub", "başlık": "Endüstriyel Kullanım Senaryoları" }
+      }
+    },
+
+    "codesys": {
+      "description": "CODESYS derin teknik bilgisi",
+      "_synthesis": { "seviye": "Stub" },
+      "fundamentals": {
+        "01_runtime_architecture": { "seviye": "Stub", "başlık": "Runtime Mimarisi" },
+        "02_project_structure":    { "seviye": "Stub", "başlık": "Proje Yapısı" },
+        "03_iec61131_languages":   { "seviye": "Stub", "başlık": "IEC 61131-3 Dilleri" }
+      },
+      "task-structure": {
+        "01_task_types":       { "seviye": "Stub", "başlık": "Task Tipleri" },
+        "02_cycle_time":       { "seviye": "Stub", "başlık": "Cycle Time Tasarımı" },
+        "03_priority":         { "seviye": "Stub", "başlık": "Öncelik Yönetimi" }
+      },
+      "programming": {
+        "01_pou_types":        { "seviye": "Stub", "başlık": "POU Tipleri (Program, FB, Fun)" },
+        "02_gvl_design":       { "seviye": "Stub", "başlık": "GVL Tasarımı" },
+        "03_function_blocks":  { "seviye": "Stub", "başlık": "Fonksiyon Blok Geliştirme" },
+        "04_libraries":        { "seviye": "Stub", "başlık": "Kütüphane Sistemi" },
+        "05_error_handling":   { "seviye": "Stub", "başlık": "Hata Yönetimi" }
+      },
+      "networking": {
+        "01_opcua_server":     { "seviye": "Stub", "başlık": "OPC-UA Sunucu Kurulumu" },
+        "02_modbus_slave":     { "seviye": "Stub", "başlık": "Modbus Slave Kurulumu" },
+        "03_tcp_socket":       { "seviye": "Stub", "başlık": "TCP Socket Kütüphanesi" },
+        "04_mqtt_client":      { "seviye": "Stub", "başlık": "MQTT Client Kurulumu" }
+      },
+      "project-generation": {
+        "01_project_structure": { "seviye": "Stub", "başlık": "CODESYS Proje Dosya Yapısı" },
+        "02_script_engine":     { "seviye": "Stub", "başlık": "Script Engine ile Otomasyon" },
+        "03_plcopen_xml":       { "seviye": "Stub", "başlık": "PLCopen XML Formatı" },
+        "04_templates":         { "seviye": "Stub", "başlık": "Üretim Şablonları" }
+      },
+      "debugging": {
+        "01_common_errors":    { "seviye": "Stub", "başlık": "Sık Karşılaşılan Hatalar" },
+        "02_tools":            { "seviye": "Stub", "başlık": "Debug Araçları" },
+        "03_performance":      { "seviye": "Stub", "başlık": "Performans Analizi" }
+      }
+    },
+
+    "hmi": {
+      "description": "HMI mimarisi ve teknolojileri",
+      "_synthesis": { "seviye": "Stub" },
+      "architecture": {
+        "01_hmi_patterns":   { "seviye": "Stub", "başlık": "HMI Mimari Kalıpları" },
+        "02_realtime_data":  { "seviye": "Stub", "başlık": "Gerçek Zamanlı Veri Yönetimi" },
+        "03_alarms":         { "seviye": "Stub", "başlık": "Alarm Yönetimi" },
+        "04_user_auth":      { "seviye": "Stub", "başlık": "Kullanıcı Yetkilendirme" }
+      },
+      "web-based": {
+        "01_opcua_js":       { "seviye": "Stub", "başlık": "OPC-UA JavaScript İstemcileri" },
+        "02_modbus_js":      { "seviye": "Stub", "başlık": "Modbus TCP JavaScript İstemcileri" },
+        "03_react":          { "seviye": "Stub", "başlık": "React ile Endüstriyel HMI" },
+        "04_vue":            { "seviye": "Stub", "başlık": "Vue.js ile Endüstriyel HMI" },
+        "05_websocket":      { "seviye": "Stub", "başlık": "WebSocket Gerçek Zamanlı Veri" }
+      },
+      "desktop": {
+        "01_opcua_python":   { "seviye": "Stub", "başlık": "OPC-UA Python İstemcileri" },
+        "02_opcua_dotnet":   { "seviye": "Stub", "başlık": "OPC-UA .NET İstemcileri" },
+        "03_pyqt":           { "seviye": "Stub", "başlık": "PyQt/PySide ile HMI" }
+      },
+      "ix-developer": {
+        "01_architecture":   { "seviye": "Stub", "başlık": "iX Developer Mimarisi" },
+        "02_codesys_conn":   { "seviye": "Stub", "başlık": "CODESYS Bağlantısı" },
+        "03_screen_design":  { "seviye": "Stub", "başlık": "Ekran Tasarımı" },
+        "04_scripting":      { "seviye": "Stub", "başlık": "C# Scripting" }
+      }
+    },
+
+    "hardware": {
+      "description": "Endüstriyel donanım bilgisi",
+      "industrial-pc": {
+        "01_codesys_setup":  { "seviye": "Stub", "başlık": "CODESYS Runtime Kurulumu" },
+        "02_network_config": { "seviye": "Stub", "başlık": "Ağ Konfigürasyonu" },
+        "03_performance":    { "seviye": "Stub", "başlık": "Performans Optimizasyonu" }
+      }
+    },
+
+    "networking": {
+      "description": "Endüstriyel ağ mimarisi",
+      "_synthesis": { "seviye": "Stub" },
+      "01_topologies":  { "seviye": "Stub", "başlık": "Ağ Topolojileri" },
+      "02_security":    { "seviye": "Stub", "başlık": "Endüstriyel Ağ Güvenliği" },
+      "03_performance": { "seviye": "Stub", "başlık": "Gecikme ve Güvenilirlik" }
+    },
+
+    "standards": {
+      "description": "IEC ve endüstri standartları",
+      "01_iec61131_3": { "seviye": "Stub", "başlık": "IEC 61131-3 PLC Programlama Dilleri" },
+      "02_iec62443":   { "seviye": "Stub", "başlık": "IEC 62443 Endüstriyel Siber Güvenlik" },
+      "03_namur_ne107":{ "seviye": "Stub", "başlık": "NAMUR NE107 Cihaz Diagnostiği" }
+    },
+
+    "applications": {
+      "description": "Uygulama bazlı bilgi",
+      "conveyor":      { "seviye": "Stub", "başlık": "Konveyör Sistemleri" },
+      "tank-level":    { "seviye": "Stub", "başlık": "Tank Seviye Kontrolü" },
+      "motor-control": { "seviye": "Stub", "başlık": "Motor Kontrol Sistemleri" },
+      "packaging":     { "seviye": "Stub", "başlık": "Paketleme Makineleri" }
+    },
+
+    "decisions": {
+      "description": "Gerçek karar örnekleri ve gerekçeleri",
+      "protocol-selection": { "seviye": "Stub", "başlık": "Protokol Seçim Kararları" },
+      "architecture":       { "seviye": "Stub", "başlık": "Mimari Tasarım Kararları" },
+      "hmi-technology":     { "seviye": "Stub", "başlık": "HMI Teknoloji Seçimleri" }
+    }
+  }
+}

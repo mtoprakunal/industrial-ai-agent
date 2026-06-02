@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "proje_adi": "EXAMPLE_Conveyor_Line1",
+    "olusturulma": "2026-06-01",
+    "durum": "spec_only",
+    "agent_tarafindan_uretildi": false
+  },
+  "gereksinimler": {
+    "platform": "codesys",
+    "donanim": "Endüstriyel PC (CODESYS SoftPLC)",
+    "uygulama_tipi": "conveyor",
+    "aciklama": "3 bölgeli konveyör sistemi. Hız kontrolü, sıkışma algılama ve acil durdurma."
+  },
+  "iletisim": {
+    "protokol": "opc-ua",
+    "not": "Birden fazla HMI istemcisi olacak, yapılandırılmış veri gerekiyor"
+  },
+  "hmi": {
+    "tip": "web",
+    "tercih": "React",
+    "not": "Fabrika ağından tarayıcı ile erişim yeterli"
+  },
+  "io": {
+    "dijital_giris": 18,
+    "dijital_cikis": 12,
+    "analog_giris": 3,
+    "analog_cikis": 0
+  },
+  "cevrim_gereksinimleri": {
+    "hizli_task_ms": 4,
+    "normal_task_ms": 10,
+    "yavas_task_ms": 200
+  },
+  "fonksiyonel_gereksinimler": [
+    "3 bağımsız konveyör bölgesi",
+    "Her bölgede manuel/otomatik mod",
+    "Hız geri beslemesi (4-20mA takometre)",
+    "200ms debounce ile sıkışma algılama",
+    "Acil durdurma — tüm bölgeler 500ms içinde durur",
+    "Bölge 1 → Bölge 2 interlock mantığı"
+  ]
+}

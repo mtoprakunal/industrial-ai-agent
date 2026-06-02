@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Büyük binary dosyalar
+*.pdf
+
+# Üretilen proje çıktıları (spec'leri tut, üretilen kodu değil)
+projects/*/program/
+projects/*/hmi/
+projects/*/hardware_config/
+projects/*/io_list.csv
+projects/*/alarm_list.csv
+projects/*/project_report.md
+
+# Gizli
+*.env
+secrets.json

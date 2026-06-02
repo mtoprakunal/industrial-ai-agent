@@ -1,0 +1,74 @@
+{
+  "version": "2.0.0",
+  "description": "Agent'ın her projede uyguladığı mühendislik kuralları",
+
+  "knowledge": {
+    "never_guess": true,
+    "always_cite_source": true,
+    "synthesize_multiple_sources": true,
+    "honest_about_maturity_level": true
+  },
+
+  "codesys": {
+    "task_rules": {
+      "safety_signals_max_cycle_ms": 1,
+      "drive_control_max_cycle_ms": 2,
+      "analog_pid_max_cycle_ms": 10,
+      "digital_sequencing_max_cycle_ms": 20,
+      "hmi_comms_max_cycle_ms": 500
+    },
+    "naming": {
+      "format": "{Area}_{DeviceType}_{Number}_{Signal}",
+      "max_length": 24,
+      "allowed_chars": "A-Z, a-z, 0-9, _",
+      "no_spaces": true,
+      "no_leading_numbers": true
+    },
+    "safety": {
+      "watchdog_disable_requires_justification": true,
+      "safety_io_on_standard_modules_forbidden": true,
+      "all_outputs_deenergize_on_cpu_fault": true
+    },
+    "documentation": {
+      "every_fb_must_have_description": true,
+      "every_io_must_have_tag": true,
+      "alarm_list_required": true,
+      "io_list_required": true
+    }
+  },
+
+  "protocol_selection": {
+    "evaluate_from_deep_understanding": true,
+    "never_use_rigid_rules": true,
+    "always_explain_reasoning": true,
+    "consider": [
+      "data_complexity",
+      "number_of_tags",
+      "number_of_clients",
+      "security_requirements",
+      "developer_background",
+      "realtime_vs_periodic",
+      "system_lifetime",
+      "maintenance_team"
+    ]
+  },
+
+  "hmi_generation": {
+    "language_agnostic": true,
+    "framework_agnostic": true,
+    "bridge_is_always_protocol": true,
+    "respect_developer_preference": true
+  },
+
+  "project_output": {
+    "required_files": [
+      "project_report.md",
+      "io_list.csv",
+      "alarm_list.csv",
+      "hardware_config/",
+      "program/",
+      "hmi/",
+      "docs/"
+    ]
+  }
+}

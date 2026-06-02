@@ -1,0 +1,40 @@
+{
+  "version": "1.0.0",
+  "description": "Bilgi konuları arasındaki bağlantı haritası. Agent bu haritayı kullanarak ilgili konuları birlikte okur ve sentez yapar.",
+
+  "relationship_types": {
+    "gerektirir"   : "Bu konu çalışmak için diğer konuya ihtiyaç duyar",
+    "kullanır"     : "Bu konu diğer konunun bir parçasını kullanır",
+    "alternatif"   : "Bu iki konu aynı probleme farklı çözümler sunar",
+    "tamamlar"     : "Bu iki konu birlikte daha güçlüdür",
+    "detaylandırır": "Bu konu diğerinin belirli bir yönünü derinleştirir",
+    "üretir"       : "Bu konu diğerini çıktı olarak üretir"
+  },
+
+  "edges": [
+    { "from": "protocols/opc-ua",              "to": "codesys/networking/01_opcua_server",  "ilişki": "gerektirir",    "not": "OPC-UA kullanmak için CODESYS server konfigürasyonu şart" },
+    { "from": "protocols/opc-ua",              "to": "networking/02_security",              "ilişki": "gerektirir",    "not": "OPC-UA güvenlik yapılandırması ağ güvenliğiyle iç içedir" },
+    { "from": "protocols/opc-ua",              "to": "hmi/web-based/01_opcua_js",           "ilişki": "tamamlar",      "not": "OPC-UA sunucu + JS istemci tam bir çözüm oluşturur" },
+    { "from": "protocols/opc-ua",              "to": "hmi/desktop/01_opcua_python",         "ilişki": "tamamlar",      "not": "OPC-UA sunucu + Python istemci masaüstü çözümü" },
+    { "from": "protocols/opc-ua",              "to": "protocols/modbus-tcp",                "ilişki": "alternatif",    "not": "Farklı karmaşıklık ve güvenlik ihtiyaçları için farklı tercihler" },
+    { "from": "protocols/modbus-tcp",          "to": "codesys/networking/02_modbus_slave",  "ilişki": "gerektirir",    "not": "Modbus TCP kullanmak için CODESYS slave konfigürasyonu şart" },
+    { "from": "protocols/modbus-tcp",          "to": "hmi/web-based/02_modbus_js",          "ilişki": "tamamlar",      "not": "Modbus slave + JS istemci web HMI çözümü" },
+    { "from": "protocols/tcp-socket",          "to": "codesys/networking/03_tcp_socket",    "ilişki": "gerektirir",    "not": "Özel TCP protokolü için CODESYS SysSock kütüphanesi" },
+    { "from": "codesys/task-structure",        "to": "codesys/programming/01_pou_types",    "ilişki": "kullanır",      "not": "Task yapısı POUları çağırır" },
+    { "from": "codesys/task-structure",        "to": "codesys/programming/02_gvl_design",   "ilişki": "tamamlar",      "not": "Task ve GVL birlikte proje iskeletini oluşturur" },
+    { "from": "codesys/project-generation",   "to": "codesys/task-structure",              "ilişki": "üretir",        "not": "Otomatik proje üretimi task yapısını da oluşturur" },
+    { "from": "codesys/project-generation",   "to": "codesys/programming/02_gvl_design",   "ilişki": "üretir",        "not": "Otomatik proje üretimi GVL'yi de oluşturur" },
+    { "from": "codesys/project-generation",   "to": "protocols/opc-ua",                    "ilişki": "kullanır",      "not": "Proje üretimi seçilen protokolü konfigüre eder" },
+    { "from": "hmi/architecture/01_hmi_patterns", "to": "hmi/architecture/02_realtime_data","ilişki": "gerektirir",   "not": "HMI mimarisi gerçek zamanlı veri yönetimini içerir" },
+    { "from": "hmi/architecture/01_hmi_patterns", "to": "hmi/architecture/03_alarms",       "ilişki": "tamamlar",     "not": "HMI alarmları ve veri görüntüleme birlikte tasarlanır" },
+    { "from": "hardware/industrial-pc",        "to": "codesys/fundamentals/01_runtime",     "ilişki": "kullanır",      "not": "Endüstriyel PC, CODESYS runtime'ı barındırır" },
+    { "from": "hardware/industrial-pc",        "to": "networking/01_topologies",            "ilişki": "gerektirir",    "not": "PC ağ bağlantısı ağ topolojisi bilgisi gerektirir" },
+    { "from": "networking/02_security",        "to": "standards/02_iec62443",               "ilişki": "detaylandırır", "not": "IEC 62443 endüstriyel ağ güvenlik standardını tanımlar" },
+    { "from": "decisions/protocol-selection",  "to": "protocols/opc-ua",                    "ilişki": "kullanır",      "not": "Karar örnekleri OPC-UA bilgisine dayanır" },
+    { "from": "decisions/protocol-selection",  "to": "protocols/modbus-tcp",                "ilişki": "kullanır",      "not": "Karar örnekleri Modbus TCP bilgisine dayanır" },
+    { "from": "decisions/hmi-technology",      "to": "hmi/web-based",                       "ilişki": "kullanır",      "not": "HMI teknoloji kararları web seçeneklerini değerlendirir" },
+    { "from": "decisions/hmi-technology",      "to": "hmi/desktop",                         "ilişki": "kullanır",      "not": "HMI teknoloji kararları masaüstü seçeneklerini değerlendirir" },
+    { "from": "applications/conveyor",         "to": "codesys/task-structure",              "ilişki": "kullanır",      "not": "Konveyör uygulamaları task yapısı kararlarını somutlaştırır" },
+    { "from": "applications/conveyor",         "to": "decisions/protocol-selection",        "ilişki": "tamamlar",      "not": "Gerçek uygulama protokol seçim kararlarına örnek oluşturur" }
+  ]
+}
