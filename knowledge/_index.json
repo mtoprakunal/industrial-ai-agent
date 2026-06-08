@@ -118,25 +118,27 @@
     "hardware": {
       "description": "Endüstriyel donanım bilgisi",
       "industrial-pc": {
-        "01_codesys_setup":  { "seviye": "Stub", "başlık": "CODESYS Runtime Kurulumu" },
-        "02_network_config": { "seviye": "Stub", "başlık": "Ağ Konfigürasyonu" },
-        "03_performance":    { "seviye": "Stub", "başlık": "Performans Optimizasyonu" }
+        "_synthesis":        { "seviye": "Orta" },
+        "01_codesys_setup":  { "seviye": "Orta", "başlık": "CODESYS Runtime Kurulumu" },
+        "02_network_config": { "seviye": "Orta", "başlık": "Ağ Konfigürasyonu" },
+        "03_performance":    { "seviye": "İleri", "başlık": "Performans Optimizasyonu" }
       }
     },
 
     "networking": {
       "description": "Endüstriyel ağ mimarisi",
-      "_synthesis": { "seviye": "Stub" },
-      "01_topologies":  { "seviye": "Stub", "başlık": "Ağ Topolojileri" },
-      "02_security":    { "seviye": "Stub", "başlık": "Endüstriyel Ağ Güvenliği" },
-      "03_performance": { "seviye": "Stub", "başlık": "Gecikme ve Güvenilirlik" }
+      "_synthesis": { "seviye": "Orta" },
+      "01_topologies":  { "seviye": "Orta", "başlık": "Ağ Topolojileri" },
+      "02_security":    { "seviye": "İleri", "başlık": "Endüstriyel Ağ Güvenliği" },
+      "03_performance": { "seviye": "İleri", "başlık": "Gecikme ve Güvenilirlik" }
     },
 
     "standards": {
       "description": "IEC ve endüstri standartları",
-      "01_iec61131_3": { "seviye": "Stub", "başlık": "IEC 61131-3 PLC Programlama Dilleri" },
-      "02_iec62443":   { "seviye": "Stub", "başlık": "IEC 62443 Endüstriyel Siber Güvenlik" },
-      "03_namur_ne107":{ "seviye": "Stub", "başlık": "NAMUR NE107 Cihaz Diagnostiği" }
+      "_synthesis":    { "seviye": "Orta" },
+      "01_iec61131_3": { "seviye": "Orta", "başlık": "IEC 61131-3 PLC Programlama Dilleri" },
+      "02_iec62443":   { "seviye": "Orta", "başlık": "IEC 62443 Endüstriyel Siber Güvenlik" },
+      "03_namur_ne107":{ "seviye": "Orta", "başlık": "NAMUR NE107 Cihaz Diagnostiği" }
     },
 
     "applications": {
