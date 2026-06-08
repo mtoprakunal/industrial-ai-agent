@@ -103,15 +103,15 @@
         "05_websocket":      { "seviye": "Orta", "başlık": "WebSocket Gerçek Zamanlı Veri" }
       },
       "desktop": {
-        "01_opcua_python":   { "seviye": "Stub", "başlık": "OPC-UA Python İstemcileri" },
-        "02_opcua_dotnet":   { "seviye": "Stub", "başlık": "OPC-UA .NET İstemcileri" },
-        "03_pyqt":           { "seviye": "Stub", "başlık": "PyQt/PySide ile HMI" }
+        "01_opcua_python":   { "seviye": "İleri", "başlık": "OPC-UA Python İstemcileri" },
+        "02_opcua_dotnet":   { "seviye": "İleri", "başlık": "OPC-UA .NET İstemcileri" },
+        "03_pyqt":           { "seviye": "İleri", "başlık": "PyQt/PySide ile HMI" }
       },
       "ix-developer": {
-        "01_architecture":   { "seviye": "Stub", "başlık": "iX Developer Mimarisi" },
-        "02_codesys_conn":   { "seviye": "Stub", "başlık": "CODESYS Bağlantısı" },
-        "03_screen_design":  { "seviye": "Stub", "başlık": "Ekran Tasarımı" },
-        "04_scripting":      { "seviye": "Stub", "başlık": "C# Scripting" }
+        "01_architecture":   { "seviye": "Orta", "başlık": "iX Developer Mimarisi" },
+        "02_codesys_conn":   { "seviye": "Orta", "başlık": "CODESYS Bağlantısı" },
+        "03_screen_design":  { "seviye": "Orta", "başlık": "Ekran Tasarımı" },
+        "04_scripting":      { "seviye": "İleri", "başlık": "C# Scripting" }
       }
     },
 
@@ -143,17 +143,17 @@
 
     "applications": {
       "description": "Uygulama bazlı bilgi",
-      "conveyor":      { "seviye": "Stub", "başlık": "Konveyör Sistemleri" },
-      "tank-level":    { "seviye": "Stub", "başlık": "Tank Seviye Kontrolü" },
-      "motor-control": { "seviye": "Stub", "başlık": "Motor Kontrol Sistemleri" },
-      "packaging":     { "seviye": "Stub", "başlık": "Paketleme Makineleri" }
+      "conveyor":      { "seviye": "Orta", "başlık": "Konveyör Sistemleri" },
+      "tank-level":    { "seviye": "Orta", "başlık": "Tank Seviye Kontrolü" },
+      "motor-control": { "seviye": "Orta", "başlık": "Motor Kontrol Sistemleri" },
+      "packaging":     { "seviye": "Orta", "başlık": "Paketleme Makineleri" }
     },
 
     "decisions": {
       "description": "Gerçek karar örnekleri ve gerekçeleri",
-      "protocol-selection": { "seviye": "Stub", "başlık": "Protokol Seçim Kararları" },
-      "architecture":       { "seviye": "Stub", "başlık": "Mimari Tasarım Kararları" },
-      "hmi-technology":     { "seviye": "Stub", "başlık": "HMI Teknoloji Seçimleri" }
+      "protocol-selection": { "seviye": "İleri", "başlık": "Protokol Seçim Kararları" },
+      "architecture":       { "seviye": "İleri", "başlık": "Mimari Tasarım Kararları" },
+      "hmi-technology":     { "seviye": "Orta", "başlık": "HMI Teknoloji Seçimleri" }
     }
   }
 }
