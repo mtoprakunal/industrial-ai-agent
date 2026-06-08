@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "description": "Bilgi tabanının tüm konularını, olgunluk seviyelerini ve durumlarını takip eder.",
   "maturity_levels": ["Stub", "Temel", "Orta", "İleri", "Uzman"],
-  "last_updated": "2026-06-01",
+  "last_updated": "2026-06-08",
 
   "domains": {
 
@@ -43,9 +43,10 @@
       "description": "CODESYS derin teknik bilgisi",
       "_synthesis": { "seviye": "Stub" },
       "fundamentals": {
-        "01_runtime_architecture": { "seviye": "Stub", "başlık": "Runtime Mimarisi" },
-        "02_project_structure":    { "seviye": "Stub", "başlık": "Proje Yapısı" },
-        "03_iec61131_languages":   { "seviye": "Stub", "başlık": "IEC 61131-3 Dilleri" }
+        "_synthesis":              { "seviye": "Temel", "başlık": "CODESYS Temeller — Sentez" },
+        "01_runtime_architecture": { "seviye": "Orta", "başlık": "Runtime Mimarisi" },
+        "02_project_structure":    { "seviye": "Orta", "başlık": "Proje Yapısı" },
+        "03_iec61131_languages":   { "seviye": "Orta", "başlık": "IEC 61131-3 Dilleri" }
       },
       "task-structure": {
         "01_task_types":       { "seviye": "Stub", "başlık": "Task Tipleri" },
