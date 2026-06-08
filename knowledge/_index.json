@@ -8,7 +8,7 @@
 
     "protocols": {
       "description": "Endüstriyel haberleşme protokolleri",
-      "_synthesis": { "seviye": "Stub", "açıklama": "Tüm protokollerin karşılaştırmalı sentezi" },
+      "_synthesis": { "seviye": "Orta", "açıklama": "Tüm protokollerin karşılaştırmalı sentezi" },
       "opc-ua": {
         "_synthesis":         { "seviye": "Orta" },
         "01_architecture":    { "seviye": "Orta", "başlık": "OPC-UA Mimarisi" },
@@ -41,7 +41,7 @@
 
     "codesys": {
       "description": "CODESYS derin teknik bilgisi",
-      "_synthesis": { "seviye": "Stub" },
+      "_synthesis": { "seviye": "Temel" },
       "fundamentals": {
         "_synthesis":              { "seviye": "Temel", "başlık": "CODESYS Temeller — Sentez" },
         "01_runtime_architecture": { "seviye": "Orta", "başlık": "Runtime Mimarisi" },
@@ -86,7 +86,7 @@
 
     "hmi": {
       "description": "HMI mimarisi ve teknolojileri",
-      "_synthesis": { "seviye": "Stub" },
+      "_synthesis": { "seviye": "Orta" },
       "architecture": {
         "_synthesis":        { "seviye": "Orta" },
         "01_hmi_patterns":   { "seviye": "Orta", "başlık": "HMI Mimari Kalıpları" },
