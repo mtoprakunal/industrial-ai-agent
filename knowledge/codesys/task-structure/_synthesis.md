@@ -1,18 +1,18 @@
 ---
-KONU        : CODESYS Task Yapısı — Sentez
+KONU        : CODESYS Task Yapısı — Uzman Sentezi
 KATEGORİ    : codesys
 ALT_KATEGORI: task-structure
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/codesys/task-structure/01_task_types.md"
-    başlık: "Task Tipleri"
+    başlık: "Task Tipleri (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/task-structure/02_cycle_time.md"
-    başlık: "Cycle Time Seçimi"
+    başlık: "Cycle Time Seçimi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/task-structure/03_priority_management.md"
-    başlık: "Öncelik Yönetimi"
+    başlık: "Öncelik Yönetimi (Uzman)"
     güvenilirlik: deneyimsel
 BAĞLANTILAR :
   - konu: "01_task_types.md"
@@ -24,7 +24,9 @@ BAĞLANTILAR :
   - konu: "knowledge/codesys/fundamentals/_synthesis.md"
     ilişki: gerektirir
 ÖNKOŞUL     :
-  - "Bu sentez, üç task-structure belgesini okuduktan sonra okunmak üzere tasarlanmıştır."
+  - "Üç task-structure belgesinin Uzman bölümleri okunmuş olmalıdır."
+  - "fundamentals/_synthesis.md (determinizm felsefesi) kavranmış olmalıdır."
+  - "Saha devreye alma ve RT tuning deneyimi varsayılır."
 ÇELİŞKİLER :
   - kaynak: "—"
     konu: "—"
@@ -33,296 +35,287 @@ BAĞLANTILAR :
 
 ## Özün Ne
 
-Bu sentez tek soruyu yanıtlar: **"Yeni bir proje geldiğinde task yapısını nasıl tasarlarım?"** Üç belge ayrı ayrı okunduğunda task tipleri, cycle time ve öncelik yönetimi kavranır. Bu sentez ise o üç boyutu birleştirerek gerçek bir proje önüne geldiğinizde hangi soruları soracağınızı ve hangi sırayla karar vereceğinizi gösterir. Sonuç: Her projede tekrar başvurulabilecek bir tasarım şablonu.
+Temel soru değişmedi: **"Yeni bir proje geldiğinde task yapısını nasıl tasarlarım?"** Ama uzman cevabı daha derindir. Task yapısı üç bağımsız ayar (tip, cycle time, öncelik) değil, **tek bir gerçek-zamanlılık bütçesinin** üç boyutudur. Bu bütçe `fundamentals/_synthesis.md`'deki determinizm felsefesinin doğrudan uygulanışıdır: her task öngörülebilir olmalı (tip → Cyclic), öngörülebilir kalmalı (cycle time → jitter < %10), ve öngörülebilirlik çakışmamalı (öncelik → preemption + race-free paylaşım). Uzmanlık, bir saha belirtisini (jitter, watchdog, salınım, sync kaybı) doğru boyuta haritalayıp kök nedene inebilmektir. Çünkü bu üç boyut birbirine kilitlidir: yanlış tip → cycle time'ı anlamsızlaştırır → öncelik de kurtaramaz.
 
 ## Nasıl Çalışır
 
 ### Üç Belgenin Birbirine Bağlantısı
 
 ```
-Proje Tasarım Sorusu          →  İlgili Belge
-────────────────────────────────────────────────────────────────
-"Kaç farklı task tipi kullanacağım?" → 01_task_types.md
-"Her task ne sıklıkla çalışacak?"    → 02_cycle_time.md
-"Hangisi diğerinden önce gelecek?"   → 03_priority_management.md
+Tasarım Sorusu                     →  Boyut         Hatası Diğerlerini Bozar
+──────────────────────────────────────────────────────────────────────────
+"Hangi tip task?" (tetikleme)       → 01 Tip        Yanlış tip → zamanlama çöker
+"Ne sıklıkla?" (periyot + jitter)   → 02 Cycle      Yanlış cycle → tepki/kararlılık çöker
+"Hangisi önce?" (preemption+paylaşım)→ 03 Priority  Yanlış öncelik → starvation/race
 
-Bu üç karar birbirinden bağımsız değildir:
-  Yanlış tip → yanlış zamanlama → öncelik de anlamsız hale gelir.
-  Örnek: PID'i Freewheeling'e koymak (01) → zaman sabiti değişken (02)
-         → öncelik ne olursa olsun PID doğru çalışmaz (03).
+Üç boyut tek bütçe:
+  PID'i Freewheeling'e koy (01) → Δt değişken (02) → öncelik ne olsa PID bozuk (03)
+  Cycle çok kısa (02) → CPU dolu → düşük öncelikli aç kalır (03)
+  Aynı veriyi iki task yazar (03) → preemption ortasında yarım değer (01+02)
 ```
+
+### Tasarım Felsefesi: Determinizm Bütçesinin Üç Boyutu
+
+| Boyut | Soru | Determinizm Katkısı | Kök İhlal |
+|---|---|---|---|
+| **Tip** (01) | Ne tetikler? | Cyclic = öngörülebilir tetik | Event/Freewheeling = asenkron/değişken |
+| **Cycle Time** (02) | Ne sıklıkta + ne kadar kararlı? | Sabit Δt + düşük jitter | Jitter ≈ cycle → kaos |
+| **Öncelik** (03) | Çakışınca kim? | Preemption + race-free | Starvation, race, inversion |
+
+**Uzman içgörüsü:** "Kod doğru ama makine tuhaf davranıyor" → neredeyse her zaman bu üç boyuttan biri ihlal edilmiştir, kodun kendisi değil. Pusula: belirtiyi boyuta haritala.
 
 ### Tasarım Süreci: 5 Adım
 
-**Adım 1 — Uygulamanın Bileşenlerini Listele**
-
 ```
-"Bu projede ne var?" sorusunu sor.
-
-Tipik bileşenler:
-□ Güvenlik: E-stop, kapı kilitleri, parmak koruyucu
-□ Motion: Servo, frekans invertörü, step motor
-□ Proses Kontrolü: PID, sıra kontrol, recipe
-□ I/O: Sensörler, aktüatörler, dijital giriş/çıkış
-□ İletişim: OPC UA, Modbus, Ethernet
-□ HMI: Ekran güncelleme, operatör girişleri
-□ Veri: Log, diagnostik, üretim sayacı
+Adım 1 — Bileşenleri listele (güvenlik, motion, PID, I/O, komm, HMI, veri)
+Adım 2 — Her bileşene tepki gereksinimi + fieldbus periyodu ata
+Adım 3 — Benzer zamanlamaları grupla (cycle time'a göre task'lar)
+Adım 4 — Her task'a tip + öncelik ata (boşluklu: 0,3,6,10,15)
+Adım 5 — CPU yük kontrolü: Σ(exec/cycle) < %70 (ortalama) + spike payı
 ```
 
-**Adım 2 — Her Bileşen için Zamanlama Gereksinimini Belirle**
+### Hızlı Referans (Konsolide)
+
+**A. Task Tipi Seçimi (Belge 1)**
+
+| Tip | Tetik | Kullan | Kullanma |
+|---|---|---|---|
+| Cyclic | Sabit zaman | Kontrol, PID, motion, fieldbus, güvenlik | — |
+| Freewheeling | Bittiğinde + bekleme | Log, diagnostik (en düşük öncelik!) | PID, fieldbus, kritik |
+| Event | Bit kenarı (yazılım polling) | Nadir komut (reçete) | Hızlı/kısa puls (coalescing) |
+| Status | Bit seviyesi | Nadiren doğru seçim | Uzun-TRUE koşullar (CPU yer) |
+| External Event | Donanım IRQ | µs encoder, "kısa kap-çık" | Ağır işlem |
+
+**B. Cycle Time Aralıkları (Belge 2)**
+
+| Aralık | Kullanım | Not |
+|---|---|---|
+| ≤1ms | EtherCAT sync, güvenlik | RT-preempt + izole CPU şart |
+| 2-5ms | Motion, hızlı PID | RT kernel gerekebilir |
+| 10-20ms | Genel makine mantığı | Projelerin %80'i |
+| 50-200ms | HMI, yavaş proses | Kesinlikle yeterli |
+| Freewheeling | Arka plan | Kontrol asla |
+
+**C. Öncelik Bandı (Belge 3)**
+
+| IEC Prio | Linux | Kullanım |
+|---|---|---|
+| 0 | RT 79 | Yalnızca e-stop/güvenlik |
+| 1-3 | RT 76-78 | Motion, fieldbus sync |
+| 4-6 | RT 73-75 | Ana kontrol, PID |
+| 7-12 | RT 67-72 | İzleme, log altyapısı |
+| ≥13 | SCHED_OTHER | RT garantisi YOK |
+
+**D. Kritik Eşikler**
+
+| Konu | Değer | Kaynak |
+|---|---|---|
+| CPU yük tavanı | < %70 (ortalama + spike payı) | 02, 03 |
+| Jitter sınırı | < cycle × %10 | 02 |
+| Event tetik limiti | ~6/ms üstü → HALT | 01 |
+| Fieldbus task önceliği | ağ IRQ'dan yüksek (Prio ≤5) | 03 |
+| RT garanti sınırı | IEC Prio ≤12 | 03 |
+| Atomik atama | ≤ word boyutu (platforma bağlı) | 03 |
+| Watchdog Time | ~2-5× Max Exec, Sensitivity 2-3 | 02 |
+
+### Uzman Edge Case Konsolidasyonu
 
 ```
-Bileşen              Tepki Gereksinimi  Fieldbus?
-────────────────────────────────────────────────
-E-stop               < 10ms             —
-EtherCAT Servo       2ms (sync)         EtherCAT 2ms
-PID Sıcaklık         100ms yeterli      —
-Konveyör Mantığı     20ms yeterli       —
-HMI Güncelleme       200ms yeterli      —
-OPC UA Write         500ms yeterli      —
-USB Log              5s yeterli         —
+BOYUT     EDGE CASE                       BELİRTİ                  KORUMA
+──────────────────────────────────────────────────────────────────────────────
+Tip       Event coalescing (hızlı puls)   Tetik kaybolur           Latch + Cyclic
+Tip       Aşırı Event tetik               Runtime HALT             R_TRIG + Cyclic
+Tip       External Event'te ağır kod      Kesme birikir, kilit     Kısa kap-çık
+Tip       Aynı FB iki task'ta             Tanımsız .ET             Tek task / instance
+Cycle     Jitter ≈ cycle (RT yok)         Determinizm yok          RT-preempt + izole
+Cycle     Termal throttling               Gündüz Max Cycle artar   En kötü termalde test
+Cycle     I/O image gizli maliyeti        "Optimize ettim, hızlanmadı" Az kanal/uzun cycle
+Cycle     Büyüyen array O(n)              Exec yavaşça şişer       Trend izle, indeksli erişim
+Öncelik   LREAL 32-bit'te bölünür         Frankenstein değer       Double-buffer/mutex
+Öncelik   Multicore paralel race          Klasik race patlar       Atomik/mutex (öncelik korumaz)
+Öncelik   RT throttling (%95 sınırı)      Prio:0 yine de gecikir   İzole çekirdek
+Öncelik   Harici lock'ta inversion        Süresiz bloke            Yüksek task'tan OS çağrısı yok
+Öncelik   Starvation → omitted watchdog   Sağlıklı sistem durur    Geniş watchdog / yük düşür
 ```
-
-**Adım 3 — Task'ları Grupla (Cycle Time'a Göre)**
-
-```
-Benzer zamanlama gereksinimi → Aynı task
-Farklı zamanlama → Farklı task
-
-Gruplama:
-  2ms grubu:   EtherCAT sync, güvenlik → Task_Fast
-  10-20ms:     PID, konveyör mantığı  → Task_Control
-  100-200ms:   HMI güncelleme         → Task_HMI
-  Arkaplan:    Log, diagnostik        → Task_Background
-  Olay tabanlı: Reçete yükleme        → Task_Recipe
-```
-
-**Adım 4 — Her Task'a Tip ve Öncelik Ata**
-
-```
-Task_Fast        → Cyclic 2ms,   Prio:0  (en kritik)
-Task_Control     → Cyclic 10ms,  Prio:2
-Task_HMI         → Cyclic 100ms, Prio:5
-Task_Background  → Freewheeling, Prio:15
-Task_Recipe      → Event,        Prio:3  (nadir tetiklenir)
-```
-
-**Adım 5 — CPU Yük Kontrolü**
-
-```
-Task_Fast       : Exec ~0.5ms / 2ms    = %25
-Task_Control    : Exec ~2ms  / 10ms    = %20
-Task_HMI        : Exec ~8ms  / 100ms   = %8
-Task_Background : Freewheeling         = Kalan CPU
-                               TOPLAM  ≈ %53 ✓
-```
-
-Toplam %70 altında → güvenli. Üstündeyse cycle time artırılır veya yük dağıtılır.
 
 ## Pratikte Nasıl Kullanılır
 
-### Hazır Şablon: Proje Türüne Göre Başlangıç Mimarileri
+### Hazır Şablonlar (Başlangıç Mimarileri)
 
----
-
-**Şablon A — Basit Makine (Konveyör, Dolum, Basit Paketleme)**
-
+**Şablon A — Basit Makine**
 ```
 Task_Safety   Cyclic  5ms  Prio:0   E-stop, güvenlik kontakları
-Task_Control  Cyclic 10ms  Prio:2   Ana mantık, sensörler, aktüatörler
+Task_Control  Cyclic 10ms  Prio:2   Ana mantık, sensör, aktüatör
 Task_Slow     Cyclic 100ms Prio:5   HMI, OPC UA
 Task_Log      Freewheel   Prio:15   Diagnostik, log
 ```
 
-4 task, yönetimi kolay, çoğu basit makine için fazlasıyla yeterli.
-
----
-
-**Şablon B — Motion Dahil Makine (Servo, EtherCAT)**
-
+**Şablon B — Motion (EtherCAT)**
 ```
-Task_Safety   Cyclic  2ms  Prio:0   E-stop, güvenlik (EtherCAT sync döngüsüyle eşleşik)
-Task_Motion   Cyclic  2ms  Prio:1   EtherCAT sync, SoftMotion
+Task_Safety   Cyclic  2ms  Prio:0   E-stop (EtherCAT döngüsüyle eşleşik)
+Task_Motion   Cyclic  2ms  Prio:1   EtherCAT bus cycle task, SoftMotion
 Task_Control  Cyclic 10ms  Prio:2   Koordinasyon, PID, recipe
 Task_HMI      Cyclic 50ms  Prio:5   HMI, OPC UA
-Task_Log      Freewheel   Prio:15   Log, diagnostik
-```
-
-5 task, motion kontrollü sistemler için standart.
-
----
-
-**Şablon C — Proses Kontrol (PID Yoğun, Çoklu Döngü)**
-
-```
-Task_Safety   Cyclic  5ms  Prio:0   Güvenlik
-Task_FastPID  Cyclic 10ms  Prio:1   Hızlı döngü PID'ler (basınç, akış)
-Task_SlowPID  Cyclic100ms  Prio:2   Yavaş döngü PID'ler (sıcaklık, seviye)
-Task_Sequence Cyclic 20ms  Prio:3   Sekans kontrolü, recipe
-Task_HMI      Cyclic 200ms Prio:5   HMI
 Task_Log      Freewheel   Prio:15   Log
 ```
 
-6 task, proses kontrol tesisleri için uygun.
+**Şablon C — Proses (PID Yoğun)**
+```
+Task_Safety   Cyclic  5ms  Prio:0
+Task_FastPID  Cyclic 10ms  Prio:1   Basınç, akış
+Task_SlowPID  Cyclic100ms  Prio:2   Sıcaklık, seviye
+Task_Sequence Cyclic 20ms  Prio:3   Sekans, recipe
+Task_HMI      Cyclic 200ms Prio:5
+Task_Log      Freewheel   Prio:15
+```
 
----
-
-### Hangi Mantık Hangi Task'a Girer — Hızlı Referans
+### Production-Grade Devreye Alma Kontrol Listesi (Uzman)
 
 ```
-Mantık Türü                    Task Tipi       Neden
-─────────────────────────────────────────────────────────────────
-E-stop, güvenlik izleme       Cyclic (1-5ms)   En hızlı tepki şart
-EtherCAT/PROFINET sync        Cyclic (fieldbus döngüsü) Sync kırılmaz
-PID kontrolü                  Cyclic (10-100ms) Sabit Δt zorunlu
-Konveyör, vana, piston        Cyclic (10-20ms)  Deterministik yeterli
-Alarm yönetimi                Cyclic (5-20ms)   Hızlı algılama
-Operatör komutları            Cyclic (10-20ms)  Gecikmesiz işlem
-HMI değişken güncelleme       Cyclic (50-200ms) Görsel yeterli
-OPC UA / Modbus yazma         Cyclic (50-500ms) Ağ gecikmesi hâkim
-Reçete yükleme (tek seferlik) Event (kenar)    Nadir, anlık
-USB / dosya yazma             Freewheeling      Bloke riski, arkaplan
-Diagnostik, log               Freewheeling      Kritik değil
-Büyük veri işleme             Freewheeling      Diğerlerini engellemesin
+TASARIM
+□ Güvenlik task'ı Prio:0 ve en hızlı cycle'da
+□ PID/ramp içeren her şey Cyclic (Freewheeling değil)
+□ Fieldbus task cycle = fieldbus periyodu (DC ise bus cycle task olarak atanmış)
+□ Öncelikler boşluklu (0,3,6,10,15) — ileride ara ekleme için
+□ Bloke eden I/O (dosya/ağ) Freewheeling + en düşük öncelik
+□ Event task tetik sinyali scheduler interval'inden yavaş değişiyor
+
+PAYLAŞIM (RACE GÜVENLİĞİ)
+□ Her paylaşılan değişkenin tek yazarı var
+□ Çok-word veri (LREAL/STRUCT/STRING) için double-buffer veya mutex
+□ Multicore'da paralel task'lar arası atomik/mutex (öncelik korumaz)
+□ Yüksek öncelikli task'tan OS/dosya/ağ çağrısı YOK (inversion riski)
+□ Mutex altındaki kritik bölge minimum (sadece pointer/index swap)
+
+RT ALTYAPI (fundamentals/01 ile)
+□ RT-preempt kernel + isolcpus + IRQ affinity
+□ Kritik motion task'ı izole çekirdekte (Core ataması)
+□ Ağ IRQ önceliği < fieldbus task önceliği
+□ RT throttling izole çekirdekte yönetildi
+
+DOĞRULAMA
+□ Task Monitor açık: Max Cycle < Interval × %70
+□ Jitter < cycle × %10
+□ 48 saat yük testi (stress-ng + en kötü termal koşul)
+□ Online Change spike'ı watchdog sensitivity ile tolere ediliyor
+□ Exec time TRENDİ izleniyor (haftalar içinde şişme var mı)
+```
+
+### Belirti → Boyut → Kök Neden (Genişletilmiş Teşhis)
+
+```
+Belirti                          Boyut      Kök Neden / Çözüm
+─────────────────────────────────────────────────────────────────────
+Watchdog alarmı                  02         Exec > Cycle → kodu böl/cycle artır
+PID salınım yapıyor              01+02      Freewheeling → Cyclic; sabit Δt
+HMI çok yavaş                    03         Starvation → üst task exec düşür
+Drive titriyor / sync kaçıyor    02+03      Fieldbus cycle/öncelik; IRQ önceliği
+Sayaç bazen sıfırlanıyor         03         Race → tek yazar / double-buffer
+Frankenstein REAL değeri         03         LREAL 32-bit bölünme → mutex/buffer
+Event task çalışmıyor            01         Coalescing → latch+Cyclic
+E-stop geç/tutarsız tepki        02+03      Safety cycle çok uzun / öncelik düşük
+CPU %90+                         02         Cycle çok kısa → gerçek gereksinime çek
+Prio:0 task yine de gecikiyor    03         RT throttling → izole çekirdek
+Gündüz yavaşlama                 02         Termal throttling → soğutma/test
+Exec haftalar içinde şişiyor     02         Büyüyen veri yapısı → algoritma
+Multicore'da beklenmedik race    03         Paralel çalışma → atomik/mutex
 ```
 
 ## Örnekler
 
-### Örnek 1: Uçtan Uca Tasarım — Şişe Dolum Makinesi
+### Örnek — Uçtan Uca: Şişe Dolum Makinesi (Race-Safe)
 
 ```
-Proje: 4 nozullu şişe dolum makinesi
-Bileşenler:
-  - Konveyör (frekans inverter, Modbus RTU)
-  - 4 solenoid vana (dijital çıkış)
-  - 4 kütüphane ölçer (analog giriş, 0-10V)
-  - Operatör paneli (10 buton, 5 pilot lamba)
-  - Recipe: 3 farklı şişe boyutu
-  - Üretim log (USB'ye günlük)
+Bileşenler: konveyör (Modbus RTU), 4 solenoid, 4 ölçer (analog),
+            panel, recipe (3 boyut), USB log
 
-Zamanlama analizi:
-  Konveyör    : 20ms yeterli (mekanik inersia)
-  Solenoid    : 10ms tepki (açma/kapama hassasiyeti)
-  Ölçer okuma : 50ms yeterli (analog filtre zaten var)
-  Panel buton : 20ms yeterli
-  Recipe      : Anlık olay, nadiren
-  Log         : 5s yeterli
+Task mimarisi:
+  Task_Safety  Cyclic  5ms  Prio:0   E-stop, kapı kilidi
+  Task_Control Cyclic 10ms  Prio:2   Konveyör, solenoid, ölçer, buton
+  Task_HMI     Cyclic 50ms  Prio:5   Panel ışıkları
+  Task_Recipe  Event        Prio:3   Reçete yükleme (yavaş tetik → güvenli)
+  Task_Log     Freewheel   Prio:15   USB log (bloke riski izole)
 
-Karar:
-  Task_Safety  Cyclic  5ms  Prio:0  E-stop, kapı kilidi
-  Task_Control Cyclic 10ms  Prio:2  Konveyör, solenoid, ölçer, buton
-  Task_HMI     Cyclic 50ms  Prio:5  Panel ışıkları güncelleme
-  Task_Recipe  Event        Prio:3  Reçete yükleme
-  Task_Log     Freewheel   Prio:15  USB log
+Race güvenliği:
+  - Üretim sayacı (DWORD): yalnızca Task_Control yazar, Task_HMI okur → atomik OK
+  - PID çıkışı (REAL): Task_Control yazar tek satır → atomik OK
+  - Recipe struct (çok-word): Task_Recipe yazar, Task_Control okur
+    → double-buffer + index swap (preemption ortasında yarım okuma yok)
 
-CPU Yük (tahmini, orta sınıf ARM):
-  Task_Safety  : 0.1ms/5ms   = %2
-  Task_Control : 1.5ms/10ms  = %15
-  Task_HMI     : 2ms/50ms    = %4
-  Task_Log     : Kalan CPU   = kalan
-  TOPLAM       ≈ %21 → Rahat ✓
-```
-
-### Örnek 2: Task Tasarım Kontrol Listesi
-
-```
-Her yeni proje için:
-□ 1. Güvenlik task'ı var mı ve en yüksek öncelikte mi?
-□ 2. PID ve ramp hesabı yapan task Cyclic mi?
-□ 3. Fieldbus task cycle time, fieldbus döngüsüyle eşleşiyor mu?
-□ 4. Dosya/ağ işlemleri Freewheeling task'ta mı?
-□ 5. Event task'lar yüksek frekanslı sinyal için kullanılıyor mu?
-   → Kullanılıyorsa R_TRIG'e taşı
-□ 6. Toplam CPU yükü %70 altında mı?
-□ 7. Öncelikler arasında boşluk var mı? (0, 3, 6, 10, 15)
-□ 8. Paylaşılan global değişkenler için write sahibi tek task mı?
-□ 9. Her task'ın watchdog'u etkin mi?
-□ 10. 48 saatlik yük testi planlandı mı?
-```
-
-### Örnek 3: Hızlı Sorun Tespiti — Belirti → Neden → Çözüm
-
-```
-Belirti                          Olası Neden              İlgili Belge
-─────────────────────────────────────────────────────────────────────
-Watchdog alarmı                  Exec > Cycle Time         02_cycle_time
-PID salınım yapıyor              Freewheeling task          01_task_types
-HMI çok yavaş güncelleniyor      Starvation                 03_priority_mgmt
-Drive titriyor / sync kaçıyor    Fieldbus task öncelik      03_priority_mgmt
-Sayaç bazen sıfırlanıyor         Race condition             03_priority_mgmt
-Event task çalışmıyor            Edge algılanmıyor          01_task_types
-E-stop geç tepki veriyor         Safety task önceliği düşük 03_priority_mgmt
-CPU %90+                         Cycle time çok kısa        02_cycle_time
+CPU Yük (orta ARM): %2 + %15 + %4 + Freewheel ≈ %21 ✓
+  + spike payı: periyotların buluştuğu anda bile < %70 ✓
 ```
 
 ## Sık Yapılan Hatalar
 
-### Başlangıçta En Çok Yapılan 5 Hata
+### Başlangıç Hataları (5)
 
-**1. Tek task her şeyi yapar** (Belge 1, 2, 3)  
-Her şeyi tek Cyclic task'a koymak başlangıçta kolay görünür. Proje büyüyünce cycle time uzar, watchdog alarmları başlar, HMI yavaşlar. Başlangıçtan 3-5 task mimarisi kurmak bunu önler.
+1. **Tek task her şeyi yapar** — büyüyünce watchdog/starvation.
+2. **PID'i Freewheeling'e koymak** — değişken Δt, salınım.
+3. **Fieldbus cycle yanlış** — sync kaçar, drive titrer.
+4. **Event'i hızlı sinyale bağlamak** — HALT; R_TRIG+Cyclic kullan.
+5. **CPU yük hesabı yapmamak** — %85'te ani yük watchdog tetikler.
 
-**2. PID'i Freewheeling'e koymak** (Belge 1, 2)  
-Sık görülen hata, özellikle Siemens kökenli mühendislerde. OB1 mantığı burada geçerli değil. Freewheeling cycle time tutarsız; PID integral/türev hatalı hesaplanır.
+### Uzman Hataları (5) — Sahada Pahalıya Patlayan
 
-**3. Fieldbus task cycle time yanlış** (Belge 2, 3)  
-EtherCAT 2ms döngüdeyken task 10ms olarak ayarlanırsa her 5 EtherCAT döngüsünden sadece 1'i işlenir. Drive titrer, pozisyon kaybolur.
-
-**4. Event task yüksek frekanslı sinyal için** (Belge 1)  
-Encoder veya hızlı dijital sinyal Event task'a bağlanırsa runtime HALT'a geçer. Hızlı sinyaller için R_TRIG + Cyclic tercih edilir.
-
-**5. CPU yük hesabı yapmamak** (Belge 2, 3)  
-"Çalışıyor" demek "doğru çalışıyor" değildir. CPU %85'te çalışan sistemde fieldbus restart, OS güncelleme gibi ani yük artışları watchdog tetikler. Tasarım aşamasında %70 hedefi belirlenmeli.
+1. **Multicore'da "öncelik race'i korur" varsaymak** — paralel çalışma, atomik/mutex şart.
+2. **Çok-word veride atomiklik varsaymak** — LREAL/STRUCT bölünür, double-buffer.
+3. **Yüksek öncelikli task'tan OS/dosya çağrısı** — sınırsız priority inversion.
+4. **Jitter'ı RT altyapısı olmadan kovalamak** — sub-ms cycle, RT-preempt+izolasyon olmadan anlamsız.
+5. **Termal/trend körlüğü** — oda sıcaklığı + anlık ölçüme güvenmek; en kötü koşul + trend izle.
 
 ## Ne Zaman Tercih Edilmeli / Edilmemeli
 
-### Bu Sentezin Kapsamı
+### Bu Sentezin Kapsamı ve Sınırı
 
-Bu 3 belge + sentez şu durumlar için yeterlidir:
-- Standart makine otomasyonu (konveyör, paketleme, dolum, montaj)
-- Motion kontrolü olan sistemler (EtherCAT + SoftMotion dahil)
-- Çoklu PID döngülü proses kontrol
+Bu 3 belge + sentez şunlar için yeterlidir: standart makine otomasyonu, motion (EtherCAT+SoftMotion), çoklu PID proses kontrol.
 
-Bu durumlar için daha ileri kaynaklara bakılmalıdır:
-- **SIL güvenlik gereksinimleri** → CODESYS Safety (ayrı ürün)
-- **100+ task barındıran büyük sistemler** → Multicore + task affinity
-- **Sub-µs zamanlama gereksinimleri** → FPGA/ASIC donanım, CODESYS yeterli olmayabilir
-- **Birden fazla runtime arasında koordinasyon** → Distributed systems belgesi
+```
+Yetersiz Kaldığı Durum              Bakılacak Sonraki Konu
+─────────────────────────────────────────────────────────
+SIL güvenlik gereksinimleri         → CODESYS Safety (ayrı ürün)
+100+ task / büyük dağıtık sistem     → multicore + task affinity derinliği
+Sub-µs zamanlama                     → FPGA/ASIC (CODESYS sınırı)
+EtherCAT DC faz kilitleme detayı     → knowledge/networking/ethercat/
+Profiling / trace ile exec analizi   → knowledge/codesys/advanced/profiling/
+Lock-free / atomik desen derinliği   → knowledge/codesys/advanced/shared_memory_patterns/
+```
 
 ## Gerçek Proje Notları
 
-**Sentez Notu 1 — "5 Task Şablonu" Ne Zaman Yetmez?**  
-5 task mimarisi neredeyse her standart makine için yeterlidir. Yetmediği durum: Çok sayıda bağımsız makine ekseninin farklı hızlarda kontrol edilmesi gerektiğinde (ör. 10 farklı PID döngüsü farklı zaman sabitleriyle). Bu durumda her döngü grubu için ayrı Cyclic task açmak yerine, task sayısını 3-4'te tutarak kodun içinde manüel örnekleme (her N döngüde bir çalış) yapılabilir.
+**Sentez Notu 1 — Üç Boyut Tek Bütçedir**  
+Uzmanlığın eşiği: tip, cycle time ve önceliği ayrı ayrı "doğru" yapmak yetmez; üçünün **etkileşimini** görmek gerekir. Doğru tip + doğru cycle + yanlış öncelik = starvation. Doğru öncelik + yanlış tip = bozuk PID. Üçü birlikte tek bir determinizm bütçesini oluşturur; biri ihlal edilirse diğer ikisi telafi edemez.
 
-**Sentez Notu 2 — Tasarım Başında 10 Dakika, Devreye Almada 2 Gün**  
-Task mimarisini proje başında kâğıt üzerinde tasarlamak 10 dakika alır. Devreye alma sırasında task yapısını değiştirmek (POU'ları taşımak, watchdog ayarlamak, öncelikleri yeniden sıralamak) en az 2 gün ve müşteri tesisinde beklenmedik saatler demektir. "Önce çalıştır, sonra düzelt" yaklaşımı task mimarisinde işe yaramaz.
+**Sentez Notu 2 — Belirtiyi Boyuta Haritala, Kodu Okuma**  
+Saha sorunlarının çoğu IEC kodunda değil, task yapısındadır. "Drive titriyor" → kodu saatlerce okumak yerine "bu cycle time mı, öncelik mi, sync mi?" diye sor. Belirti→boyut tablosu (yukarıda), uzman teşhisin pusulasıdır.
 
-**Sentez Notu 3 — Fieldbus Geldiğinde Task Mimarisi Değişir**  
-Pek çok projede ilk aşama Modbus TCP ile başlar, sonra müşteri EtherCAT servo ekler. EtherCAT gelince task mimarisi değişmek zorundadır: Yeni bir Cyclic 2ms task eklenir, güvenlik task'ı bu döngüye alınır, öncelikler yeniden sıralanır. Bu dönüşüm planlanmamışsa 1-2 günlük iş. Başlangıçtan "fieldbus eklenirse ne olur?" sorusu sorulmalı.
+**Sentez Notu 3 — Preemption Hem Güç Hem Sorumluluk**  
+V3'ün preemptive modeli "kritik her zaman önce" garantisini verir (güç), ama race condition yüzeyini açar (sorumluluk). V2'den taşınan kodda gizli race'ler patlar. Her preemptive sistemde paylaşılan veri, atomiklik ve double-buffer disiplini, öncelik tasarımının ayrılmaz parçasıdır — öncelik tek başına veriyi korumaz.
 
-**Sentez Notu 4 — Task Monitor Her Devreye Almada Açık Olmalı**  
-Task Monitor, task yapısının doğruluğunu kanıtlayan tek araçtır. Devreye alma sürecinde Task Monitor her zaman açık tutulmalı ve Max Cycle Time değerlerinin Interval'ın %70'ini geçmediği doğrulanmalıdır. "Çalışıyor" yeterli değil; "Max Cycle Time kontrol edildi, %70 altında" standardı hedeflenmelidir.
+**Sentez Notu 4 — RT Garantisi Uçtan Uca Bir Zincirdir**  
+Mükemmel task tasarımı, alttaki kernel RT-preempt değilse, ağ IRQ önceliği yanlışsa, BIOS C-state açıksa veya CPU termal throttle ediyorsa boşa gider. Öncelik (03) ↔ cycle time/jitter (02) ↔ runtime/OS (fundamentals/01) tek bir RT zinciridir; en zayıf halka determinizmi belirler.
+
+**Sentez Notu 5 — Tasarım Başında 10 Dakika, Sahada 2 Gün**  
+Task mimarisini kâğıtta tasarlamak 10 dakika; devreye almada değiştirmek (POU taşı, watchdog ayarla, öncelik sırala, race düzelt) 2 gün ve müşteri tesisinde gece mesaisidir. "Önce çalıştır sonra düzelt" task mimarisinde işe yaramaz — çünkü çalışan bir sistem, gizli race veya marjinal yük ile aylarca "çalışıyor" görünür, sonra en kötü anda durur.
 
 ## İlgili Konular
 
 ```
-knowledge/codesys/task-structure/    ← Şu an buradasınız
-├── 01_task_types.md
-├── 02_cycle_time.md
-├── 03_priority_management.md
+knowledge/codesys/task-structure/    ← Şu an buradasınız (Uzman seviye)
+├── 01_task_types.md           (Uzman)
+├── 02_cycle_time.md           (Uzman)
+├── 03_priority_management.md  (Uzman)
 └── _synthesis.md (bu belge)
 
 Önceki temel:
 knowledge/codesys/fundamentals/
-└── _synthesis.md → Runtime, proje yapısı, diller sentezi
+└── _synthesis.md → Runtime/proje/diller (determinizm felsefesi)
 
-Sonraki adım — EtherCAT entegrasyonu:
-knowledge/networking/ethercat/
-├── 01_ethercat_basics.md
-└── 02_task_sync_ethercat.md
-
-Sonraki adım — Gelişmiş mimari:
+Sonraki adım — Gelişmiş:
 knowledge/codesys/advanced/
-├── multicore_tasks.md
-└── shared_memory_patterns.md
+├── multicore_tasks.md        → Çok çekirdek, task affinity
+└── shared_memory_patterns.md → Lock-free, atomik, double-buffer
+
+knowledge/networking/ethercat/ → EtherCAT DC sync ve task eşleşmesi
+knowledge/codesys/debugging/   → Profiling, jitter/exec analizi
 ```

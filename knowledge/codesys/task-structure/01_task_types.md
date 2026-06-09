@@ -2,8 +2,8 @@
 KONU        : CODESYS Task Tipleri
 KATEGORİ    : codesys
 ALT_KATEGORI: task-structure
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_f_reference_task.html"
     başlık: "CODESYS Online Help — Task Configuration Reference"
@@ -404,6 +404,125 @@ Siemens S7 kökenli bir mühendis, CODESYS projesinde tek bir Freewheeling task 
 
 **Not 4 — "Tek Task Her Şeyi Yapar" Yaklaşımı**  
 Küçük projeler için tek Cyclic task yeterlidir. Ancak proje büyüyünce sorunlar başlar: Cycle time uzar, watchdog tetiklenir, kommunikasyon ve log görevleri kontrol döngüsünü etkiler. Başlangıçta en az iki task tasarlamak (hızlı kontrol + yavaş iletişim) ilerleyen aşamalarda büyük kolaylık sağlar.
+
+**Not 5 — Event Task'ın "Kaybolan" Tetiklemeleri (Coalescing)**  
+Bir alarm sisteminde Event task, alarm bitini her değişimde bir kez çalıştırması beklenerek tasarlandı. Ancak yoğun anlarda, scheduler interval'i (1ms) içinde bit hem TRUE hem FALSE olunca **kenar hiç görülmedi** — task tetiklenmedi. Event tetikleme, donanım interrupt'ı değildir; scheduler'ın bir sonraki taramasında bit'i örnekleyerek kenar arar. İki tarama arasındaki tüm geçişler "birleşir" (coalesce) ve tek bir net değişiklik gibi görünür. Ders: Event task yalnızca scheduler interval'inden **yavaş** değişen sinyaller için güvenilirdir. Hızlı/kısa pulslar için latch (set/reset bit) + Cyclic task kullanın.
+
+**Not 6 — Freewheeling Task'ın Watchdog'u Yanıltıcı Olabilir**  
+Bir log task'ı Freewheeling + watchdog 5s ile çalışıyordu. USB takılınca task 8 saniye bloke oldu ama watchdog'un beklenenden geç tetiklendiği görüldü. Neden: Freewheeling'de cycle time referansı olmadığı için watchdog yalnızca **mutlak maksimum süre** sınırı koyar; periyodik kontrol mantığı Cyclic'teki kadar keskin değildir. Üstelik tek bir task'ın watchdog'u tüm uygulamayı durdurur — log task'ı, çalışan üretim hattını durdurdu. Ders: Bloke olabilen I/O'yu Freewheeling'e koyarken bile, asıl koruma watchdog değil; non-blocking (state-machine tabanlı, parça parça) I/O tasarımıdır.
+
+**Not 7 — External Event ile ISR İçinde IEC Kod Tuzağı**  
+Yüksek hız sayaç kartı External Event task'ı tetikliyordu; geliştirici bu task'a 2ms süren bir hesap koydu. Donanım kesmesi 200µs'de bir geliyordu — task kendi tetiklenme aralığından uzun sürünce kesmeler birikip sistem kilitlendi. External Event task'ları kesme bağlamında (veya ona çok yakın öncelikte) çalışır; **mümkün olan en kısa, en deterministik kod** içermelidir (sadece sayaç oku/sakla). Ağır işlem ayrı bir Cyclic task'a devredilmelidir. Ders: External Event = "kısa kapt, hızlı çık".
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Event Task Tetikleme Sınırları
+
+```
+Sınır                              Davranış / Limit
+─────────────────────────────────────────────────────────────
+Tetik aralığı < scheduler interval Kenar coalescing — geçişler kaybolur
+Aşırı tetik (>~6 event/ms platforma) Runtime EXCEPTION/HALT ("ISR count")
+Tetik bit'i task içinde resetlenmez Bir sonraki kenar için bit FALSE'a dönmeli
+İki Event task aynı bit'e bağlı    Tetik sırası öncelik ile belirlenir
+```
+
+### Cyclic Task'ta "Interval'i Kaçırma" Davranışı
+
+Bir Cyclic task'ın exec time'ı interval'i geçer ama watchdog'a varmazsa ne olur? CODESYS bir sonraki sürümlere/ayara göre iki strateji izleyebilir:
+
+```
+Strateji 1 (yaygın): Kaçırılan interval ATLANIR
+  10ms task 13ms sürdü → 20ms'de bir sonraki çalışma (10ms'lik tetik kaybedildi)
+  → Etkin frekans yarıya düşer, ama sistem stabil kalır
+
+Strateji 2: Tetik BİRİKİR (catch-up)
+  Kaçırılan döngüler kuyruğa girer → task ardışık çalışmaya çalışır
+  → "ölüm sarmalı" riski: her döngü öncekinin gecikmesini büyütür
+```
+
+Pratikte birinci strateji baskındır, ama bunu **varsaymak** yerine Task Monitor'da `Cycle Count` ve gerçek frekansı doğrulayın.
+
+### Status Task'ın Gizli CPU Açlığı
+
+Status task, koşul TRUE kaldıkça **her scheduler döngüsünde** çalışır — yani 1ms scheduler'da TRUE bir koşul, etkin olarak 1ms Cyclic task'a dönüşür. Alarm modunda "geçici" sandığınız Status task, alarm saatlerce sürerse CPU'yu 1ms task gibi tüketir. Status task'ı pratikte nadiren doğru seçimdir; çoğu durumda Cyclic task + `IF xCondition` daha öngörülebilirdir.
+
+### Task'lar Arası Ortak FB Instance Tuzağı
+
+Aynı FB instance'ını (özellikle timer) **iki farklı task'tan** çağırmak tanımsız davranıştır: instance'ın iç durumu iki farklı zaman tabanında güncellenir, `.ET` anlamsızlaşır. Her timer/sayaç instance'ı tek bir task'a ait olmalıdır.
+
+## Optimizasyon
+
+### Task Tipi Seçiminin CPU Bütçesine Etkisi
+
+```
+Tip            CPU Profili                    Ne Zaman Tasarruf
+──────────────────────────────────────────────────────────────────
+Cyclic         Sabit, hesaplanabilir          Doğru interval ile minimum
+Freewheeling   Kalan CPU'yu DOLDURUR (%100)   Düşük öncelikte → görünmez
+Event          Sadece tetikte → çok ucuz      Nadir olaylar için ideal
+Status         TRUE süresince Cyclic gibi      Kısa süreli koşullarda OK
+External Event Kesme overhead'i + bağlam       Sadece µs gereksiniminde
+```
+
+**Anahtar içgörü:** Freewheeling task düşük öncelikte "ücretsiz" görünür çünkü kalan CPU'yu kullanır — ama yüksek öncelikte konursa CPU'yu tamamen yutar ve alt task'ları aç bırakır. Freewheeling = **daima en düşük öncelik**.
+
+### Nadir İş için Event > Polling
+
+Saniyede bir kez olan bir olayı 10ms Cyclic task içinde poll'lamak, saniyede 100 boş kontrol demektir. Event task aynı işi sıfır boş kontrolle yapar. Nadir, asenkron olaylarda (reçete yükleme, mod değişimi, manuel komut) Event task hem CPU hem de okunabilirlik kazandırır — yeter ki tetik sinyali scheduler interval'inden yavaş değişsin (Not 5).
+
+### Sub-Sampling: Task Sayısını Azaltma Tekniği
+
+Çok sayıda farklı hızda iş varsa, her biri için ayrı task açmak yerine tek Cyclic task içinde sayaç tabanlı alt-örnekleme yapın:
+
+```iecst
+(* Task_Control: Cyclic 10ms — birden çok hızı tek task'ta yönet *)
+nDiv := nDiv + 1;
+(* Her 10ms: hızlı mantık *)
+FastLogic();
+(* Her 100ms (10×10ms): orta mantık *)
+IF (nDiv MOD 10) = 0 THEN MediumLogic(); END_IF
+(* Her 1s (100×10ms): yavaş mantık *)
+IF (nDiv MOD 100) = 0 THEN SlowLogic(); END_IF
+```
+
+Bu, context-switch overhead'ini ve race condition yüzeyini azaltır — 8 task yerine 2-3 task. Bedeli: tüm alt-mantık aynı öncelikte çalışır.
+
+## Derin Teknik Detay
+
+### Tetikleme Modellerinin Altyapısı
+
+Beş task tipi aslında scheduler'ın tek bir karar döngüsünün farklı tetik kaynaklarıdır:
+
+```
+Scheduler her interval'de sorar: "Bu task şimdi çalışmalı mı?"
+  Cyclic        → (now - last_run) >= interval ?
+  Freewheeling  → önceki çalışma bitti + kısa bekleme doldu ?
+  Event         → izlenen bit'te FALSE→TRUE kenarı var mı ? (yazılım polling)
+  Status        → izlenen bit TRUE mu ? (seviye polling)
+  External Event→ donanım IRQ bayrağı set mi ? (interrupt-driven)
+```
+
+Kritik fark: **Event ve Status yazılımsal polling'dir** (scheduler bit'i her interval örnekler), **External Event donanımsaldır** (IRQ doğrudan tetikler). Bu yüzden Event task scheduler interval'inden hızlı sinyalleri kaçırır (Not 5), External Event ise kaçırmaz ama kesme overhead'i taşır. "Event" ve "External Event" isim benzerliğine rağmen tamamen farklı mekanizmalardır.
+
+### Freewheeling'in "Bekleme" Hesabı Neden Var?
+
+Freewheeling saf "bittiği an yeniden başla" olsaydı, CPU'yu %100 kilitler ve hiçbir alt task çalışamazdı. CODESYS, freewheeling task'a bilinçli bir kısa bekleme (önceki exec süresinin bir oranı) ekler. Bu, alt öncelikli task'lara ve OS'e "nefes alma" penceresi açar. Yani freewheeling tam olarak "serbest" değildir; sistemi kilitlememek için kasıtlı throttle içerir. Bu tasarım, "freewheeling tüm CPU'yu alır" ezberinin neden tam doğru olmadığını açıklar — alt task'lar yine de az da olsa çalışır.
+
+### Neden PID İçin Cyclic Zorunlu? — Matematik
+
+PID'in integral ve türev terimleri Δt (örnekleme periyodu) içerir:
+
+```
+I_term += Ki × error × Δt
+D_term  = Kd × (error - error_prev) / Δt
+```
+
+Freewheeling'de Δt her döngüde değişir (8ms, 15ms, 9ms...). Eğer kod sabit bir `fCycleTime` parametresi kullanırsa (gerçek Δt'den sapan), integral birikimi ve türev tahmini sistematik olarak hatalı olur → salınım. Eğer kod gerçek ölçülen Δt'yi kullanırsa, gürültülü/değişken Δt türev terimini patlatır. İki durumda da kontrol bozulur. Cyclic'in sabit Δt'si bu matematiği geçerli kılan tek koşuldur. Bu, "Freewheeling PID'i bozar" kuralının altındaki gerçek sebeptir — alışkanlık değil, matematik.
+
+### Event Task ve Determinizm Felsefesi (fundamentals/01 ile bağ)
+
+`fundamentals/01_runtime_architecture.md`'deki "determinizm" felsefesi burada da geçerlidir: Event ve External Event task'lar **asenkron**tır — yani ne zaman çalışacakları önceden bilinemez. Bu, deterministik tasarımla gerilim içindedir. CODESYS bu yüzden çoğu kontrol mantığını Cyclic'te tutmayı teşvik eder ve Event'i nadir, izole olaylarla sınırlar. Asenkron tetikleme güçlüdür ama "her döngü öngörülebilir" garantisini zayıflatır; uzman, bu ödünleşimi bilerek Event'i seçer.
 
 ## İlgili Konular
 

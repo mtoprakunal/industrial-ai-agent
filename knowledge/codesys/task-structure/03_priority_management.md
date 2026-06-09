@@ -2,8 +2,8 @@
 KONU        : CODESYS Task Öncelik Yönetimi
 KATEGORİ    : codesys
 ALT_KATEGORI: task-structure
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_task_mapping_in_the_linux_system.html"
     başlık: "CODESYS Online Help — Mapping of Task Priorities on Linux"
@@ -490,6 +490,111 @@ Bir test sistemi projesinde SysLibSem ile korunan bir buffer'a Task_Fast (Prio:1
 
 **Not 5 — "Prio 0 Her Şeye" Antikalibi**  
 Deneyimsiz bir yapılandırmada tüm task'lar Prio:0'a ayarlanmıştı. Scheduler round-robin çalıştırdı, HMI task'ı güvenlik task'ıyla aynı öncelikte yarışıyordu. Sonuç: E-stop tepki süresi tutarsız, bazen 50ms buluyordu. Mimari sıfırdan tasarlandı; 5 farklı öncelik seviyesi tanımlandı.
+
+**Not 6 — IEC Prio 0 ≠ Linux Prio 99 (RT Throttling Tuzağı)**  
+Bir geliştirici "en yüksek öncelik" için Prio:0 verdi ve task'ın asla kesilmemesini bekledi. Ama task ara sıra mikro-gecikmeler yaşadı. Neden: IEC Prio:0 → Linux RT ~79, oysa Linux'un kendi RT throttling mekanizması (`/proc/sys/kernel/sched_rt_runtime_us`, varsayılan 950000/1000000) RT thread'lerin CPU'nun **%95'inden fazlasını** sürekli almasını engeller — kalan %5'i normal task'lara ayırır. Bir IEC task gerçekten %95+ CPU isterse, kernel onu periyodik olarak "throttle" eder. Ders: Hard-RT izolasyon için RT throttling'i bilinçli yönetin (izole çekirdekte kapatılabilir); "Prio:0 = mutlak hâkimiyet" yanlıştır, kernel araya girer.
+
+**Not 7 — Aynı Öncelikte İki Task: Tanımsız Sıra**  
+İki task aynı Prio:2'deydi; geliştirici A'nın hep B'den önce çalışacağını varsaydı (proje ağacındaki sıraya göre). Bir CODESYS sürüm güncellemesinden sonra sıra değişti, A'nın hazırladığı veriyi B önce okudu → bir scan gecikme. Ders: İki task arasında sıra bağımlılığı varsa **farklı öncelik** verin; aynı öncelikte sıra garanti değildir ve sürümler arası değişebilir. Sıra önemliyse onu kodla (tek task içinde sıralı çağrı) zorla.
+
+**Not 8 — Multicore'da Önceliğin Anlamı Değişir**  
+Tek çekirdekte Prio:0 task, Prio:5'i her zaman keser. Ama task'lar farklı çekirdeklere atandığında (V3.5 SP11+ `Core` parametresi) **ikisi de aynı anda** çalışır — preemption yok, çünkü farklı CPU'lardalar. Bir mühendis race condition'ı "Prio farkı korur" diye düşündü; multicore'da iki task gerçekten paralel çalışınca klasik shared-memory race patladı. Ders: Multicore'da öncelik, çekirdek-içi sıralama yapar; çekirdekler-arası koruma sağlamaz. Paralel çekirdeklerde atomik erişim / mutex zorunludur.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Atomiklik Sınırları (Race Condition'ın Kökü)
+
+Hangi atamalar tek instruction'da (atomik) tamamlanır, hangileri bölünebilir?
+
+```
+Genelde atomik (hizalı, ≤ word boyutu):   BOOL, BYTE, WORD, INT, DINT, DWORD, REAL (32-bit)
+GENELDE atomik DEĞİL (bölünebilir):        LREAL/LINT (64-bit, 32-bit platformda),
+                                            STRING, ARRAY, STRUCT (çok-word),
+                                            POINTER (64-bit platformda kısmen)
+```
+
+**Edge case:** 32-bit ARM'da `LREAL` ataması iki 32-bit yazmaya bölünür; preemption ortada olursa okuyan task yarısı eski yarısı yeni bir "Frankenstein" değer görür. 64-bit platformda aynı `LREAL` atomik olabilir. Yani race güvenliği **platform word boyutuna** bağlıdır — kod taşınınca sessizce bozulabilir. Çok-word veriler için daima buffer/mutex deseni.
+
+### Priority Inheritance'ın Sınırları
+
+CODESYS `SysSem`/`SysLibSem` mutex'i priority inheritance sunar — ama yalnızca **CODESYS mutex'i** için. Şunlar inheritance kapsamı dışındadır ve sınırsız öncelik tersine dönmesi yaratabilir:
+
+```
+- Harici C kütüphanesi içindeki kilitler
+- Dosya sistemi / OS çağrıları (open, write, flush)
+- OPC UA stack'in iç kilitleri
+- Ağ soketi blocking çağrıları
+```
+
+Bunları yüksek öncelikli task'tan **asla** doğrudan çağırmayın; düşük öncelikli bir task'ın tutabileceği bir OS kaynağında bekleyen yüksek öncelikli task, inheritance olmadan süresiz bloke olabilir.
+
+### Watchdog ve Öncelik Etkileşimi (Omitted Cycle)
+
+Düşük öncelikli bir task, yüksek öncelikli task'lar CPU'yu sürekli tüketirse **hiç çalışamaz** → "omitted cycle watchdog" tetiklenir (`fundamentals/01`). Yani starvation, sadece "yavaş çalışma" değil, watchdog STOP'a kadar gidebilir. Düşük öncelikli kritik-olmayan task'ların watchdog'unu, starvation'ı tolere edecek kadar geniş (veya kapalı) tutmak gerekebilir — aksi halde sağlıklı bir starvation, sistemi gereksiz yere durdurur.
+
+### Linux SCHED_OTHER Sınırı (IEC Prio ≥13)
+
+IEC Prio 13+ → Linux SCHED_OTHER (RT değil). Bu task'lar OS'in normal CFS scheduler'ında, **tüm sistem servisleriyle** (apt, log rotation, ssh) yarışır. Prio:15 bir log task'ı, ağır bir OS işlemi sırasında saniyelerce CPU alamayabilir. RT garantisi yalnızca IEC Prio ≤12'ye kadardır; bunu aşan hiçbir task'a zamanlama güveni duyulmamalıdır.
+
+## Optimizasyon
+
+### Öncelik + Cycle Time + Çekirdek: Üç Boyutlu Yerleşim
+
+Modern multicore IPC'de optimizasyon, sadece öncelik değil çekirdek yerleşimidir:
+
+```
+Çekirdek 0-1: OS + IRQ + IEC Prio ≥13 (SCHED_OTHER) task'lar
+Çekirdek 2  : Task_Fast/Motion (Prio 0-1) — izole, RT, tek başına
+Çekirdek 3  : Task_Control (Prio 2) + EtherCAT — izole, RT
+
+→ isolcpus=2,3 + her RT task'a Core ataması
+→ Kritik motion task'ı, başka hiçbir şeyin koşmadığı bir çekirdekte
+  → jitter dramatik düşer
+```
+
+Bu, tek çekirdekte preemption ile çözülen sıralamayı, fiziksel ayrıştırmayla çözer — en yüksek determinizm seviyesi.
+
+### Kritik Bölgeyi Küçültme (Lock-Free'e Yaklaşma)
+
+```iecst
+(* En iyi: lock'suz tek-yazar/tek-okur — atomik word ile *)
+(* Yazar task: tek DWORD/REAL atama → atomik, lock gerekmez *)
+GVL.rLatest := fbCalc.fResult;
+
+(* Çok-word veri gerekiyorsa: double-buffer + atomik index swap *)
+aBuffer[nWriteIdx] := stBigRecord;   (* aktif olmayan buffer'a yaz *)
+GVL.nActiveIdx := nWriteIdx;          (* tek WORD swap — atomik yayınla *)
+nWriteIdx := 1 - nWriteIdx;
+(* Okur task GVL.nActiveIdx'i okuyup o buffer'ı okur — hiç lock yok *)
+```
+
+Double-buffer (ping-pong), mutex'in priority inversion riskini tamamen ortadan kaldırır — yüksek performanslı task-arası paylaşımın altın standardıdır.
+
+### IRQ Önceliklerini Ayarlama
+
+EtherCAT/PROFINET kullanan sistemlerde ağ IRQ'sunun önceliği, fieldbus task'ı ile uyumlanmalıdır. Doğru sıralama: **IEC fieldbus task > ağ IRQ > diğer IRQ'lar**. PLC Shell `irq-set-prio` ile veya Linux `chrt`/`tuned` ile IRQ thread öncelikleri ayarlanır. Yanlış IRQ önceliği, mükemmel task tasarımını bile sync kaybıyla bozar.
+
+## Derin Teknik Detay
+
+### Neden Preemptive? V2 Cooperative'den Geçiş
+
+CODESYS V2 cooperative (substituting) idi: aynı öncelikteki task biri bitmeden diğeri başlamaz, düşük öncelikli yüksek önceliği kesemezdi — basit ama bir uzun task tüm sistemi geciktirebilirdi. V3 preemptive'e geçti çünkü:
+
+- **Determinizm garantisi:** Yüksek öncelikli (güvenlik, motion) task'ın, düşük öncelikli bir task'ın uzun exec'i yüzünden gecikmemesi gerekir. Preemption, "kritik olan her zaman önce" garantisini sağlar.
+- **Modern donanım:** Preemption, hızlı bağlam değiştirme (context switch) gerektirir; V3 döneminin işlemcileri bunu ucuza yapar.
+- **Bedeli:** Race condition yüzeyi açılır (V2'de iki task birbirini kesemediği için çoğu paylaşım otomatik güvenliydi). Bu yüzden V2'den taşınan kodda gizli race'ler ortaya çıkar (Not 4'teki tuzak). Preemption, güç ve sorumluluğu birlikte getirir.
+
+### IEC Önceliğinin Linux RT Priority'ye Eşlenmesi — Neden 79 Tavan?
+
+IEC Prio:0 → Linux RT 79'dur, 99 değil. Bu kasıtlıdır: Linux'ta RT priority 99'a yakın değerler, kernel'in kendi kritik thread'leri (migration, watchdog, RCU) tarafından kullanılır. CODESYS task'ı 99'a çıksaydı, kernel'in hayati thread'lerini aç bırakıp sistemi kararsızlaştırabilirdi. 79 tavanı, IEC task'larına geniş bir RT bandı (67-79) verirken kernel'in nefes alanını korur. Bu, "CODESYS neden 99 vermiyor" sorusunun cevabıdır — daha yüksek her zaman daha iyi değildir; OS ile birlikte yaşamak gerekir.
+
+### Priority Inversion'ın Klasik Örneği: Mars Pathfinder
+
+Priority inversion teorik bir endişe değildir — 1997 Mars Pathfinder görevinde aynı desen (yüksek öncelikli görev, düşük önceliklinin tuttuğu mutex'te beklerken orta öncelikli görevler araya girdi) sürekli sistem reset'lerine yol açtı; çözüm uzaktan priority inheritance'ı açmak oldu. CODESYS'te `SysSem`'in inheritance desteği bu dersin yansımasıdır. Endüstriyel bir makinede aynı desen, motion task'ının bir log task'ının tuttuğu kaynakta beklerken HMI task'ı tarafından dolaylı bloke edilmesi olarak görünür — sonuç, motion'da öngörülemeyen gecikmedir.
+
+### Scheduler'ın Karar Anı (fundamentals/01 ile bağ)
+
+Öncelik kararı, `fundamentals/01`'deki scheduler'ın her tick'te verdiği "şimdi kim çalışmalı" kararının çekirdeğidir. Preemptive modelde bu karar **her interrupt'ta** (yalnızca task bitiminde değil) yeniden verilir: yüksek öncelikli bir task hazır olur olmaz, scheduler çalışan düşük öncelikliyi anında askıya alır. Bu "anında" müdahale, Linux'ta RT-preempt kernel'in sağladığı şeydir — standart kernel'de scheduler ancak belirli noktalarda araya girebilir, bu da öncelik garantisini zayıflatır. Yani "öncelik doğru çalışsın" istiyorsanız, alttaki kernel'in preemption yeteneği (RT-preempt) önceliğin kendisi kadar önemlidir.
 
 ## İlgili Konular
 
