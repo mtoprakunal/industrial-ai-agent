@@ -2,7 +2,7 @@
 KONU        : HMI Teknoloji Seçimleri — Karar Kaydı
 KATEGORİ    : decisions
 ALT_KATEGORI: hmi-technology
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/hmi/_synthesis.md"
@@ -544,6 +544,114 @@ Birden fazla fabrika lokasyonu olan projede "her fabrikaya ayrı web HMI mı, yo
 **Karar Notu 6 — Vue CPU avantajı gerçek, ama React ile de çözülebilir**
 
 Aynı uygulamayı Vue 3 + Pinia ile %18 CPU, React.memo/useMemo olmadan %60+ CPU olarak ölçüldü. Bu Vue'yu her zaman daha iyi yapmaz; granüler selector + React.memo uygulanan React projesi de düşük CPU'ya ulaşır. **Fark geliştirme çabasıdır:** Vue'da performans "ücretsiz" gelir; React'ta ek iş ister. Ekip yetkinliği bu kararı belirler. (Kaynak: web-based/_synthesis.md — Not 4)
+
+**Karar Notu 7 — SCADA Lisans Modeli Karar Tablosunu Tersine Çevirdi**
+
+Bir tesiste "30 ekran eşiği aşıldı, SCADA'ya geçelim" kararı verildi; ancak seçilen platformun lisansı tag bazlıydı (per-tag) ve tesis 80.000 tag'e ulaşıyordu. Lisans maliyeti web HMI'ı sıfırdan yazma maliyetinin üç katı çıktı. Ignition'ın unlimited-tag modeli ile karşılaştırma yapılmadan karar verilmişti. Ders: SCADA kararında "ekran sayısı" eşiği tek başına yeterli değil; lisans modeli (per-tag, per-client, per-server, unlimited) toplam sahip olma maliyetini belirler ve karar matrisini tersine çevirebilir. (Kaynak: hmi/_synthesis.md — SCADA Platform karşılaştırması)
+
+**Karar Notu 8 — Panel HMI Flash/RAM Limiti Ekran Sayısını Donanım Seçiminden Önce Kilitledi**
+
+Bir OEM projesinde iX Developer ile 35 ekranlık görece zengin bir arayüz tasarlandı; küçük X2 paneline transfer edilince proje build başarısız oldu — panel flash ve RAM kapasitesi aşılmıştı. Trend buffer ve görsel asset'ler hesaba katılmamıştı. Daha büyük panel modeline geçildi, BOM maliyeti arttı. Ders: Panel-HMI'da ekran sayısı + trend buffer + görsel varlık boyutu, panel donanım sınıfını (flash/RAM) baştan belirler. Donanım seçilmeden ekran kapsamı dondurulmamalı. (Kaynak: ix-developer/01_architecture.md)
+
+**Karar Notu 9 — WebSocket Ölçeklenmesi 50 İstemcide Backend Mimarisini Değiştirdi**
+
+Web HMI başlangıçta tek Node.js instance ile her tarayıcıya ayrı OPC UA subscription kopyası gönderecek şekilde yazılmıştı. 50 operatör tabletine çıkınca backend CPU %95'e dayandı; her istemci için ayrı serialization yapılıyordu. Çözüm: tek OPC UA subscription → tek serialization → tüm WebSocket istemcilerine fan-out (broadcast) mimarisine geçildi. Ders: Web HMI'da "kaç eşzamanlı istemci?" sorusu backend'in subscription-paylaşımı/broadcast mimarisini baştan belirler; per-client subscription modeli 10 istemciden sonra çöker. (Kaynak: web-based/_synthesis.md)
+
+---
+
+## Edge Case'ler ve Sistem Limitleri
+
+HMI teknoloji kararı, sistem normal yükte değil **uç koşullarda** (çok istemci, ağ kopması, büyük ekran sayısı, regülasyon denetimi) test edildiğinde doğrulanır. Aşağıdaki limitler karar anında bilinmeli — çoğu, ölçek büyüyene kadar görünmez.
+
+### Teknoloji Bazlı Sert Limitler
+
+| Limit | Değer / Eşik | Karar Etkisi |
+|---|---|---|
+| **CODESYS OPC UA MaxSessions** | Varsayılan 10 | Masaüstü HMI çoklu kullanıcıda `BadTooManySessions`; web HMI tek backend ile çözer |
+| **WebVisu pratik ekran sınırı** | < 15–20 ekran | Aşılırsa render/transfer yavaşlar; başlangıçta web HMI'a geç |
+| **Panel-HMI flash/RAM** | Model bazlı (X2 < X3) | Ekran + trend buffer + asset toplamı kapasiteyi belirler (Karar Notu 8) |
+| **iX OPC UA Server oturumu** | Maks 20 oturum | Panel üzerinden çoklu uzak izleme bu limite takılır |
+| **Web HMI eşzamanlı istemci** | Broadcast mimarisiyle yüzlerce; per-client ile ~10 | Backend mimarisi baştan belirlenmeli (Karar Notu 9) |
+| **Masaüstü HMI dağıtımı** | Her PC'ye ayrı kurulum | N kullanıcı = N kurulum + N bakım; ölçek dostu değil |
+| **Namespace index** | Runtime sürümüyle değişir (ns=3/4/5) | Hardcode `ns=4` sessiz veri kesintisine yol açar |
+
+### Hata ve Sınır Senaryoları
+
+```
+SENARYO                              → DAVRANIŞ / KARAR ETKİSİ
+──────────────────────────────────────────────────────────────────
+OPC UA bağlantısı kopar              → Stale veri gösterimi (68°C ekran / 92°C gerçek)
+                                       → Overlay + yazma disable + reconnect FULL_UPDATE zorunlu
+CODESYS sürümü yükseltilir           → Namespace index kayar; ns hardcode ise veri sessizce durur
+50+ eşzamanlı istemci (web)          → Per-client subscription backend'i çökertir → broadcast şart
+Çoklu masaüstü istemci (10+)         → MaxSessions dolar → BadTooManySessions → sistem çöker
+WebVisu 40 ekrana büyür              → Performans çöküşü üretimde fark edilir; mimari borç patlar
+ws:// ile üretime alınır             → IT denetimi "açık metin komut" bulgusu → acil migrasyon
+Audit log sonradan eklenir           → Geçmiş tüm yazmalar anonim kalır; regülasyon bulgusu
+Panel firmware her makinede ayrı     → 20 makine = 20 saha ziyareti → bakım yükü patlar
+```
+
+### Offline / Bağlantı Kopma Davranışı (Teknolojiye Göre)
+
+- **Web HMI:** Sunucu bağımlı. Tarayıcı cache ile kısmi offline; ama yazma kesinlikle disable edilmeli, stale veri görsel olarak işaretlenmeli. Reconnect'te FULL_UPDATE zorunlu (kısmi güncelleme stale tag bırakır).
+- **Panel-HMI / Masaüstü HMI:** Yerel runtime PLC ile doğrudan konuştuğu için ağ omurgası kopsa bile çalışır; ama PLC-panel arası fiziksel kopma için connection-timeout parametresi doğru ayarlanmalı, aksi halde panel de stale veri gösterir.
+- **SCADA:** Server'a bağımlı; thin client server kopunca işlevsizdir. Yedekli (redundant) historian/gateway mimarisi gerektirir.
+
+**Sınır aksiyomu:** Hiçbir HMI teknolojisi "bağlantı kopması olmaz" varsayamaz. Bağlantı kopma davranışı (overlay + yazma disable + reconnect) seçilen teknolojiden bağımsız olarak **0. gün gereksinimidir** — sonradan eklenince üretimde keşfedilir (Karar Notu 2).
+
+---
+
+## Optimizasyon
+
+Bu bir karar-rehberi belgesi olduğundan optimizasyon, "doğru HMI teknolojisini en az geri dönüşle seçmek" ve "seçilen teknolojinin maliyet/risk dengesini iyileştirmek" anlamına gelir.
+
+### Karar Sürecini Optimize Etmek
+
+- **Önce ölçek + erişim + historian üçlüsünü dondur.** Bu üç eksen teknolojiyi neredeyse tek başına belirler: < 15 ekran + makine başı + historian yok → WebVisu/panel; 15–100 ekran + gezici operatör → web HMI; 100+ ekran + historian kritik → SCADA. Diğer kriterler (framework seçimi, dil) bu eksenler dondurulduktan sonra gelir.
+- **Geri dönüşü pahalı kararı erken ver.** Maliyet sıralaması (pahalıdan ucuza): SCADA platform seçimi → panel donanım sınıfı → backend protokol (OPC UA vs Modbus) → frontend framework (Vue vs React). Yanlış SCADA lisans modeli (Karar Notu 7) en pahalı geri dönüştür; Vue↔React geçişi en ucuzdur.
+- **"Büyürsek geçeriz" kararını yasakla.** WebVisu → web HMI geçişi ertelenirse mimari borç üretimde patlar (Yanlış Karar 3). Başlangıçta > 15 ekran öngörülüyorsa doğrudan web HMI kur.
+
+### Maliyet / Risk Trade-Off Matrisi
+
+| Karar Ekseni | Düşük Maliyet Yönü | Düşük Risk Yönü | Optimizasyon İlkesi |
+|---|---|---|---|
+| Teknoloji | WebVisu / Web HMI (sıfır lisans) | SCADA (dahili historian/alarm) | Historian + ekran sayısı eşiği belirleyici; lisans modelini doğrula |
+| Frontend | Vue 3 (performans bedava) | React (büyük ekip + TS) | Ekip yetkinliği ve uygulama boyutu |
+| Protokol | Modbus (legacy, dakikalar) | OPC UA (push, kalite, güvenlik) | OPC UA sunucusu varsa OPC UA; toplu okuma + filtre zorunlu |
+| Backend ölçek | Tek instance | Broadcast + yedekli | Eşzamanlı istemci sayısı; 10+ ise broadcast şart |
+| Dağıtım | Panel-HMI (yerel) | Web HMI CI/CD (merkezi) | Makine sayısı; çok makine → merkezi güncelleme |
+
+### En İyi Uygulamalar
+
+- **0. gün mimarisi:** ISA-18.2 alarm state machine, RBAC, audit log ve wss:// ilk sürüme dahil edilmeli — bunlar "sonra eklenir" denilemeyen, geçmişi geri getiremeyen kararlardır (Yanlış Karar 4, 5).
+- **Tek subscription, çok istemci:** Web HMI backend'i daima tek OPC UA subscription → tek serialization → broadcast olarak tasarla; bu hem MaxSessions limitini hem CPU'yu hem maliyeti aynı anda optimize eder.
+- **Karar kaydı tut:** Her HMI kararı için gerekçe + reddedilen alternatif + büyüme tetikleyicisi (örn. "40 ekrana çıkınca SCADA'ya geç") yazılmalı; bu, "büyürsek geçeriz" tuzağını ölçülebilir bir eşiğe dönüştürür.
+
+---
+
+## Derin Teknik Detay
+
+Bu bölüm, dört yaklaşım arasındaki farkların **neden** var olduğunu mekanizma düzeyinde açıklar — karar matrisi "ne seç" der, burası "neden böyle davranır" der.
+
+### Push vs Polling: Subscription'ın İçi (Tüm Teknolojileri Bağlayan Mekanizma)
+
+Web, masaüstü ve SCADA HMI'ların tamamı modern PLC'de OPC UA subscription kullanır; panel-HMI dahili client'ı da öyle. Subscription'da sunucu tarafında her MonitoredItem için bir **sampling interval** ve **deadband** tanımlıdır: sunucu değeri kendi içinde örnekler, yalnızca deadband'i aşan değişimi NotificationMessage'a koyar ve publishing interval'da gönderir. Modbus polling'de ise istemci her cycle'da tüm register bloğunu okur — değişim olup olmadığını bilemez. Sonuç: ağ trafiği veri değişim hızıyla orantılıdır, polling frekansıyla değil. Bir HMI'da 200 tag'in saniyede 5'i değişiyorsa subscription 5 değer, polling 200 değer taşır. Web HMI'ın 50 istemciyi tek backend'le besleyebilmesinin temeli budur: backend tek subscription'dan gelen değişimi alır, bir kez serialize eder, tüm WebSocket istemcilerine fan-out eder.
+
+### Namespace Index Neden Dinamik?
+
+OPC UA adres uzayında her node `ns=<index>;<identifier>` biçiminde adreslenir. `ns` index'i bir **NamespaceArray** içindeki URI'nin sıra numarasıdır ve bu sıra runtime başlangıcında, yüklenen modüllerin sırasına göre belirlenir. CODESYS sürümü değişince veya yeni bir uzantı eklenince array yeniden düzenlenir ve aynı URI farklı index'e kayabilir (ns=4 → ns=3). Bu yüzden `ns=4` hardcode etmek değil, her session başında `getNamespaceIndex(uri)` / `get_namespace_index(uri)` ile URI'den index çözmek doğrudur. Index sessizce kaydığında istemci yanlış node'u okur — hata fırlatmaz, sadece veri durur (Yanlış Karar 8). Bu mekanizma web HMI, masaüstü HMI ve panel-HMI için ortaktır.
+
+### Reaktivite: Vue Proxy vs React Render Modeli
+
+Vue 3'ün düşük CPU'su tesadüf değil, **reaktivite mimarisinin** sonucudur. Vue, state'i bir `Proxy` ile sarar ve her bileşenin hangi tam alana eriştiğini render sırasında izler (dependency tracking); yalnızca o alan değişince ilgili bileşen yeniden render edilir. React'ta ise bir state değişimi varsayılan olarak tüm alt ağacın yeniden render'ını tetikler; bunu önlemek için geliştirici `React.memo`, `useMemo` ve granüler selector'larla manuel olarak optimize etmek zorundadır. 200 tag / 50 güncelleme/s yükünde optimize edilmemiş React %60+ CPU yer, Vue otomatik dependency tracking ile %18'de kalır. "Vue daha iyi" değil, "Vue performansı varsayılan, React'ta kazanılır" doğru ifadedir — fark geliştirme çabasıdır.
+
+### Panel-HMI ve SCADA'da "Dahili" Olanın Bedeli
+
+Panel-HMI ve SCADA'nın "alarm/historian/reçete dahili" avantajı, aslında **monolitik runtime + tescilli format** demektir. Dahili alarm motoru ISA-18.2 state machine'i hazır verir (state, acknowledge, shelving) — web HMI'da bunu sıfırdan yazmak gerekir. Ama bedeli: proje binary/tescilli formatta saklanır, Git ile satır bazlı diff alınamaz, CI/CD'ye sokulamaz, başka markaya taşınamaz. Web HMI'da her şey kod (metin) olduğu için versiyon kontrolü ve otomatik dağıtım doğaldır ama alarm/historian altyapısı geliştirme maliyetidir. Bu, "yapma vs satın alma" (build vs buy) ikileminin HMI'daki tam karşılığıdır: dahili özellik geliştirme süresini düşürür, esnekliği ve taşınabilirliği düşürür.
+
+### MaxSessions Neden Masaüstü HMI'ı Ölçeklenemez Kılar?
+
+CODESYS OPC UA sunucusu her istemci bağlantısı için bir **session** ayırır ve varsayılan tavan 10'dur (kaynak koruması için). Masaüstü HMI (PyQt + asyncua) her instance'ı ayrı bir session açar; 10 mühendis 10 instance çalıştırınca 11. bağlantı `BadTooManySessions` alır. Web HMI bu sorunu mimari olarak çözer: 50 tarayıcı tek Node.js backend'e WebSocket ile bağlanır, backend PLC'ye **tek** OPC UA session açar. Yani limit aşımı bir kapasite sorunu değil, bir **mimari topoloji** sorunudur — N istemci → N session (masaüstü) vs N istemci → 1 session (web backend). Çoklu kullanıcı gereksinimi ortaya çıktığı an doğru teknoloji web HMI'dır; MaxSessions tavanını yükseltmek değil, topolojiyi değiştirmek çözümdür.
 
 ---
 

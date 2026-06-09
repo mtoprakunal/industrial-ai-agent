@@ -2,7 +2,7 @@
 KONU        : Endüstriyel Otomasyon Mimari Tasarım Kararları
 KATEGORİ    : decisions
 ALT_KATEGORI: architecture
-SEVİYE      : İleri
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/codesys/fundamentals/01_runtime_architecture.md"
@@ -776,6 +776,112 @@ Bir projenin web HMI'ı bağlantı kopma durumunu ele almıyordu: OPC UA bağlan
 **Not 7 — SL Lisansla CPU Pinlemenin Sınırları**
 
 4 çekirdekli sistemde SL lisansla taskset ile affinity denenince görünürde çalıştı; ancak periyodik jitter spike'ları devam etti. Multicore (MC) lisansıyla Task Groups ataması yapılınca RT görevi Core 3'e gerçekten kilitlendi, spike'lar tamamen ortadan kalktı. Ders: Performans kritik projelerde MC lisansı başlangıçtan itibaren bütçeye dahil edilmeli.
+
+**Not 8 — Merkezi Mimariden Dağıtığa Geçişte Saat Senkronizasyonu Unutuldu**
+
+Tek IPC'li merkezi bir tesise sonradan ikinci bir kontrolcü eklendi (dağıtık mimariye geçiş, Karar 4). İki IPC'nin sistem saatleri 4 saniye kaymıştı; historian'da iki hattan gelen olaylar yanlış sıralanıyor, alarm korelasyonu anlamsız hale geliyordu. NTP yapılandırılmamıştı çünkü tek IPC döneminde gerek yoktu. Çözüm: iDMZ'de bir PTP/NTP master kuruldu, tüm kontrolcüler ve SCADA aynı kaynağa senkronlandı. Ders: Dağıtık mimariye geçiş kararı (Karar 4) verildiği anda zaman senkronizasyonu mimarinin parçasıdır — sonradan eklenince geçmiş veri korelasyonu kurtarılamaz.
+
+**Not 9 — Edge'den Buluta MQTT Köprüsü iDMZ'i Baypas Etti**
+
+Hibrit edge/bulut kararı (Karar 8) verilen bir projede, devreye alma telaşıyla MQTT publisher doğrudan L1 kontrol VLAN'ından (VLAN 50) internete açıldı. Purdue segmentasyonu (Karar 6) kağıt üzerinde doğruydu ama tek bir outbound bağlantı tüm modeli delmişti. Bir güvenlik denetiminde "kontrol katmanından internete doğrudan oturum" bulgusu çıktı. Çözüm: MQTT publisher iDMZ'deki (VLAN 20) bir edge gateway'e taşındı; L1 yalnızca iDMZ ile OPC UA üzerinden konuşur, buluta çıkış iDMZ'den olur. Ders: Buluta giden tek bir bağlantı bile Purdue katmanlarına saygı göstermek zorundadır; "sadece outbound" mazereti segmentasyonu geçersiz kılmaz.
+
+**Not 10 — Tek Application'da Online Change'in Gizli Maliyeti**
+
+Tek Application mimarisi (Karar 2) seçilen 7/24 bir hatta küçük bir mantık düzeltmesi Online Change ile yapıldı. Online Change retain değişkenleri korur ama büyük bir POU'nun yeniden derlenmesi sırasında scan cycle bir kez uzadı ve motion task watchdog'a yakın bir tepe gördü. Çok Application olsaydı yalnızca ilgili app yeniden yüklenecek, motion application hiç etkilenmeyecekti. Ders: Tek Application + Online Change kombinasyonunda her değişiklik tüm runtime'ın derleme ve bellek yeniden düzenlemesini tetikler; kritik motion içeren hatlarda Çok Application ile mantığı izole etmek bu riski ortadan kaldırır.
+
+---
+
+## Edge Case'ler ve Sistem Limitleri
+
+Mimari kararlar, sistem normal çalışırken değil sınır koşullarda test edildiğinde gerçek değerini gösterir. Aşağıdaki sınırlar karar verirken önceden bilinmeli — çünkü bunların çoğu devreye almadan önce görünmez.
+
+### Platform ve Runtime Limitleri (Karar 1, 2, 3)
+
+| Limit | Tipik Değer / Eşik | Karar Etkisi |
+|---|---|---|
+| **CPU yük tavanı** | %70 sürekli, %80 üzeri watchdog riski | Task mimarisi (③) tasarlanırken Exec/Cycle oranı margin'le hesaplanmalı |
+| **Win SL jitter spike** | 50–100ms (Windows Update, AV, GPU sürücüsü) | Üretim için Win SL eler; geliştirme dışı kullanım yasak |
+| **OPC UA MaxSessions** | Varsayılan 10 (CODESYS) | Web HMI tek backend bağlantısı kullanmalı; çoklu masaüstü istemci limiti aşar |
+| **Çok Application sayısı** | Donanım/RAM bağımlı; pratikte 2–4 anlamlı | Her app ayrı task grupları ve bellek izolasyonu ister |
+| **Retain bellek boyutu** | Hedef bağımlı (genelde KB seviyesi) | Online Change'te retain alanı taşarsa veriler sıfırlanır |
+| **Event task frekansı** | Yüksek frekanslı olayda HALT riski | Nadir olaylar dışında R_TRIG + Cyclic kullan |
+
+### Ağ ve Topoloji Sınır Koşulları (Karar 6)
+
+- **MRP düğüm limiti:** 50 düğüm; aşılırsa kurtarma süresi garantisi (< 200ms) bozulur. Karışık üretici switch ortamında pratik kurtarma 350ms'e çıkabilir (bkz. Not 4) — watchdog buna göre ayarlanmalı.
+- **PROFINET RT/IRT eş zamanlama sınırı:** Fieldbus cycle = task cycle olmalı; uyumsuzluk drive titremesine yol açar. EtherCAT 2ms ise IPC bu cycle'ı %70 margin'le karşılayabilmelidir.
+- **VLAN ≠ güvenlik:** Layer-3 FW olmadan VLAN hopping ile aşılır. "VLAN var" güvenlik sınırı sayılmaz.
+- **WAN gecikmesi:** Dağıtık kontrolde (Karar 4) koordinasyon trafiği WAN üzerindeyse deterministik değildir; gerçek zamanlı karar asla WAN'a bağlı olmamalı.
+
+### Hata Senaryoları ve Davranış
+
+```
+SENARYO                          → SİSTEM DAVRANIŞI / KARAR ETKİSİ
+─────────────────────────────────────────────────────────────────
+Runtime lisansı süresi dolar     → 2 saat sonra runtime durur (demo mod), hat çöker
+                                   → Devreye almada lisans doğrulama zorunlu adım
+RT kota dolar (sched_rt_runtime) → IEC görevleri sessizce askıya alınır, log sessiz
+                                   → Watchdog'dan tehlikeli; perf sched ile izlenmeli
+EtherCAT NIC IRQ izole çekirdekte → Sync kaybı; IRQ housekeeping, thread izole çekirdek
+İDMZ'siz IT/OT bağlantısı çöker  → Fidye yazılımı L4'ten L1'e yayılır (NotPetya örüntüsü)
+HMI bağlantısı kopar             → Stale veri gösterimi; overlay + yazma disable zorunlu
+Dağıtık kontrolcü saati kayar    → Historian olay sıralaması bozulur (bkz. Not 8)
+```
+
+**Kritik sınır kuralı:** Bir mimari karar, en kötü durum senaryosunda (worst case) hâlâ güvenli mi? Gerçek zamanlı kontrol her zaman yerelde olmalı (Karar 8), güvenlik her zaman Prio:0 ve mümkünse ayrı sertifikalı PLC'de olmalı (Karar 1), IT/OT geçişi her zaman iki FW + iDMZ üzerinden olmalı (Karar 6). Bu üç kural "edge case" değil, tasarımın değişmez aksiyomudur.
+
+---
+
+## Optimizasyon
+
+Bu bir karar-rehberi belgesi olduğundan "optimizasyon" iki düzeyde anlam taşır: (1) karar **sürecinin** optimizasyonu — doğru kararı en az geri dönüşle vermek; (2) seçilen mimarinin maliyet/risk dengesini optimize etmek.
+
+### Karar Sürecini Optimize Etmek
+
+- **Kararları bağımlılık sırasına göre dondur.** Karar akış haritası (①→⑧) bir sıralama değil, bir bağımlılık grafiğidir. SoftPLC platformu (①) ve SIL gereksinimi en erken dondurulmalı çünkü bunlar geri alınması en pahalı kararlardır. HMI teknolojisi (⑦) en geç dondurulabilir — protokol katmanı (OPC UA subscription) sabitse HMI değiştirilebilir.
+- **Geri dönüşü pahalı kararları öne al.** Maliyet sıralaması (en pahalıdan ucuza): SIL/safety mimarisi → fieldbus seçimi → task mimarisi → IPC donanımı → ağ topolojisi → HMI teknolojisi → edge/bulut bölüşümü. Erken yanlış SIL kararı tüm mimariyi yeniden yazdırır; geç HMI değişikliği yalnızca sunum katmanını etkiler.
+- **"Fieldbus eklenirse ne olur?" sorusunu 0. günde sor.** Task mimarisini (③) baştan EtherCAT'e hazır tasarlamak 10 dakika; devreye almada yeniden tasarlamak 2 gün (Not 1). Bu, sürecin en yüksek ROI'li optimizasyonudur.
+
+### Maliyet / Risk Trade-Off Matrisi
+
+| Karar Eksenı | Düşük Maliyet Yönü | Düşük Risk Yönü | Optimizasyon İlkesi |
+|---|---|---|---|
+| Platform (①) | Linux SL (OS lisansı yok) | Donanım PLC / RTE SL | RT kritikliği ve ekip yetkinliğine göre dengele |
+| Application (②) | Tek Application | Çok Application (izolasyon) | 7/24 + canlı güncelleme varsa Çok Application'ın bedeli değer |
+| Kontrol (④) | Merkezi (tek IPC) | Dağıtık (özerk) | Fiziksel yayılım + WAN varsa dağıtık zorunlu |
+| Topoloji (⑥) | Yıldız | PRP / Hibrit MRP | Kabul edilebilir kesinti süresi belirleyici |
+| HMI (⑦) | Web HMI / WebVisu | SCADA (dahili historian) | Ekran sayısı + historian kritikliği eşiği |
+| Edge/Bulut (⑧) | Tam bulut (düşük donanım) | Tam edge (bağımsız) | Gerçek zamanlı kontrol asla buluta bağlanmaz |
+
+### En İyi Uygulama: Karar Kaydını Belgele
+
+Her mimari karar için **gerekçe + reddedilen alternatif + geri dönüş maliyeti** üçlüsü yazılmalı (ADR — Architecture Decision Record yaklaşımı). Altı ay sonra projeye katılan mühendis "neden Linux SL değil de RTE SL?" sorusunu kararın kendisinden değil, kayıttan öğrenmeli. Belgelenmemiş karar, geri dönüşü en pahalı borçtur. CPU yük hedefi %70 ile sınırlandığında zaten %30 büyüme payı bırakılmış olur — bu, sonradan task ekleme maliyetini optimize eden tek en güçlü tek parametredir.
+
+---
+
+## Derin Teknik Detay
+
+Bu bölüm, kararlardaki trade-off'ların **neden** var olduğunu mekanizma düzeyinde açıklar. Karar tablosu "ne seç" der; bu bölüm "neden böyle davranır" der.
+
+### SoftPLC vs Donanım PLC: Determinizmin Gerçek Kaynağı
+
+Donanım PLC'nin mikrosaniye determinizmi yazılımdan değil, **ayrık zamanlama donanımından** gelir: ASIC veya FPGA scan cycle'ı bir donanım sayacına bağlar, OS yoktur, kesme önceliği fiziksel olarak sabittir. SoftPLC'de ise scan cycle bir OS thread'idir ve determinizm tamamen **scheduler garantisine** bağlıdır. Linux PREEMPT_RT, çekirdek içindeki kesintisiz (non-preemptible) bölgeleri parçalayarak yüksek öncelikli RT thread'in herhangi bir anda CPU'yu kapabilmesini sağlar — ama bu yalnızca o thread izole bir çekirdekte (`isolcpus`) ve IRQ'lar başka çekirdeğe yönlendirilmişse işe yarar. İşte "donanım bağımsızlığı"nın gizli sınırı budur: IEC 61131-3 mantığı taşınabilir, ama determinizm garantisi donanım + OS + yapılandırma üçlüsünün eseridir ve taşınmaz.
+
+### Tek vs Çok Application: Bellek ve Lifecycle İzolasyonu
+
+CODESYS V3'te her Application kendi **bağımsız bellek alanına, kendi task setine ve kendi indirme/çalıştırma (download/boot) yaşam döngüsüne** sahiptir. Tek Application'da tüm POU'lar tek bir derleme ünitesidir; Online Change tüm sembol tablosunu ve bellek düzenini yeniden hesaplar (bkz. Not 10). Çok Application'da `Application_Diag` yeniden indirilirken `Application_Main`'in bellek alanına ve task'larına dokunulmaz — bu yüzden motion durmaz. Bedeli: GVL artık paylaşılan bellek değildir; applicationlar arası veri için açık bir kanal (shared memory, OPC UA, network variables) tasarlanmalıdır. Yani izolasyon "bedava" değildir; iletişim maliyetiyle satın alınır.
+
+### OPC UA Subscription vs Modbus Polling: Push'un İç Mekanizması
+
+Bu, HMI (⑦) ve protokol kararlarını birbirine bağlayan en kritik mekanizmadır. Modbus polling'de istemci her cycle'da tüm register bloğunu okur — PLC, verinin değişip değişmediğini bilmez, her istek tam round-trip maliyeti taşır. OPC UA subscription'da ise sunucu tarafında her MonitoredItem için bir **sampling interval** ve bir **deadband** tanımlıdır: sunucu değeri kendi içinde örnekler, yalnızca deadband'i aşan değişimi bir NotificationMessage'a koyar ve publishing interval'da gönderir. Yani ağ trafiği veri değişim hızıyla orantılıdır, polling frekansıyla değil. 200 tag'in saniyede yalnızca 5'i değişiyorsa, polling 200 değer/cycle taşır, subscription 5 değer taşır. CPU ve bant farkı buradan doğar — ve bu yüzden "polling her şeyi çözer" algısı yanlıştır (Çelişki kaydı).
+
+### Purdue Segmentasyonu: Neden Komşu-Olmayan Katman Yasağı?
+
+Purdue'nun "komşu olmayan katmanlar doğrudan konuşamaz" kuralı estetik değil, **saldırı yüzeyini matematiksel olarak küçültme** ilkesidir. L4'ten L1'e doğrudan yol varsa, L4'teki herhangi bir kompromize uç (ör. faturalama PC'si) L1 PLC'sine tek hop uzaklıktadır. Her zorunlu ara katman (iDMZ + iki FW) saldırganın yanal hareket için aşması gereken bir güvenlik sınırı ekler; iDMZ'deki jump server ve historian kopyası, gerçek kontrol katmanına asla doğrudan oturum açılmamasını sağlar. NotPetya örüntüsünde (Sık Yapılan Hatalar 3) tam olarak bu ara katmanların yokluğu, ofis ağındaki bir bulaşmanın SCADA ve PLC'ye yayılmasını sağladı. Modern tesislerde fiziksel Purdue yerine VLAN + L3 FW ile mantıksal Purdue uygulanır — ama yasağın kendisi değişmez (Çelişki kaydı).
+
+### Edge vs Bulut: Determinizm Neden Yerelde Kalmak Zorunda?
+
+Gerçek zamanlı kontrolün yerelde kalması bir tercih değil, **gecikme dağılımının doğası** gereğidir. Yerel fieldbus gecikmesi dar ve öngörülebilir bir dağılıma sahiptir (ör. EtherCAT < 100µs, jitter < 1µs). İnternet gecikmesi ise uzun kuyruklu (long-tail) bir dağılımdır: ortalama 30ms olabilir ama %99,9 persentil 2 saniye olabilir ve garanti edilemez. Kontrol döngüsü en kötü durum gecikmesine göre tasarlanmak zorundadır; long-tail dağılımda "en kötü durum" sınırsızdır. Bu yüzden bulut yalnızca gecikme-toleranslı katmanda (analitik, trend, ML tabanlı bakım tahmini) değer üretir — orada ortalama gecikme yeterlidir, worst-case önemsizdir. Aynı ayrım protokol seçiminde de geçerlidir: MQTT 4G üzerinde QoS + session ile bağlantısız çalışabildiği için telemetride kazanır, ama hiçbir zaman kontrol döngüsünü taşımaz.
 
 ---
 

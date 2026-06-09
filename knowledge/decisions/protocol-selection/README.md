@@ -2,7 +2,7 @@
 KONU        : Protokol Seçim Kararları — OPC UA / Modbus TCP / MQTT / Ham TCP Socket
 KATEGORİ    : decisions
 ALT_KATEGORI: protocol-selection
-SEVİYE      : Orta-İleri
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/protocols/_synthesis.md"
@@ -550,6 +550,119 @@ OPC UA ile kurulan sistemde başlangıçta SecurityMode None ile test yapıldı.
 **Not 7 — "Hangisi Daha Hızlı?" Sorusu Nadiren Doğru Soru**
 
 LAN içi 10-50ms aralığında dört protokolün tamamı yeterlidir. Gerçek fark performansta değil, operasyonel özelliklerde: Modbus TCP polling gerektirir (push yok), OPC UA subscription push sağlar, MQTT zaten push. 100ms periyotta sürekli polling ile subscription karşılaştırıldığında ağ trafiği ve CPU farkı önemsizdir. "En hızlı protokol" sorusu yerine "Bu senaryo için gerçekten hangi özellikler gerekiyor?" sorusu sorulmalı.
+
+**Not 8 — Modbus Float Byte Order'ı Üç Cihazda Üç Farklı Çıktı**
+
+20 marka enerji sayacı projesinde (Senaryo 2) float değerler bazı cihazlarda doğru, bazılarında çöp çıkıyordu. Modbus iki 16-bit register'ı float'a birleştirirken word order standardı yoktur: bir cihaz big-endian (ABCD), biri little-endian (DCBA), biri word-swapped (CDAB) kullanıyordu. Tek bir okuma fonksiyonu hepsini doğru çözemedi. Çözüm: her cihaz tipi için byte/word order konfigürasyona alındı, bilinen bir referans değerle (örn. nominal gerilim 230.0) kalibre edildi. Ders: Modbus "basit" olması protokolün eksikliklerini gizler; float ve 32-bit değerlerde byte order her cihaz için ayrı doğrulanmalı — bu, Modbus'un semantik katmanı olmamasının doğrudan bedelidir.
+
+**Not 9 — OPC UA Subscription Parametreleri Yanlış Ayarlanınca PLC CPU'su Doldu**
+
+Bir SCADA entegrasyonunda 2000 MonitoredItem için sampling interval 10ms ve deadband 0 (her örnek bildirilsin) ayarlanmıştı. Değerlerin çoğu yavaş değişen sıcaklıklardı ama sunucu saniyede 200.000 örnek alıp her birini bildiriyordu; CODESYS OPC UA görevinin CPU'su tavan yaptı, kontrol task'ı etkilendi. Çözüm: yavaş değişkenler için sampling 1s, deadband %1 (absolute) ayarlandı; trafik %95 düştü. Ders: Subscription "otomatik verimli" değildir — sampling interval ve deadband veri değişim hızına göre ayarlanmazsa push'un avantajı kaybolur, hatta polling'den kötü olur. OPC UA seçmek yetmez; doğru yapılandırmak gerekir.
+
+**Not 10 — Sparkplug B State Yönetimi Olmadan UNS "Zombi Tag" Üretti**
+
+Bir UNS projesinde (Senaryo 3) düz MQTT topic'leri ile başlandı; retain=true kullanılan telemetri topic'leri PLC offline olduğunda bile broker'da son değeri tutuyordu. Yeni bağlanan bir dashboard 3 saat önce ölmüş bir cihazın "son bilinen" değerini canlı veri sanıp gösterdi. Çözüm: Sparkplug B'ye geçildi — NBIRTH/NDEATH ve sequence number ile her cihazın durum yaşam döngüsü broker tarafından yönetildi, stale veri otomatik geçersiz işaretlendi. Ders: Ham MQTT'de retain + LWT yetersiz kalabilir; çok cihazlı UNS'de Sparkplug B'nin state yönetimi (BIRTH/DEATH/sequence) zombi tag sorununu yapısal olarak çözer.
+
+---
+
+## Edge Case'ler ve Sistem Limitleri
+
+Protokol kararı, sistem ideal LAN'da değil **sınır koşullarda** (kötü bağlantı, çok cihaz, byte order farkı, yanlış yapılandırma, güvenlik denetimi) test edildiğinde doğrulanır. Aşağıdaki limitler karar anında bilinmeli.
+
+### Protokol Bazlı Sert Limitler
+
+| Limit | Değer / Eşik | Karar Etkisi |
+|---|---|---|
+| **Modbus tek istek register** | Maks 125 holding register (FC03) | 200 tag = en az 2 istek; toplu okuma planlanmalı |
+| **Modbus adres alanı** | 65536 register / tip | Büyük tag sayısında adres haritası taşar |
+| **Modbus veri tipi** | Yalnızca 16-bit ham; float = 2 register, byte order belirsiz | 32-bit/float her cihazda ayrı doğrula (Not 8) |
+| **OPC UA MaxSessions** | CODESYS varsayılan 10 | Çok istemcili izleme limiti aşar; gateway/aggregation gerekir |
+| **OPC UA sampling/deadband** | Yanlış ayar = CPU patlaması | Push avantajı yapılandırmaya bağlı (Not 9) |
+| **MQTT mesaj boyutu** | Broker bağımlı (genelde 256MB teorik, pratik KB) | Büyük binary için Ham TCP, MQTT değil |
+| **MQTT QoS 2 overhead** | 4-way handshake | Yüksek frekansta QoS 0/1 tercih; QoS 2 nadir |
+| **Ham TCP framing** | Standart yok, elle yazılır | State machine + resync + checksum geliştirme maliyeti |
+
+### Bağlantı ve Hata Senaryoları
+
+```
+SENARYO                          → PROTOKOL DAVRANIŞI / KARAR ETKİSİ
+──────────────────────────────────────────────────────────────────────
+4G/LTE bağlantı kararsız         → OPC UA session belirsiz (timeout'a kadar); MQTT QoS+session kazanır
+PLC beklenmedik kopar            → MQTT LWT ile saniyede tespit; LWT yoksa dashboard saatlerce "Online"
+Modbus master kopar              → Slave register'lar son değerde donar; stale veri sessiz
+OPC UA güvenlik None ile test    → Üretime alırken SignAndEncrypt'e geçiş istemci kodunu yeniden yazdırır
+MQTT retain=true + cihaz ölür    → Zombi tag; yeni subscriber ölü değeri canlı sanır (Not 10)
+Modbus float yanlış byte order   → Çöp değer; her cihaz için ayrı kalibrasyon (Not 8)
+Port 502 internete açık          → FrostyGoop örüntüsü: doğrudan komut → fiziksel hasar
+Ham TCP framing kaybı            → Senkronizasyon bozulur; resync mantığı yoksa akış çöker
+```
+
+### Determinizm Sınırı (Tüm Protokoller için Ortak)
+
+```
+Gecikme bandı       → Uygun protokol
+────────────────────────────────────────────
+< 1ms (hard motion) → HİÇBİRİ. EtherCAT / PROFINET IRT zorunlu
+1–50ms (soft RT)    → Dört protokolün tamamı yeterli
+> 50ms (izleme)     → Operasyonel özellikler belirleyici, hız değil
+```
+
+**Sınır aksiyomu:** Bu dört protokolün hiçbiri (OPC UA, Modbus, MQTT, Ham TCP) TCP/IP üzerinde çalıştığı için **sert gerçek zamanlı motion kontrol** için kullanılamaz — bu bir yapılandırma sorunu değil, taşıma katmanının doğasıdır. < 1ms determinizm gerekiyorsa karar fieldbus katmanındadır (EtherCAT/PROFINET), bu belgenin kapsamı dışındadır.
+
+---
+
+## Optimizasyon
+
+Bu bir karar-rehberi belgesi olduğundan optimizasyon, "doğru protokolü en az geri dönüşle seçmek" ve "seçilen protokolün maliyet/risk dengesini iyileştirmek" demektir.
+
+### Karar Sürecini Optimize Etmek
+
+- **Önce "karşı taraf ne destekliyor?" sorusunu sor.** Bu tek soru kararların %60'ını çözer (Karar Ağacı Adım 1, Not 1). Eski SCADA yalnızca Modbus biliyorsa OPC UA planlamak haftaları boşa harcar. Protokol seçimi çoğu zaman bir mühendislik tercihi değil, ekosistem kısıtının keşfidir.
+- **Geri dönüşü pahalı kararı erken dondur.** Maliyet sıralaması (pahalıdan ucuza): güvenlik modu (OPC UA SecurityMode) → MQTT topic hiyerarşisi → protokol seçimi → byte order/serialization detayı. Yanlış güvenlik modu kararı istemci kodunu yeniden yazdırır (Not 6); yanlış topic tasarımı tüm subscriber'ları migrate ettirir (Yanlış Karar 5).
+- **Karmaşıklığı senaryo boyutuna eşle.** "Daha güçlü protokol daha iyi" yanılgısı en pahalı süreç hatasıdır: 3 float değer için OPC UA PKI kurmak (Yanlış Karar 6) ya da OPC UA varken Ham TCP yazmak (Yanlış Karar 4) hem geliştirme hem bakım borcudur.
+
+### Maliyet / Risk Trade-Off Matrisi
+
+| Karar Ekseni | Düşük Maliyet Yönü | Düşük Risk Yönü | Optimizasyon İlkesi |
+|---|---|---|---|
+| Protokol | Modbus TCP (dakikalar) | OPC UA (güvenlik + semantik) | Karşı taraf + güvenlik gereksinimi belirleyici |
+| Güvenlik | Modbus (izole LAN) | OPC UA SignAndEncrypt | IEC 62443/NIS2/FDA varsa OPC UA; modu baştan aktif et |
+| Dağıtım | Noktadan noktaya | MQTT broker (UNS) | Alıcı sayısı değişkense MQTT; sabitse doğrudan |
+| Bant kısıtı | Modbus (LAN) | MQTT QoS+session (WAN) | 4G/LTE → MQTT; LAN → fark önemsiz |
+| Geliştirme | Standart protokol | Standart protokol | Ham TCP yalnızca standart yoksa; aksi halde teknik borç |
+
+### En İyi Uygulamalar (Karar Dondurma Anı)
+
+- **Güvenlik modunu 0. günde seç ve test ortamında da aktif tut** — "sonra ekleriz" iki haftalık gecikme demektir (Not 6).
+- **MQTT topic'ini ISA-95 hiyerarşisiyle kur:** `enterprise/site/area/line/cell/device/datapoint`; bir daha değişmez (Yanlış Karar 5). Çok cihazlı UNS'de doğrudan Sparkplug B ile başla (Not 10).
+- **Her MQTT bağlantısında LWT zorunlu** — LWT'siz sistem eksik sistemdir (Yanlış Karar 7).
+- **Katmanla, seçme:** OPC UA (kontrol/SCADA) + MQTT (telemetri/bulut) en olgun mimaridir; "OPC UA mı MQTT mi?" çoğu zaman yanlış sorudur (Çelişki kaydı, Karar Matrisi 3).
+
+---
+
+## Derin Teknik Detay
+
+Bu bölüm, protokoller arasındaki farkların **neden** var olduğunu mekanizma düzeyinde açıklar. Her protokol farklı bir tasarım felsefesinin sonucudur; "hangisi daha iyi" sorusu ancak bu felsefeler anlaşılınca anlamlı olur.
+
+### Modbus TCP: Neden Bu Kadar Basit ve Bu Kadar Sınırlı?
+
+Modbus 1979'da Modicon PLC'leri için tasarlandı; **register tabanlı bellek haritası** felsefesi o dönemin donanım kısıtlarının doğrudan yansımasıdır. Protokol yalnızca "şu adresten N adet 16-bit oku/yaz" der — veri tipini, anlamını, ölçeğini bilmez. Bu yüzden float bir değer iki ardışık register'a bölünür ve birleştirme sırası (byte/word order) protokolde tanımlı değildir; her üretici kendi kararını verir (Not 8). Modbus'un "dakikalar içinde kurulum" avantajı ile "her cihazda byte order doğrula" bedeli aynı tasarım kararının iki yüzüdür: semantik katmanın olmaması. Modbus'u doğru kullanmak, eksikliklerini (belgelenmiş register haritası, byte order, ölçek faktörü) uygulama katmanında telafi etmektir.
+
+### OPC UA: Adres Uzayı, Session ve Subscription Mekanizması
+
+OPC UA'nın "ağırlığı" üç mekanizmadan gelir. (1) **Adres uzayı:** Her değer bir node'dur, tipi/birimi/erişim hakkı meta-veriyle taşınır; Browse servisi istemcinin sunucuyu çalışma zamanında keşfetmesini sağlar (Modbus'ta bu yok, belge zorunlu). (2) **Session:** Her istemci bağlantısı kimlik doğrulama, şifreleme anahtarı değişimi ve durum tutan bir oturum kurar — bu güvenliği ve kaliteyi (GOOD/BAD/UNCERTAIN) mümkün kılar ama session kurulumu pahalıdır ve kötü bağlantıda (4G) sorun çıkarır (Not 5). (3) **Subscription:** Sunucu tarafında sampling + deadband ile değişim filtreleme. Bu üç mekanizma OPC UA'yı semantik, güvenli ve push-yetenekli yapar; ama PKI yönetimi, namespace tasarımı ve session yaşam döngüsü maliyeti getirir. OPC UA'yı "düz liste + polling + None security" ile kurmak (Yanlış Karar 3), motoru kullanmadan ağırlığını taşımaktır.
+
+### MQTT: Broker Neden Ölçeklemeyi Çözer?
+
+MQTT'nin pub/sub modeli **bağlantı topolojisini O(N×M)'den O(N+M)'e indirir.** Doğrudan bağlantıda 12 PLC × 3 hedef = 36 bağlantı; broker araya girince 12 publisher + 3 subscriber = 15 bağlantı (Not 4). Broker, yayıncı ile aboneyi zamansal ve uzamsal olarak ayırır (decoupling): yayıncı kime gittiğini bilmez, abone kimden geldiğini bilmez, hatta aynı anda online olmaları gerekmez (QoS 1/2 + session ile mesaj saklanır). Bu, yeni alıcı eklemenin PLC kodunu hiç değiştirmemesini sağlar — UNS'nin temel değeri budur. Bedeli: broker tek hata noktasıdır (yedeklilik gerektirir) ve durum yönetimi (cihaz online mı?) protokolde zayıftır — LWT temel çözümdür, çok cihazlı senaryoda Sparkplug B'nin BIRTH/DEATH/sequence mekanizması gerekir (Not 10).
+
+### Ham TCP Socket: Sıfır Soyutlamanın Maliyeti ve Değeri
+
+Ham TCP, taşıma katmanının üstünde **hiçbir uygulama protokolü olmadan** çalışmaktır. Avantajı: sıfır overhead (200 byte veri = ~200 byte frame, OPC UA'nın node/session yükü yok), tam protokol özgürlüğü, < 1ms LAN gecikmesi. Bedeli ise normalde standart protokolün ücretsiz verdiği her şeyi elle yazmaktır: TCP bir **byte akışıdır, mesaj sınırı yoktur** — bu yüzden framing (uzunluk-önekli ya da delimiter tabanlı) zorunludur; paket bölünür/birleşir, resync mantığı gerekir; sürüm uyumu, checksum, heartbeat hepsi uygulamanındır. Bu yüzden Ham TCP yalnızca karşı taraf standart protokol desteklemediğinde (barkod, özel kamera, robot) doğrudur; standart varken seçmek 2 günlük işi 3 haftaya çıkarır ve sonraki her geliştiriciye teknik borç bırakır (Yanlış Karar 4, Not 3).
+
+### Neden "Seçim Değil Katmanlama"? OPC UA + MQTT Birlikteliği
+
+En olgun mimari OPC UA ve MQTT'yi rakip değil, farklı katmanların aracı olarak kullanır çünkü ikisi **farklı kontrol modellerini** optimize eder. OPC UA client-server modeli **bidirectional, durumlu kontrol** için tasarlanmıştır: setpoint yaz, metod çağır, sonucu al, kimliği doğrula — komut yönü ve geri bildirim nettir. MQTT pub/sub modeli **tek yönlü, çok alıcılı yayın** için tasarlanmıştır: komut yönü topic tabanlıdır ve "yaz + onay" zinciri doğal değildir, bu yüzden setpoint için zayıftır (Yanlış Karar 1). Dolayısıyla SCADA↔PLC kontrol kanalı OPC UA, PLC→historian/bulut telemetri kanalı MQTT olur; 50+ PLC ölçeğinde OPC UA PubSub (MQTT transport) ikisini birleştirir. "OPC UA mı MQTT mi?" sorusu, "çekiç mi tornavida mı?" sorusu kadar yanlıştır — ikisi farklı işlerin aracıdır.
 
 ---
 
