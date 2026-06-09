@@ -2,8 +2,8 @@
 KONU        : CODESYS Proje Dosyası İç Yapısı
 KATEGORİ    : codesys
 ALT_KATEGORI: project-generation
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_struct_project_creation.html"
     başlık: "CODESYS Online Help — Creating and Configuring a Project"
@@ -494,6 +494,97 @@ Bir geliştirici, ST koduna yorum olarak `<` ve `>` karakterleri yazdı. CODESYS
 
 **Not 3 — typeGuid Sürpriz Değişiklikleri**  
 Farklı CODESYS versiyonlarında aynı cihazın typeGuid'i değişebilir. Bir araç v3.5.17 ile üretilen GUID'i v3.5.21'de kullanamazdı. Çözüm: typeGuid'leri araçta hardcode etme; Script Engine'in device repository'sinden dinamik al.
+
+**Not 4 — Object GUID Kopya-Yapıştır ile "Hayalet Referans"**  
+Bir template projeden POU kopyalanıp yapıştırıldı; çalıştı ama Task'taki POU çağrısı ve bir visualization eski POU'ya bağlı kaldı. Neden: her CODESYS objesi bir **GUID** taşır (fundamentals/02); kopyala-yapıştır yeni GUID üretir ama eski GUID'e bağlı referanslar (task POUcall `typeGuid`, visualization) güncellenmez → "object not found" hayalet hataları. Ders: obje taşımak için kopyala-yapıştır yerine **export/import** (PLCopen XML) kullan; üretimde POU çağrılarını isimle değil, oluşturulan objenin referansıyla bağla.
+
+**Not 5 — Git Merge'in `.project`'i Bozması**  
+İki mühendis aynı `.project`'te paralel çalıştı, Git ile birleştirdi — dosya açılmadı. `.project` XML olsa da GUID'ler, sıralı ID'ler ve gömülü blob'lar içerir; satır-bazlı merge bunları bozar (fundamentals/02 Not 6). Ders: `.project`'i Git'te "yedek+geçmiş" için tut, gerçek işbirliği için PLCopen XML object-export veya CODESYS Git entegrasyonu kullan; üretim araçları `.project`'i tek-yazar olarak üretmeli, paralel düzenlememeli.
+
+**Not 6 — File-Based Storage Geçişinin Erken Denenmesi**  
+Git-dostu olsun diye bir ekip file-based storage formatına (beta) geçti; her POU ayrı dosya oldu, diff'ler okunabilirdi. Ama bazı kütüphaneler ve eski araçlar bu formatı tanımadı, CI pipeline'ı kırıldı. Ders: 2026 itibarıyla file-based storage hâlâ beta; production üretim araçları klasik tek-XML `.project`'i hedeflemeli. File-based'i yalnızca formatı tam destekleyen kontrollü ortamda dene.
+
+## Edge Case'ler ve Format Sınırları
+
+### XML Bütünlüğü Tuzakları
+
+```
+Tuzak                              Sonuç                     Koruma
+─────────────────────────────────────────────────────────────────────
+Kapanmamış tag / hatalı encoding   proje açılmaz             proper XML lib, string-replace yok
+BOM (UTF-8-BOM)                    parser patlar             encoding='utf-8-sig'
+ST içinde < > karakterleri         &lt; &gt; kaçış bozulması  XML lib kullan, manuel kaçış yok
+GUID çakışması (iki obje aynı GUID) biri sessizce gölgelenir   export/import, kopya değil
+typeGuid versiyon farkı            device tanınmaz            dinamik repository'den al
+Sıralı ID tutarsızlığı             referans kopar            Script Engine ile yaz, elle değil
+```
+
+### Manuel XML Düzenlemenin Sınırı
+
+`.project`'i elle düzenlemek neredeyse her zaman yanlıştır çünkü:
+- Obje GUID'leri, task POUcall `typeGuid`'leri, sıralı ID'ler arası tutarlılık elle korunamaz.
+- Compile cache ve checksum'lar XML içinde gömülüdür; tutarsızlık projeyi açılamaz yapar.
+- **Tek güvenli "okuma" senaryosu:** analiz/raporlama (grep, Python ET ile parse). **Yazma:** daima Script Engine.
+
+### File-Based vs Klasik Format Edge Case'leri
+
+```
+Klasik (.project):  tek XML · Git merge bozar · tüm araçlar destekler · standart
+File-based (beta):  klasör+dosya · Git-dostu diff · bazı araç/lib desteklemez · 2026 beta
+```
+
+Üretim aracı hangi formatı hedefleyeceğini bilmeli; ikisinin XML şeması ve obje serileştirmesi farklıdır.
+
+## Optimizasyon
+
+### Analiz/Raporlama için XML Doğrudan Okuma
+
+Yazma için Script Engine zorunlu olsa da, **okuma** (analiz, raporlama, CI doğrulama) için doğrudan XML parse hızlı ve Script Engine'siz çalışır:
+
+```python
+# CI'da Script Engine/lisans gerektirmeden proje analizi
+with open('proj.project', encoding='utf-8-sig') as f:   # BOM güvenli
+    root = ET.fromstring(f.read())
+# POU sayısı, GVL listesi, library sürümleri, kullanılmayan değişken raporu
+```
+
+Bu, CODESYS lisansı tüketmeden (Not: headless Script Engine lisans ister, programming/02) hızlı statik analiz sağlar.
+
+### Büyük Proje ve Format Seçimi
+
+```
+- 500+ POU → tek .project 25MB+ olur; diff anlamsız (Not 1)
+- Geçici çözüm: her release'te PLCopen XML export + diff
+- Compile cache şişer; "Clean" sonrası .project küçülür (gereksiz cache atılır)
+- Üretimde: template'i minimal tut, içeriği script üretsin (bootapp/dosya küçük kalır)
+```
+
+### Referans Bütünlüğü için Export/Import
+
+Kopya-yapıştır GUID hayalet referansları (Not 4) yaratır; **export/import** referans bütünlüğünü daha iyi korur. Üretim akışında objeleri PLCopen XML ile import etmek, kopyalamaktan daha güvenlidir.
+
+## Derin Teknik Detay
+
+### `.project` Neden Tek XML? — IDE'nin Obje Grafiği Serileştirmesi
+
+`.project`, insan-diff'i için değil, **IDE'nin bellekteki obje grafiğini serileştirmek** için tasarlanmıştır (fundamentals/02 derin detay). Her obje (POU, GVL, DUT, Task) bir GUID ile düğüm, referanslar (task→POU, FB→DUT) ise GUID-bağlantılı kenarlardır. XML bu grafiği düzleştirir; satır sırası anlamlı değildir, GUID bağlantıları anlamlıdır. Bu yüzden:
+- Git satır-merge'i grafiği bozar (kenarlar kopar) → açılmaz.
+- Elle düzenleme GUID tutarlılığını bozar → açılmaz.
+- Script Engine grafiği obje-seviyesinde manipüle eder (API), serileştirmeyi IDE'ye bırakır → güvenli.
+
+Bu, "neden XML ama elle düzenlenemez" çelişkisinin çözümüdür: format XML'dir ama semantik bir obje grafiğidir, metin değil.
+
+### Script Engine ile XML'in İlişkisi: API = Obje Grafiği, XML = Serileştirme
+
+Script Engine'in `IScriptPou`, `IScriptGvl` gibi nesneleri, tam olarak `.project` XML'indeki `<pou>`, `<globalVarList>` düğümlerine karşılık gelir (belgedeki eşleme tablosu). `app.create_pou()` bir XML `<pou>` düğümü + GUID üretir; `textual_declaration.replace()` o düğümün `<interface>`/`<body>` içeriğini yazar. Yani Script Engine, XML'i doğrudan yazmak yerine obje grafiğini manipüle eder ve IDE serileştirmeyi tutarlı yapar. XML yapısını bilmek, Script Engine'in "ne yaptığını" anlamak için gereklidir — ama yazma her zaman API üzerinden olmalıdır (Not 2, Hata 1).
+
+### typeGuid: Device Description'a Bağlı Kimlik
+
+Bir `<device typeGuid="...">`'in GUID'i, kurulu device description'dan (`.devdesc`) gelir (fundamentals/02). Bu GUID device+sürüm kombinasyonuna özgüdür; CODESYS sürümü veya device paketi değişince değişebilir (Not 3). Bu yüzden üretim aracı typeGuid'i hardcode edemez — çalışma anında `system.get_all_devices()` ile repository'den çözmelidir. Bu, device tree'nin neden template'te elle hazırlanması gerektiğinin (04 hibrit yaklaşım) teknik kökü: device ekleme, kurulu repository'ye ve doğru GUID'e bağlıdır, sıfırdan XML ile güvenilir yapılamaz.
+
+### PLCopen XML vs Native XML: İki Serileştirmenin Amacı
+
+`.project` native XML CODESYS'in **tam** durumunu (GUID grafiği, device tree, cache) saklar — taşınabilir değil, IDE-özgü. PLCopen XML ise IEC 61131-3 içeriğinin **taşınabilir** alt kümesini saklar (POU/DUT/GVL, device tree değil — bkz. 03). Bu ikilik kasıtlıdır: native format IDE'nin iç çalışması için, PLCopen değişim (exchange) için. Üretim akışı ikisini birleştirir: içeriği PLCopen ile dışarıda üret (taşınabilir, Script Engine'siz), native projeye Script Engine ile yerleştir (IDE-tutarlı). "Hangi XML?" sorusunun cevabı her zaman "üretiyorsan PLCopen, yerleştiriyorsan native (Script Engine üzerinden)"dir.
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : CODESYS Script Engine
 KATEGORİ    : codesys
 ALT_KATEGORI: project-generation
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Scripting/_script_scripting_with_codesys.html"
     başlık: "CODESYS Online Help — Scripting with CODESYS"
@@ -655,6 +655,112 @@ Headless modda Script Engine çalıştırırken CODESYS lisansı gerekir. Demo l
 
 **Not 4 — find() ile Arama Performansı**  
 Büyük projelerde `proj.find("MyFB", recursive=True)` çağrısı yavaş olabiliyor. Alternatif: Proje hiyerarşisini önceden haritalayıp cache'le. Veya her POU oluşturulduktan sonra referansı saklayarak tekrar arama yapmaktan kaçın.
+
+**Not 5 — Sessiz Başarısız `replace()` ve Derleme Doğrulaması**  
+Bir üretim scripti `textual_declaration.replace()` ile onlarca FB yazdı; script "başarılı" dedi ama proje açılınca 12 FB hatalıydı — bir değişken satırında noktalı virgül eksikti, replace bunu sessizce kabul etti (sözdizimi doğrulaması yazma anında yapılmaz). Ders: her üretim turunun sonunda `proj.compile()` çağrısı ZORUNLU; compile False dönerse projeyi "başarılı" sayma. Script çıktısı değil, derleme sonucu doğruluk ölçütüdür.
+
+**Not 6 — Exception Sonrası Yarım Kalan Proje (Atomiklik Yok)**  
+Script 8 FB üretirken 5.'de exception fırlattı (geçersiz tip referansı); proje 4 tam, 1 yarım FB ile yarı-yazılmış kaldı, sonraki çalıştırma "obje zaten var" hatası verdi. Script Engine işlemleri atomik değildir — kısmi başarı mümkündür. Ders: üretimi **idempotent** yap (her objeyi oluşturmadan önce var mı kontrol et, varsa güncelle); ya da hata anında template'ten temiz kopyayla baştan başla. Yarım projeyi kurtarmaya çalışma.
+
+**Not 7 — IronPython 2.7 Unicode/Encoding Tuzağı**  
+Türkçe karakterli yorumlar (`ç`, `ş`, `ğ`) içeren üretilen kod, IronPython 2.7'de `str` vs `unicode` karışımı yüzünden bozuk yazıldı (mojibake). IronPython 2.7 Python 2 string modelini kullanır — `str` byte dizisidir, `unicode` ayrıdır. Ders: üretilen tüm metinleri `unicode` (`u"..."`) olarak ele al, dosyaları `codecs.open(path, encoding='utf-8')` ile aç; Python 3'ün otomatik unicode'una güvenme (Script Engine Python 2.7'dir).
+
+## Edge Case'ler ve Sistem Sınırları
+
+### IronPython 2.7'nin Python 3'ten Farkları (Üretimde Patlayanlar)
+
+```
+Python 3 özelliği          IronPython 2.7 sonucu      Alternatif
+─────────────────────────────────────────────────────────────────
+f"{x}"                      SyntaxError                "{}".format(x) veya "%s" % x
+print(x)                    OK ama future gerekir      from __future__ import print_function
+x := y (walrus)             SyntaxError                ayrı atama
+str otomatik unicode        str = byte, unicode ayrı   u"..." + codecs.open
+dict.items() (lazy)         list döner (2.x davranış)  genelde sorun değil
+type hints (def f(x: int))  SyntaxError                kaldır
+pathlib                     yok/sınırlı                os.path
+```
+
+### Çalışma Modu Edge Case'leri
+
+```
+IDE modu:     projects.primary = açık proje · ui mevcut · lisans IDE'den
+Headless:     projects.primary = None → projects.open() ZORUNLU · ui yok · lisans gerekir
+              (demo lisans headless'ı reddeder — Not 3)
+Script args:  --scriptargs="x" → sys.argv[1]; SP10 öncesi desteklenmez
+```
+
+### API'nin Atomik Olmaması ve Kısmi Hata
+
+```
+- Script ortasında exception → proje yarı-yazılmış kalır (Not 6); rollback yok
+- "obje zaten var" → idempotent kontrol (find önce) gerekir
+- replace() sözdizimi doğrulamaz → compile() ile doğrula (Not 5)
+- find() boş liste döndürebilir → [0] IndexError; önce kontrol et
+- büyük projede find(recursive=True) yavaş → referansı cache'le (Not 4)
+```
+
+## Optimizasyon
+
+### Üretimi Idempotent ve Yeniden-Çalıştırılabilir Yapma
+
+```python
+def get_or_create_pou(app, name, pou_type):
+    found = app.find(name, recursive=False)
+    return found[0] if found else app.create_pou(name, pou_type)
+```
+
+Her objeyi "varsa al, yoksa oluştur" deseniyle ele almak, scripti kısmi-hata sonrası yeniden çalıştırılabilir kılar (Not 6) — üretim güvenilirliğinin temeli.
+
+### find() Maliyetini Azaltma
+
+```
+- Oluşturulan referansları bir dict'te sakla (name → object), tekrar find() yapma
+- recursive=True yerine bilinen parent'ta recursive=False ara (dar kapsam)
+- Büyük projede tek bir ağaç-gezme ile tüm hiyerarşiyi cache'le
+```
+
+### Build Doğrulama Döngüsü
+
+```python
+result = proj.compile()
+if not result:
+    # hata mesajlarını al, sorunlu bölümü tespit, yeniden üret
+    raise Exception("Generated project does not compile")  # başarılı sayma
+```
+
+Üretim kalitesi `compile()` ile ölçülür (Not 5); script "tamamlandı" demesi yeterli değildir.
+
+### Headless Batch Verimi
+
+```
+- Tek CODESYS başlatma maliyeti yüksek (profil yükleme); çok proje için
+  tek headless oturumda döngüyle üret, her proje için yeniden başlatma
+- ya da batch script (örnekteki .bat) ile sıralı; lisans tek seferde alınır
+```
+
+## Derin Teknik Detay
+
+### Neden IronPython 2.7? — .NET Entegrasyonu ve Tarihsel Bağ
+
+CODESYS IDE bir .NET uygulamasıdır; Script Engine, IDE'nin .NET nesne modeline (IScriptProject vb.) doğrudan erişebilen bir gömülü Python yorumlayıcısı gerektirir. IronPython, Python'un .NET (CLR) üzerinde çalışan implementasyonudur — bu yüzden seçildi: IDE'nin .NET API'sine native erişim sağlar. Sürüm 2.7'de kalması, IronPython 3'ün olgunlaşmasının gecikmesi ve API kararlılığı içindir. Pratik sonuç: scriptler Python 2.7 semantiğindedir (`str`=byte, f-string yok), ama altında .NET nesneleri vardır — `app.create_pou()` aslında bir .NET metot çağrısıdır. Bu hibrit doğa, hem Python kütüphanelerini (json, os) hem .NET tabanlı CODESYS API'sini aynı scriptte kullanabilmeyi açıklar.
+
+### "Tüm Tıklamalar Scriptlenebilir" — Komut Mimarisi
+
+CODESYS'in resmi vaadi "IDE'de elle yapılan her şey scriptlenebilir"dir; bunun nedeni IDE'nin **komut-tabanlı** mimarisidir: her menü/buton bir komuta (command) bağlıdır, Script Engine bu komutlara ve altta yatan obje modeline erişir. Bu, fundamentals/01'deki Component Manager modeline benzer — IDE de bileşensel ve komut-güdümlüdür. Bu yüzden proje oluşturma, derleme, online login, hatta visualization editleme scriptlenebilir. Üretim açısından kritik: manuel bir iş akışı varsa, onun script karşılığı neredeyse her zaman vardır; "elle yapılıyor ama scriptlenemiyor" durumu nadirdir.
+
+### textual vs structured Manipülasyon
+
+Script Engine iki manipülasyon yolu sunar: **textual** (`textual_declaration.replace()` — ST metnini doğrudan yaz) ve daha düşük seviyeli structured erişim. Textual yol üretim için tercih edilir çünkü:
+- ST metni insan-okunabilir, üretmesi/template'lemesi kolay (string format).
+- PLCopen XML import ile uyumlu (içerik metinsel taşınır, 03).
+- Ama sözdizimi doğrulanmaz (Not 5) → compile() şart.
+
+Bu, fundamentals/03'teki "ST text-tabanlı, Git-dostu, üretilebilir" özelliğinin üretim katmanındaki karşılığıdır: ST'nin metinsel doğası, onu programatik üretim için en uygun IEC dili yapar (LD/FBD grafik koordinat gerektirir, üretmesi zordur).
+
+### Headless Lisans Modeli
+
+Headless mod (`--noUI`) Script Engine'i UI olmadan çalıştırır ama yine de CODESYS lisansı tüketir (Not 3) — çünkü derleme, device repository erişimi gibi işlemler lisanslı runtime/IDE bileşenlerini kullanır. Demo lisans headless'ı reddeder. Bu, CI/CD tasarımında kritik bir kısıttır: her paralel headless üretim bir lisans gerektirir; lisans havuzu üretim paralelliğini sınırlar. Salt-okuma analiz (01 derin detay: doğrudan XML parse) lisans gerektirmez — bu yüzden CI'da "analiz/doğrulama" XML parse ile, "üretim/derleme" lisanslı headless ile ayrılır.
 
 ## İlgili Konular
 

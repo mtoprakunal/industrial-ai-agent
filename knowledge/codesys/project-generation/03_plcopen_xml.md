@@ -2,8 +2,8 @@
 KONU        : PLCopen XML (IEC 61131-10) Formatı
 KATEGORİ    : codesys
 ALT_KATEGORI: project-generation
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.plcopen.org/standards/logic/iec-61131-10/"
     başlık: "PLCopen — IEC 61131-10: PLC open XML Exchange Format"
@@ -581,6 +581,99 @@ Bir proje üretim aracı, veritabanından her ürün hattı için POU listesi ü
 
 **Not 4 — BOM Tuzağının Üretim Ortamında Keşfedilmesi**  
 CI pipeline'ında PLCopen XML otomatik işleniyordu. Python XML parser sürekli hata veriyordu. Lokal testte çalışıyordu çünkü editör BOM'suz dosya kaydediyordu; CODESYS'in export ettiği dosya BOM içeriyordu. `encoding='utf-8-sig'` ile düzeltildi.
+
+**Not 5 — CDATA İçindeki ST Kodunda `<` `>` `&` Kaçışı**  
+Üretilen bir FB'de `IF a < b AND c > d THEN` koşulu vardı; XML üretici bunu CDATA'ya sarmadan element text'i olarak yazınca `<` ve `>` XML tag başlangıcı sanıldı, dosya bozuldu. PLCopen XML, ST gövdesini CDATA bloğu (`<![CDATA[...]]>`) içinde taşır — tam da bu yüzden: ST kodu `<`, `>`, `&` içerebilir ve bunlar XML'de özel karakterlerdir. Ders: ST gövdesini daima CDATA'ya sar veya XML lib'in otomatik kaçışına güven; string concat ile XML kurma (01 ile aynı uyarı). CDATA içinde de `]]>` dizisi kaçırılmalı (nadir ama gerçek).
+
+**Not 6 — addData Kaybı: "Export-Import Round-Trip" Yanılgısı**  
+Bir ekip "PLCopen XML export edip import edersem proje aynı kalır" varsaydı; export-import sonrası I/O mapping, OPC UA ayarları ve EtherCAT konfigürasyonu kayboldu. Bu bilgiler `<addData>` (vendor-specific) altında ya hiç export edilmez ya da hedef tarafından yok sayılır. PLCopen XML **lossy**'dir — IEC içeriğini taşır, CODESYS-özgü her şeyi değil (03 "taşınmayanlar"). Ders: PLCopen XML'i "tam proje yedeği" sanma; POU/DUT/GVL taşıma aracıdır. Tam yedek için `.projectarchive`.
+
+**Not 7 — Şema Sürümü Uyumsuzluğu (tc6_0201 vs daha yeni)**  
+Bir araç PLCopen XML'i eski şema (`tc6_0200`) ile üretti; yeni CODESYS sürümü import'ta uyarı verip bazı alanları atladı. PLCopen XML şeması versiyonludur (v2.01 = `tc6_0201` yaygın); CODESYS sürümleri arası export farklılaşabilir, `<addData>` uzantıları uyumu karmaşıklaştırır. Ders: üretici ve hedef CODESYS arasında şema sürümünü hizala; import öncesi `xmllint --schema tc6.xsd` ile doğrula; hedef sürümle test et.
+
+## Edge Case'ler ve Format Sınırları
+
+### Taşıma Kayıpları (Lossy Transfer)
+
+```
+İçerik                          PLCopen XML'de        Sonuç
+─────────────────────────────────────────────────────────────────
+ST kodu                         tam (CDATA)           kayıpsız ✓
+Değişken bildirimi + init       tam                   kayıpsız ✓
+DUT (STRUCT/ENUM)               tam                   kayıpsız ✓
+LD/FBD grafik                   temsil var, koordinat kayabilir  düz/okunaksız olabilir
+SFC                             adım/geçiş var         aksiyon kodu yoruma açık
+AT %I/%Q adresi                 address attr ile geçer  hedefte I/O mapping yeniden
+Library referansı               YOK                   manuel ekle
+Device tree / EtherCAT          <addData> veya YOK     kaybolur, yeniden yapılandır
+OPC UA / Symbol Config          YOK                   kaybolur
+```
+
+### XML Karakter ve Encoding Edge Case'leri
+
+```
+ST'de < > &        → CDATA içinde taşınmalı (Not 5)
+CDATA'da ]]>       → bölünüp kaçırılmalı (]]]]><![CDATA[>)
+BOM (UTF-8-BOM)    → encoding='utf-8-sig' (Not 4)
+Türkçe/unicode     → UTF-8 tutarlı; CODESYS unicode destekler ama tool zinciri test et
+Şema sürümü        → tc6_0201 (v2.01) yaygın; uyumsuzluk sessiz alan atlar (Not 7)
+```
+
+### Grafik Diller ve Taşınabilirlik
+
+ST kayıpsız taşınır (metinsel); LD/FBD koordinat kaybeder (düz görünür); SFC adım yapısı taşınır ama aksiyon kodu platforma göre yorumlanır. **Taşınabilirlik kritikse tüm POU'ları ST'de yaz** (fundamentals/03 ST tekel konumuyla aynı sonuç) — üretim açısından da ST en güvenli format.
+
+## Optimizasyon
+
+### Üretimde XML Lib Kullan, String Concat Değil
+
+```
+- ET.SubElement ile yapı kur → otomatik kaçış, geçerli XML garantisi
+- ST gövdesi → CDATA (manuel <,>,& kaçışıyla uğraşma)
+- minidom.toprettyxml veya lxml ile okunabilir çıktı (debug/diff için)
+- yazarken xml_declaration=True + encoding='utf-8'
+```
+
+String concat ile XML kurmak (Not 5, 01 Not 2) en yaygın bozulma kaynağıdır; her zaman XML kütüphanesi.
+
+### Batch Export ve Git-Dostu Saklama
+
+```
+- Her POU'yu ayrı PLCopen XML'e export → Git'te anlamlı diff (klasik .project'in yapamadığı)
+- Üretim girdilerini (FB şablonları) PLCopen XML olarak version control'de tut
+- Release'lerde tam proje yerine POU-bazlı XML diff → ne değişti net görülür
+```
+
+### Import + Script Engine Kombinasyonu
+
+```
+PLCopen XML (içerik) → app.import_xml() → Script Engine (library+config tamamla)
+→ en hızlı ve en güvenilir üretim: içerik dışarıda üretilir, bağlam içeride kurulur
+```
+
+## Derin Teknik Detay
+
+### Neden Lossy? — Standart İçerik vs Vendor Uzantı Ayrımı
+
+PLCopen XML (IEC 61131-10) bir **değişim (exchange) standardıdır**; amacı farklı üreticilerin ortak IEC 61131-3 içeriğini paylaşmasıdır. Standart yalnızca IEC'nin tanımladığını taşıyabilir: POU, DUT, GVL, Task. Device tree, I/O mapping, OPC UA — bunlar IEC standardının dışında, **üreticiye özgü**dür ve `<addData>` (vendor extension) alanına düşer. Bir hedef platform diğerinin `<addData>`'sını anlamak zorunda değildir → yok sayar (Not 6). Bu lossy'lik bir kusur değil, tasarım: standart "ortak payda"yı taşır, "üretici-özel"i taşımaz. Bu yüzden PLCopen XML çapraz-marka POU transferinde (ABB→CODESYS) güçlü, tam-proje-yedeğinde zayıftır — `.projectarchive` (native, tam) onun tersidir.
+
+### CDATA: ST'nin XML'e Gömülmesi
+
+ST kodu `<`, `>`, `&`, `:=` gibi XML'de özel/sorunlu karakterler içerir. İki çözüm vardır: entity kaçışı (`&lt;`) veya CDATA bloğu. PLCopen XML CDATA'yı tercih eder çünkü ST gövdesi büyük ve kaçış-yoğundur; her `<`'i `&lt;` yapmak okunaksız ve hataya açıktır. CDATA "buradaki her şey ham metin, parse etme" der — ST kodu olduğu gibi gömülür. Tek istisna `]]>` dizisidir (CDATA sonlandırıcı); ST'de nadirdir ama üretici bunu bölmelidir. Bu, fundamentals/03'teki "ST text-tabanlı" özelliğinin XML serileştirmesindeki yansımasıdır: metinsel dil, CDATA ile temiz gömülür; grafik diller (koordinat, bağlantı) yapısal XML gerektirir ve taşıması zordur.
+
+### Üç Format Üçgeni: Native / PLCopen / Script Engine
+
+```
+Native .project (01)  → IDE tam durum, GUID grafiği, taşınamaz, elle yazılamaz
+PLCopen XML (03)      → taşınabilir IEC içeriği, lossy, dışarıda üretilebilir
+Script Engine (02)    → native'i obje-API ile yazan, IDE-tutarlı köprü
+```
+
+Üretim akışı üçünü birleştirir: PLCopen ile içeriği **taşınabilir** üret (Script Engine'siz, çapraz-platform), Script Engine ile native projeye **tutarlı** yerleştir (import_xml + config). Bu üçgen, project-generation klasörünün özüdür: her format bir amaca hizmet eder, hibrit kullanım (04) en güçlüsüdür.
+
+### import_xml: Birleştirme (Merge) Semantiği
+
+`app.import_xml()` bir PLCopen XML'i mevcut projeye **birleştirir** — yeni objeler ekler, çakışan isimlerde davranış (üzerine yaz / atla / yeniden adlandır) CODESYS sürümüne ve ayara bağlıdır. Bu, üretimde idempotency için kritiktir (02 Not 6): aynı XML iki kez import edilirse çakışma olabilir. Ayrıca import edilen POU'nun bağımlılıkları (kullandığı DUT/library) hedefte yoksa, import başarılı görünür ama compile başarısız olur (DUT→FB sırası, 04 "40 hata"). Bu yüzden import sırası (DUT önce) ve sonrasında compile doğrulaması, PLCopen-tabanlı üretimin vazgeçilmez disiplinidir.
 
 ## İlgili Konular
 
