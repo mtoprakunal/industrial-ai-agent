@@ -2,8 +2,8 @@
 KONU        : Endüstriyel Ağ Topolojileri
 KATEGORİ    : networking
 ALT_KATEGORI: networking
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://us.profinet.com/wp-content/uploads/2019/08/Topology.pdf"
     başlık: "PROFINET Topology Options — PI North America Resmi Belgesi"
@@ -430,6 +430,94 @@ Bazı tesislerde fiziksel topoloji basit (yıldız), ancak Purdue katmanları VL
 
 **Not 4 — EtherCAT Topoloji Esnekliği**
 EtherCAT teknik olarak doğrusal, yıldız, ağaç ve halka kombinasyonlarını destekler (Wikipedia / ethercat.org). Bu esneklik EtherCAT'ın güçlü yönlerinden biridir; ancak çoğu saha uygulamasında tercih edilen yapı mantıksal halkaya göre çalışan fiziksel doğrusal dizilimdir.
+
+**Not 5 — MRP Halkasında "Çift Yönetici" Felaketi**
+Bir içecek dolum tesisinde halka genişletilirken ikinci bir core switch eklendi; ancak yeni switch fabrika varsayılanı olarak MRM (Media Redundancy Manager) rolüyle geldi. Halkada artık iki MRM vardı. İki yönetici de bloklı portunu açtı; halka kapalı döngü haline geldi ve saniyeler içinde yayın fırtınası (broadcast storm) tüm omurgayı çökertti. PROFINET cihazları topluca çevrimdışı oldu. MRP standardı tek MRM varsayar; ikinci bir MRM otomatik geri çekilmez. **Ders: Bir MRP halkasında tam olarak bir MRM olmalıdır; tüm diğer cihazlar MRC olarak yapılandırılmalıdır. Yeni switch devreye alınırken rol yapılandırması fabrika varsayılanına bırakılmamalı, açıkça MRC'ye zorlanmalıdır.**
+
+**Not 6 — Fiber Halka ve Bakır Dalların Asimetrik Yayılım Gecikmesi**
+Geniş bir kağıt fabrikasında omurga halkası tek-mod fiber (kilometrelerce mesafe), alan dalları bakır 100BASE-TX idi. PROFINET IRT sync domain'i tüm tesise yayılmaya çalışıldığında PTCP saat senkronizasyonu fiber segmentlerin yayılım gecikmesi (~5 µs/km) nedeniyle sapma verdi. Çözüm: IRT sync domain'leri yalnızca makine hücresi içinde (bakır, kısa mesafe) tutuldu; omurga halkası üzerinden yalnızca RT/NRT trafiği taşındı. **Ders: IRT sync domain'i coğrafi olarak küçük tutulmalı; uzun fiber omurgalar IRT yerine RT/NRT için kullanılmalıdır. Saat senkronizasyonu mesafeden etkilenir.**
+
+**Not 7 — Sürüm Farkı: Eski PROFINET Cihazları MRP'yi Yutmaz**
+Bir retrofit projesinde 2009 yapımı ET 200S istasyonları yeni MRP halkasına eklendi. Bu cihazlar MRC olarak çalışıyor görünüyordu; ancak MRP test çerçevelerini yeterince hızlı geçiremedikleri için halka kurtarma süresi belgelenen < 200 ms yerine 800 ms'e çıktı. Eski donanım, MRP'yi yazılımsal (firmware) düzeyde işliyordu; yeni cihazlar donanım hızlandırmalı. **Ders: Karışık nesil donanım barındıran halkalarda en yavaş cihaz kurtarma süresini belirler. Eski cihazlar mümkünse halka dışında yıldız dalına alınmalı veya ayrı halkaya izole edilmelidir.**
+
+## Edge Case'ler ve Sistem Limitleri
+
+Topoloji kararları, "nominal koşulda çalışır" testini geçtikten sonra sınır koşullarında çöker. Aşağıdaki edge case'ler saha deneyiminde en sık karşılaşılan başarısızlık modlarıdır.
+
+### MRP Halka Boyutu ve Kurtarma Süresi Eşikleri
+MRP standardı (IEC 62439-2) kurtarma süresini halka boyutuna bağlar; bu ilişki doğrusal değil, eşiklidir:
+
+| Maksimum Düğüm | Hedef Kurtarma | Pratik Sınır Notu |
+|---|---|---|
+| ≤ 14 | < 10 ms | Donanım hızlandırmalı MRC zorunlu; tüm cihaz aynı nesil |
+| ≤ 25 | < 30 ms | Karışık nesil tolere edilebilir, test şart |
+| ≤ 50 | < 200 ms | Standart üst sınır; ötesine geçilemez |
+| > 50 | Tanımsız | Halka bölünmeli; MRP-Interconnection veya çoklu halka |
+
+50 düğüm, **kesin bir protokol sınırıdır** — fiziksel olarak daha fazla cihaz bağlanabilir ancak MRM'in test çerçevesi tur süresi kurtarma garantisini geçersiz kılar.
+
+### Tek Kopma ≠ Tek Arıza
+Halka topoloji "tek kopmaya dayanıklı"dır; ancak **eşzamanlı iki kopma** halkayı iki ayrı segmente böler ve her iki segment de izole kalır. Bakım sırasında bir kablo zaten sökülmüşken ikinci bir kopma oluşması (örneğin teknisyenin yanlış portu çekmesi) klasik "çift hata" senaryosudur. MRP bu durumda hiçbir koruma sağlamaz. Yüksek kullanılabilirlik gerektiren ortamlarda PRP (iki bağımsız ağ) tercih edilmelidir.
+
+### Daisy-Chain Derinliği ve Kümülatif Gecikme
+EtherCAT/PROFINET doğrusal zincirlerinde her cihaz, çerçeveye işleme gecikmesi (forwarding delay) ekler. Tipik PROFINET cihazı port başına ~1–3 µs ekler. 60 cihazlık bir zincirde bu ~180 µs kümülatif gecikme demektir — 250 µs IRT çevrimi için bütçenin önemli bir kısmı. Zincir derinliği, çevrim süresi bütçesiyle birlikte hesaplanmalıdır.
+
+### Spanning-Tree ve MRP Çakışması
+Bir halka portunda hem RSTP hem MRP aktif bırakılırsa iki protokol aynı portu kontrol etmeye çalışır; biri bloklarken diğeri açar ve port "flapping" (sürekli açılıp kapanma) durumuna girer. MRP aktif halkalarda RSTP **mutlaka devre dışı** bırakılmalı veya MRP ring portları RSTP "edge/admin-edge" olarak işaretlenmelidir.
+
+### iDMZ ve VLAN Sınır Limiti
+802.1Q standardı 4094 kullanılabilir VLAN ID tanımlar (0 ve 4095 ayrılmıştır). Büyük tesislerde mikro-segmentasyon agresif uygulanırsa bu limit teorik olarak aşılabilir; pratikte switch'in TCAM (donanım kural tablosu) kapasitesi çok daha önce dolar. Tipik endüstriyel switch 256–1024 aktif VLAN destekler; segmentasyon planı switch donanım limitine göre yapılmalıdır.
+
+### Optik Bütçe ve Mesafe Limiti
+Fiber halkalar "sınırsız mesafe" sunmaz; her bağlantının bir optik güç bütçesi (dB) vardır. Çok-mod OM3 @ 1 Gbps ~550 m, tek-mod ~10–40 km (transceiver'a bağlı). Halkanın en uzun segmenti bu bütçeyi aşarsa bağlantı aralıklı (intermittent) kopar — bu, MRP'yi sürekli tetikleyerek "kararsız halka" sendromuna yol açar; tam kopma kadar tehlikelidir çünkü teşhisi zordur.
+
+## Optimizasyon
+
+Topoloji optimizasyonu, "daha hızlı" değil "daha öngörülebilir ve daha dirençli" hedefler. Aşağıda öncelik sırasına göre optimizasyon kaldıraçları verilmiştir.
+
+### 1. Hata Alanını (Fault Domain) Küçült
+En yüksek getirili optimizasyon, tek bir arızanın etkilediği cihaz sayısını azaltmaktır:
+- Büyük tek halkayı → birden çok küçük halkaya böl (MRP-Interconnection ile bağla)
+- Kritik alan switch'lerine çift uplink (link aggregation veya ayrı halka portu) ekle
+- SIS/güvenlik cihazlarını üretim halkasından fiziksel olarak ayrı tut
+
+### 2. Kurtarma Süresini Watchdog'a Göre Ayarla
+Kurtarma süresi hedefi soyut bir "en hızlı" değil, **watchdog süresinin yarısı** olmalıdır:
+```
+Hedef MRP kurtarma ≤ 0.5 × PLC watchdog süresi
+Örnek: watchdog 300 ms → MRP hedefi ≤ 150 ms → ≤ 50 düğüm halka uygun
+        watchdog 60 ms  → MRP hedefi ≤ 30 ms  → ≤ 25 düğüm halka zorunlu
+```
+Bu marj, kurtarma süresindeki üretici/firmware kaynaklı sapmaları absorbe eder.
+
+### 3. Cut-Through vs Store-and-Forward Seçimi
+- **Cut-through**: Switch çerçeve başlığını okur okumaz iletmeye başlar; gecikme ~1 µs ve sabit (deterministik). IRT için zorunlu.
+- **Store-and-forward**: Tüm çerçeveyi alır, CRC kontrol eder, sonra iletir; gecikme çerçeve boyutuyla artar (64 byte ~5 µs, 1500 byte ~120 µs @100 Mbps). Hatalı çerçeveyi filtreler.
+
+Optimizasyon: IRT segmentlerinde cut-through, gürültülü/uzun-mesafe bakır segmentlerde (CRC filtreleme değerli) store-and-forward. Aynı switch portları farklı modlarda yapılandırılabilir.
+
+### 4. Sync Domain'leri Coğrafi Olarak Daralt
+PTCP/IEEE 1588 senkronizasyonu mesafeden etkilenir (bkz. Not 6). Sync domain'leri makine hücresi sınırında tut; tesis genelinde tek bir dev sync domain kurma.
+
+### 5. Topolojiyi Trafik Desenine Göre Hizala
+Doğrusal zincirde, en yüksek veri hacmine sahip cihazları PLC'ye en yakın konumlandır — böylece çerçevenin en yoğun verisi en az düğümden geçer. EtherCAT'ta PDO sıralaması fiziksel sıralamayla eşleştirilirse çerçeve boyutu optimize edilir.
+
+## Derin Teknik Detay
+
+### MRP'nin İç Mekanizması: Neden Test Çerçevesi?
+MRP, halka bütünlüğünü pasif izleme (link-down algılama) yerine **aktif test çerçevesi** ile denetler — çünkü fiziksel link "up" görünürken mantıksal iletim kopmuş olabilir (tek yönlü fiber arızası, transceiver kısmi hatası). MRM, her iki ring portundan periyodik `MRP_Test` çerçeveleri gönderir (varsayılan 20 ms aralık). Bu çerçeveler halkanın tamamını dolaşıp MRM'e geri dönmelidir. Belirli sayıda ardışık test çerçevesi (varsayılan 3) dönmezse MRM kopma kararı verir. Kurtarma süresi formülü kabaca: `test_aralığı × kayıp_eşiği + MAC_temizleme_süresi`. Daha hızlı kurtarma için test aralığı kısaltılır (örn. 10 ms veya 3.5 ms), bu da test çerçevesi trafiğini artırır — kurtarma hızı ile ağ yükü arasında doğrudan bir denge vardır.
+
+### Neden MAC Tablosu Temizlenir?
+Kopma sonrası MRM bloklı portunu açtığında, halkadaki tüm switch'lerin MAC öğrenme tabloları artık geçersizdir — çünkü cihazlara giden fiziksel yön değişmiştir. MRM, `MRP_TopologyChange` çerçevesi yayınlayarak tüm MRC'lere tablolarını temizlemelerini (flush) söyler. Temizleme olmazsa switch'ler çerçeveleri eski (kopuk) yöne göndermeye devam eder ve trafik kara deliğe (black hole) düşer. Bu yüzden kurtarma süresi yalnızca "port açma" değil, "tüm ağın yeniden öğrenmesi" süresini de içerir.
+
+### MRP vs RSTP: Tasarım Felsefesi Farkı
+RSTP, **dağıtık ve topoloji-bağımsız** bir algoritmadır: her switch BPDU'larla komşularıyla pazarlık eder, kök köprü (root bridge) seçilir, en iyi yollar hesaplanır. Bu genellik bedeli, yeniden yakınsama (reconvergence) süresinin topolojiye ve switch sayısına göre değişken ve öngörülemez olmasıdır. MRP ise **merkezi ve topoloji-kısıtlı**dır: yalnızca halka topolojisi varsayar, tek bir MRM merkezden karar verir, hesaplama yoktur — sadece "portu aç, tabloları temizle". Bu kısıtlama, determinizmin kaynağıdır. Endüstriyel ağda esneklikten (RSTP) öngörülebilirlik (MRP) lehine vazgeçilir.
+
+### HSR/PRP: Yedeklilik Neden "Geçişsiz"?
+MRP/RSTP "reaktif" yedekliliktir: arıza olur, algılanır, sonra geçiş yapılır — bu süre boyunca çerçeve kaybedilir. HSR/PRP "proaktif"tir: her çerçeve baştan iki kopya halinde, iki bağımsız yoldan gönderilir. Arıza anında zaten ikinci kopya yoldadır; "geçiş" diye bir an yoktur, dolayısıyla kayıp sıfırdır. Bedeli: kalıcı %100 bant genişliği ek yükü ve alıcıda çift-kopya eleme (duplicate discard) mantığı. Bu, "zamanı önceden harcayarak gelecekteki belirsizliği satın almak" tasarım felsefesidir — determinizmin en pahalı ama en kesin biçimi.
+
+### Purdue Modeli Neden Hiyerarşik Tasarlandı?
+Purdue'nun katmanlı yapısı keyfi değildir; **zaman ölçeği ayrımına** dayanır. L0-L1 mikrosaniye-milisaniye (fiziksel kontrol), L2-L3 saniye-dakika (denetim/üretim yönetimi), L4-L5 saat-gün (iş planlaması) ölçeğinde çalışır. Bu zaman ölçeği ayrımı doğal bir güvenlik sınırı oluşturur: hızlı katmanlar yavaş katmanların belirsizliğinden (internet gecikmesi, yama, kullanıcı trafiği) izole edilmelidir. iDMZ (L3.5), iki radikal farklı zaman ölçeğinin (OT'nin determinizmi vs IT'nin best-effort'u) buluştuğu sınırdır; bu yüzden en kritik kontrol noktasıdır.
 
 ## İlgili Konular
 

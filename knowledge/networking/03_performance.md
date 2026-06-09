@@ -2,8 +2,8 @@
 KONU        : Endüstriyel Ağ Gecikme ve Güvenilirlik
 KATEGORİ    : networking
 ALT_KATEGORI: networking
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://us.profinet.com/profinet-rt-vs-irt/"
     başlık: "A Complete Comparison: PROFINET RT vs IRT — PI North America"
@@ -596,6 +596,87 @@ Bir su arıtma tesisinde PRP kurulumu yapıldı. Kağıt üzerinde LAN A ve LAN 
 
 **Not 5 — TSN Geçişinde Yapılandırma Karmaşıklığı**
 Pilot TSN projesinde standart Ethernet switch'lerinin yerini 802.1Qbv destekli TSN switch'leri alacaktı. GCL (Gate Control List) yapılandırması, sistemdeki tüm akışların bant genişliği profillerinin önceden bilinmesini gerektiriyordu. Planlama aşamasında gözden kaçan bir HMI video akışı, IRT penceresi ile çakışarak kritik bir servo ekseninde 5 ms gecikmeye neden oldu. **Ders: TSN'de GCL planlaması, ağdaki her veri akışının karakterize edilmesini (bant genişliği, periyot, öncelik) gerektirir. 802.1Qcc ile otomatik planlama bu karmaşıklığı azaltır.**
+
+**Not 6 — Gigabit Uplink "Daha Hızlı" Ama Jitter'i Bozdu**
+Bir hat genişletmesinde, 100 Mbps omurga 1 Gbps'e yükseltildi; "daha geniş bant, daha iyi performans" beklentisiyle. Ancak PROFINET RT jitter'i kötüleşti. Neden: yeni gigabit switch farklı bir ASIC kullanıyordu ve QoS kuyruk haritalaması varsayılana sıfırlanmıştı — CoS=6 RT trafiği artık varsayılan kuyruğa düşüyordu. Bant genişliği 10 kat arttı ama önceliklendirme kayboldu. **Ders: Bant genişliği artışı determinizmi otomatik iyileştirmez. Donanım değişiminde QoS/CoS yapılandırması yeniden doğrulanmalıdır; "daha hızlı link" ≠ "daha iyi gerçek zamanlılık".**
+
+**Not 7 — IGMP Snooping Sorgulayıcısı (Querier) Olmayınca Multicast Çöktü**
+EtherNet/IP I/O bağlantıları (implicit messaging, multicast üzerinden) bir tesiste rastgele kesiliyordu. IGMP snooping switch'lerde aktifti; ancak ağda hiçbir IGMP Querier yoktu (PLC ve switch'ler querier rolünü üstlenmemişti). Querier olmadan snooping tabloları zaman aşımına uğradı ve switch'ler multicast'i ya tüm portlara taştı (flood) ya da hiç iletmedi. **Ders: IGMP snooping tek başına yetmez; segmentte mutlaka bir IGMP Querier bulunmalıdır (genellikle bir switch'i statik querier olarak yapılandırarak). Querier'sız snooping, snooping'siz olmaktan daha tehlikelidir çünkü öngörülemez.**
+
+**Not 8 — Sürüm Farkı: EtherCAT DC "Continuous" vs "DC-Sync" Modu**
+Bir robot hücresinde 16 eksen senkronizasyonu beklenenden kötü çalışıyordu (faz farkı ~10 µs, hedef < 1 µs). Tüm slave'ler Distributed Clock destekliyordu; ancak master yapılandırmasında DC modu "continuous propagation compensation" yerine eski "DC-Sync only" bırakılmıştı; ayrıca referans saat olarak ilk slave değil, gecikmeli bir orta-zincir slave seçilmişti. Referans slave'i zincirin başına ve modu sürekli telafiye almak faz farkını 0.4 µs'e indirdi. **Ders: EtherCAT DC senkronizasyon kalitesi, referans slave seçimine ve telafi moduna kritik bağımlıdır. TwinCAT sürümleri arasında varsayılan DC ayarları değişebilir; proje taşınırken DC yapılandırması yeniden doğrulanmalıdır.**
+
+## Edge Case'ler ve Sistem Limitleri
+
+Performans garantileri nominal yükte tutar; sınır koşullarında çöker. Aşağıdaki edge case'ler gecikme/güvenilirlik bütçesinin gizli sınırlarıdır.
+
+### Çevrim Süresi Alt Sınırı ve Yeşil Faz Çakışması
+PROFINET IRT'de yeşil faz (NRT trafiği için) en az 125 µs olmalıdır; standart maksimum Ethernet çerçevesi (1518 byte) @100 Mbps ~123 µs sürer. Bu yüzden 250 µs altındaki çevrim sürelerinde tam boyutlu bir NRT çerçevesi yeşil faza sığmaz — çerçeve parçalanması veya özel donanım (frame preemption) gerekir. **31.25 µs çevrim, NRT trafiğini fiilen imkansız kılar**; o segmentte yalnızca IRT cihazları bulunabilir.
+
+### Jitter Birikimi: Tek Switch İyi, Zincir Kötü
+Tek bir cut-through switch ~1 µs sabit gecikme ekler. Ancak store-and-forward switch'ler zincirlendiğinde gecikme ve jitter **toplanır**: 5 store-and-forward switch zinciri, her biri çerçeve boyutuna bağlı 5–120 µs eklerse, en kötü durum jitter'i 600 µs'i bulabilir. IRT bütçesi (1 µs) bu yüzden zincirde yalnızca cut-through ile korunur. Switch derinliği (hop count) jitter bütçesinin gizli çarpanıdır.
+
+### En Kötü Durum vs Ortalama Gecikme
+Determinizm **ortalama** değil **en kötü durum** (worst-case) gecikmeyle ilgilidir. Bir ağ ortalama 50 µs, %99.9 persentil 80 µs ama %99.99 persentil 2 ms gecikme verebilir — bu "kuyruk" (tail latency) bir servo döngüsünü tek bir çevrimde bozar. Ortalama ölçümler yanıltıcıdır; OT'de **maksimum** ve persentil ölçülmelidir. Tek bir kayıp çevrim, "ortalama mükemmel" bir ağda bile makine durdurabilir.
+
+### TSN Guard Band'in Bant Genişliği Maliyeti
+802.1Qbv'de her kapı kapanmadan önce guard band (en uzun olası düşük öncelikli çerçevenin iletim süresi kadar) bırakılır. Kısa çevrimlerde guard band, çevrimin önemli bir yüzdesini "ölü zaman" olarak harcar. 125 µs çevrimde 12 µs guard band = %10 kayıp bant genişliği. Frame preemption (802.1Qbu) guard band'i ~1 fragment boyutuna indirerek bu kaybı azaltır; preemption olmadan kısa-çevrimli TSN verimsizdir.
+
+### Bant Genişliği Yeterli, Ama Mikro-Burst Tüketir
+1 Gbps link, ortalama %5 yüklüyken bile **mikro-burst** (mikrosaniye ölçeğinde anlık dolum) yaşayabilir. Switch port tamponu (buffer) küçükse burst sırasında RT çerçevesi tampona girer ve gecikir veya düşer. Ortalama bant genişliği grafiği "boş" görünürken jitter patlar. Bu yüzden RT trafiği için strict priority + ayrı kuyruk şart; ortalama bant genişliği güvenlik garantisi değildir.
+
+### HSR Halka Boyutu ve Çoğaltma Trafiği Limiti
+HSR'de her çerçeve halkada iki yönde dolaşır; halka büyüdükçe her düğüm hem kendi trafiğini hem tüm diğerlerinin çift kopyalarını taşır. N düğümlü halkada toplam trafik ~N×(kullanışlı trafik)×2'ye yaklaşır. ~32 düğüm pratik üst sınırdır; ötesinde halka bant genişliği çoğaltma trafiğiyle dolar ve faydalı veri için yer kalmaz.
+
+## Optimizasyon
+
+Performans optimizasyonu, "her şeyi hızlandır" değil, **kritik yolun (critical path) gecikme ve jitter'ini bütçe içinde tutmak**tır. Uzman kaldıraç sırası:
+
+### 1. Önce Ölç, Sonra Optimize Et
+```
+- Wireshark + donanım zaman damgası ile gerçek jitter'i ölç (yazılım zaman damgası yetersiz)
+- En kötü durum ve %99.99 persentili al, ortalamaya güvenme
+- Yük altında ölç (boş ağda her şey iyidir)
+```
+
+### 2. Switch Modunu ve Hop Sayısını Optimize Et
+- Kritik yolda store-and-forward → cut-through'a geç (jitter'in en büyük tek kaynağı)
+- Hop sayısını azalt: RT cihazları PLC'ye topolojik olarak yakınlaştır
+- Mümkünse RT trafiğini tek switch üzerinde topla (zincir derinliğini sıfırla)
+
+### 3. QoS'u Doğru Sırada Yapılandır
+```
+1. CoS güven (trust) modunu RT portlarında etkinleştir (yoksa etiketler silinir)
+2. CoS 6/7 → en yüksek kuyruk, Strict Priority
+3. Düşük öncelik kuyrukları WRR ile starvation'dan koru
+4. Storm control + IGMP snooping + Querier birlikte (üçü eksiksiz olmalı)
+```
+
+### 4. IRT/Sync Bant Genişliği Payını Gerçek Yüke Göre Daralt
+IRT için %20 ayırmak "güvenli" görünür ama yeşil fazı daraltır. Gerçek IRT veri hacmini hesapla (cihaz sayısı × PDO boyutu × çevrim) ve payı buna göre ayarla — gereksiz geniş IRT penceresi NRT'yi (tanılama, web) boğar.
+
+### 5. PDO/Process Image'i Minimize Et
+EtherCAT/PROFINET'te çerçeve boyutu doğrudan iletim süresine çevrilir. Kullanılmayan status byte'larını, gereksiz tanılama verisini PDO mapping'ten çıkar. Daha küçük çerçeve = daha kısa çevrim = daha fazla jitter marjı.
+
+### 6. Yedekliliği Performans Bütçesine Dahil Et
+HSR/PRP çoğaltma trafiği bant genişliğini ikiye katlar; MRP kurtarma süresi watchdog'a sığmalı. Yedeklilik "bedava" değildir — performans bütçesi yedeklilik ek yükünü içermelidir.
+
+## Derin Teknik Detay
+
+### IRT Neden Zaman Bölmeli (Time-Division) Tasarlandı?
+Standart Ethernet'in determinizm sorunu CSMA/CD ve paylaşımlı kuyruk çekişmesidir: iki çerçeve aynı anda iletilmek isterse biri bekler, bekleme süresi öngörülemez. IRT bu çekişmeyi **kökten ortadan kaldırır**: zaman, önceden hesaplanmış dilimlere bölünür (kırmızı/turuncu/yeşil faz). Kırmızı fazda yalnızca planlanmış IRT çerçevesi iletilir — çekişme imkansızdır çünkü o anda başka hiçbir trafiğe izin verilmez. Bu, "çekişmeyi yönet" (best-effort) yerine "çekişmeyi tasarımla yok et" felsefesidir. Bedeli: tüm cihazların aynı saate (PTCP < 1 µs) senkronize olması ve planın önceden hesaplanması zorunluluğudur. TSN'in 802.1Qbv'si aynı fikri standartlaştırır (Gate Control List = IRT zaman planının genelleştirilmiş hali).
+
+### EtherCAT "Processing on the Fly" Neden Bu Kadar Verimli?
+Standart Ethernet'te N cihazlı ağda N ayrı çerçeve gerekir; her cihaz kendi çerçevesini alır-işler-gönderir (store-and-forward gecikmesi N kez birikir). EtherCAT'ta **tek bir çerçeve** tüm cihazları dolaşır; her slave, çerçeve donanımdan geçerken (nanosaniye gecikmeyle) kendi veri penceresini "uçarken" okur/yazar. Çerçeve hiç durmaz. Bu yüzden 1000 cihaz bile tek çerçevede, mikrosaniye mertebesinde güncellenir. Verimlilik kaynağı: protokol işlemenin yazılımdan (CPU) donanıma (ESC — EtherCAT Slave Controller ASIC) taşınması ve çerçeve başına ek yükün cihaz sayısından bağımsız olmasıdır. Bu, "her cihaza ayrı paket" paradigmasının terk edilmesidir.
+
+### Cut-Through Determinizmi Nasıl Sağlar?
+Store-and-forward, gecikmeyi çerçeve boyutuna bağlar: büyük çerçeve = uzun bekleme = değişken gecikme = jitter. Cut-through ise çerçevenin yalnızca hedef MAC adresini (ilk 6 byte sonrası) okur okumaz iletmeye başlar; gecikme **çerçeve boyutundan bağımsız ve sabit** (~1 µs) olur. Determinizmin matematiksel temeli budur: sabit gecikme = sıfır jitter katkısı. Dezavantaj: hatalı (CRC'si bozuk) çerçeve, hata anlaşılmadan iletilmiş olur — cut-through hatalı çerçeveyi filtreleyemez. Bu yüzden gürültülü ortamlarda (yüksek CRC hata oranı) store-and-forward'ın filtreleme avantajı, jitter dezavantajına karşı tartılır.
+
+### PRP/HSR Çift-Kopya Eleme (Duplicate Discard) Mantığı
+PRP/HSR'de alıcı, aynı çerçevenin iki kopyasını alır ve ikincisini atması gerekir. Bunu nasıl bilir? Her çerçeveye bir **sıra numarası (sequence number)** ve kaynak MAC eklenir; alıcı bir "duplicate discard tablosu" tutar. (MAC, sıra no) çifti daha önce görüldüyse ikinci kopya atılır. Edge case: tablo zaman aşımı çok kısaysa gecikmiş ikinci kopya "yeni" sanılıp işlenir (yanlış çoğaltma); çok uzunsa tablo şişer. Ayrıca sıra numarası taşması (wrap-around) yönetilmelidir. Bu mekanizma "sıfır kayıp" garantisinin bedelidir — ek başlık (HSR tag 6 byte), tablo bellek yükü ve sıra numarası yönetimi. "Sıfır kayıp" bedava değil, çift bant genişliği + işleme karmaşıklığı karşılığıdır.
+
+### Neden T_network < %10 × T_scan Kuralı?
+Bu pratik kural, kontrol döngüsü kararlılığının (control loop stability) basitleştirilmiş bir ifadesidir. Bir geri-beslemeli kontrol döngüsünde toplam çevrim gecikmesi, sistemin faz marjını (phase margin) azaltır; gecikme çevrim periyoduna yaklaştıkça döngü salınıma (oscillation) ve kararsızlığa gider. Ağ gecikmesini çevrimin %10'unun altında tutmak, gecikmenin döngü dinamiğine etkisini ihmal edilebilir bırakır ve diğer gecikme kaynaklarına (scan, fieldbus, aktüatör) marj bırakır. Bu yüzden 1 ms çevrim → 100 µs ağ tavanı → IRT/EtherCAT zorunlu; RT'nin < 1 ms gecikmesi bu bütçeye sığmaz.
 
 ## İlgili Konular
 

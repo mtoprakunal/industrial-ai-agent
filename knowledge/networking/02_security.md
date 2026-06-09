@@ -2,8 +2,8 @@
 KONU        : Endüstriyel Ağ Güvenliği
 KATEGORİ    : networking
 ALT_KATEGORI: networking
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.isa.org/standards-and-publications/isa-standards/isa-iec-62443-series-of-standards"
     başlık: "ISA/IEC 62443 Series of Standards — ISA Resmi Sayfası"
@@ -672,6 +672,85 @@ iDMZ'deki historian kopyası "salt okunur" ve "gecikmiş" veri içerir — bu ka
 
 **Not 6 — IEC 62443 SL 2 ile Orta Ölçek Tesis İçin Süre ve Maliyet**
 Teeptrak analizi bir orta ölçek imalat tesisinde SL 2 uyumluluğu için 12–18 ay ve 500.000–1.500.000 € yatırım öngörür. Bu rakam çoğu sigorta poliçesinin talep ettiği tazminat limitinin çok altındadır. Güvenlik yatırımı bir maliyet değil, iş sürekliliği sigortasıdır.
+
+**Not 7 — DPI'ın "Yanlış Pozitif" ile Üretimi Durdurması**
+Bir ilaç tesisinde FW-2 üzerindeki S7Comm derin paket denetimi (DPI), bir TIA Portal firmware güncellemesi sonrası PLC'nin kullandığı yeni S7+ alt fonksiyon kodunu "bilinmeyen/şüpheli" olarak işaretleyip engelledi. Mühendislik istasyonu PLC'ye bağlanamaz oldu; ekip bunu bir ağ arızası sanıp saatlerce kablo/switch kontrol etti. Asıl neden güvenlik duvarının imza setiydi. **Ders: OT protokollerine DPI uygulayan güvenlik duvarları, protokol sürümü değiştiğinde "fail-closed" davranabilir. Cihaz firmware güncellemeleri, DPI imza seti güncellemeleriyle koordine edilmeli; DPI değişiklikleri de bakım penceresinde yapılmalıdır.**
+
+**Not 8 — Yönetim VLAN'ı Üzerinden Yanal Hareket**
+Bir denetimde tüm managed switch'lerin yönetim arayüzlerinin (web/SSH) üretim VLAN'ı ile aynı subnet'te olduğu bulundu. Bir PLC hücresini ele geçiren saldırgan, oradan tüm switch'lerin yönetim portuna erişip VLAN yapılandırmasını değiştirebilirdi — yani tüm segmentasyonu içeriden çökertebilirdi. **Ders: Switch yönetim trafiği ayrı, sıkıca kısıtlı bir yönetim VLAN'ında (out-of-band tercih edilir) izole edilmelidir. Üretim cihazları switch yönetim arayüzünü asla görmemelidir.**
+
+**Not 9 — Sürüm Farkı: NIST SP 800-82 Rev.2 → Rev.3 Geçişi**
+Bir tesisin güvenlik politikası 2015 tarihli NIST SP 800-82 Rev.2'ye göre yazılmıştı; "air gap" hâlâ birincil kontrol olarak listeleniyordu. Rev.3 (2023) air gap'i artık güvenilir tek kontrol olarak görmez ve Zero Trust, sürekli izleme, varlık görünürlüğünü öne çıkarır. Politika güncellenmediği için tesis, fiziksel olarak "yalıtılmış" sandığı ama aslında bir bakım dizüstüyle köprülenen bir ağ işletiyordu. **Ders: OT güvenlik standartları yaşayan belgelerdir; politika hangi sürüme dayandığını belirtmeli ve standart revize edildiğinde gözden geçirilmelidir. Air gap, kanıtlanmadıkça varsayılmamalıdır.**
+
+## Edge Case'ler ve Sistem Limitleri
+
+Güvenlik mimarisi, "normal saldırı" senaryosunda değil, sınır ve istisna durumlarında çöker. Aşağıda saha denetimlerinde en sık görülen sınır koşulları yer alır.
+
+### Güvenlik ile Kullanılabilirlik Çatışması (Fail-Open vs Fail-Closed)
+OT'nin AIC önceliği, güvenlik kontrollerinin başarısızlık davranışını belirsizleştirir. Bir güvenlik duvarı arızalanırsa:
+- **Fail-closed**: Tüm trafiği keser → güvenli ama üretim durur (IT varsayılanı)
+- **Fail-open**: Trafiği geçirir → üretim sürer ama korumasız (bazı OT cihazlarının varsayılanı)
+
+Bu seçim mimari karardır; SIS/güvenlik fonksiyonu yolundaki kontroller asla "tek arıza ile üretimi durdurmamalı"dır. Kritik kontrol yollarında **bypass değil, yedekli güvenlik cihazı** (HA çift) tercih edilir.
+
+### Broadcast/Multicast Güvenlik Kontrollerinden Kaçar
+Çoğu OT keşif protokolü (PROFINET DCP, EtherNet/IP ListIdentity) Layer-2 broadcast/multicast kullanır. Bu çerçeveler Layer-3 güvenlik duvarı ve yönlendirici tarafından **görülmez** — aynı VLAN/broadcast domain içinde serbestçe dolaşır. Bir saldırgan PLC hücresinin VLAN'ına eriştiğinde tüm cihazları DCP ile keşfedip yeniden adresleyebilir. Bu yüzden mikro-segmentasyon (her hücre ayrı VLAN) ve Layer-2 port ACL'leri Layer-3 kontrollerini tamamlamalıdır.
+
+### SL-C ≠ SL-A: Yetenek ile Gerçekleşen Arasındaki Boşluk
+Bir cihaz SL-C 3 sertifikalı olabilir; ancak yapılandırma yanlışsa (varsayılan parola, açık port, devre dışı loglama) ulaşılan SL-A 1 olur. IEC 62443 uyumluluğu sertifikadan değil, **yapılandırma denetiminden** geçer. Sertifika "yapabilir" der, denetim "yapıyor mu?" sorusunu cevaplar.
+
+### Eski Protokollerde Kimlik Doğrulama Limiti
+Modbus/TCP, DNP3 (güvenli sürüm olmadan), S7Comm (klasik) protokollerinde **hiçbir kimlik doğrulama yoktur** — kaynak IP'yi taklit eden (spoof) herhangi biri komut yazabilir. Bu protokoller için FR1 (kimlik doğrulama) cihaz düzeyinde imkansızdır; tek savunma ağ katmanı kontrolüdür (kanal/conduit kısıtlaması, DPI ile fonksiyon kodu beyaz listesi). Bu, "tazmin edici kontrol" kavramının klasik örneğidir.
+
+### iDMZ Tek Nokta Riski
+iDMZ tüm IT/OT trafiğini topladığı için kendisi yüksek değerli bir hedeftir. iDMZ'deki jump server ele geçirilirse saldırgan zaten "içeride"dir. Bu yüzden iDMZ sunucuları en sıkı sertleştirme (hardening), en yoğun izleme ve en kısa yama döngüsüne tabi olmalıdır — paradoksal olarak OT'nin "yamasız" felsefesinin istisnasıdır.
+
+### Zone Sayısı ve Yönetilebilirlik Limiti
+Aşırı mikro-segmentasyon, güvenlik duvarı kural setini patlatır. Her yeni zone, diğer tüm zone'larla potansiyel conduit demektir (n zone → teorik n×(n-1)/2 conduit). 50+ zone'lu bir tesiste kural seti binlerce satıra ulaşır ve "kural çürümesi" (rule rot) başlar — kimsenin neden var olduğunu bilmediği, kaldırılamayan kurallar. Pratik limit: makro-zone'larla başla, yalnızca kritiklik gerektirdiğinde mikro-segmente böl.
+
+## Optimizasyon
+
+OT güvenliğinde optimizasyon "daha fazla kontrol" değil, **en yüksek risk azaltımını en düşük operasyonel etkiyle** sağlamaktır. Uzman önceliklendirme sırası:
+
+### 1. Önce Görünürlük, Sonra Kontrol
+Görmediğin şeyi koruyamazsın. İlk yatırım pasif varlık keşfi (Claroty, Nozomi, Dragos — OT trafiğini bozmadan dinler) olmalıdır. Aktif tarama (Nmap) eski PLC'leri çökertebilir; OT'de **pasif keşif varsayılandır**.
+
+### 2. Segmentasyonu Risk Sırasına Göre Uygula
+Tüm ağı aynı anda segmente etme. Sıra:
+```
+1. IT/OT sınırı (iDMZ)        → en yüksek getiri, fidye yazılımı yayılımını keser
+2. SIS/güvenlik fonksiyonları → en yüksek sonuç, can güvenliği
+3. Kritik üretim hücreleri    → üretim sürekliliği
+4. Yardımcı/düşük kritik      → en son
+```
+
+### 3. Kural Setini "En Az Ayrıcalık" ile Sıkılaştır, Sonra İzle
+```
+Aşama 1: "İzin ver + logla" modunda baseline topla (2-4 hafta)
+Aşama 2: Gözlenen meşru trafik için açık kurallar yaz
+Aşama 3: "Varsayılan engelle"ye geç; logları izleyerek eksik kuralları yakala
+```
+Doğrudan "varsayılan engelle"ye geçmek üretimi durdurur (bkz. Hata 6).
+
+### 4. DPI'ı Seçici Uygula
+DPI gecikme ekler ve fail-closed riski taşır (bkz. Not 7). DPI'ı yalnızca **gerçekten gerekli sınırlarda** (IT/OT geçişi, uzak erişim) uygula; deterministik kontrol trafiğinin (IRT) geçtiği yollarda DPI'dan kaçın, bunun yerine ayrı VLAN + statik ACL kullan.
+
+### 5. Uzak Erişimi Sıfır Kalıcı Bağlantıya İndir
+Kalıcı VPN tünelleri saldırı yüzeyinin en büyük kalemidir. Optimizasyon: talep-anında (just-in-time) erişim — bağlantı yalnızca onaylı bakım penceresinde açılır, otomatik süre dolumuyla kapanır.
+
+## Derin Teknik Detay
+
+### "Terminate-and-Initiate" Neden Kritik?
+iDMZ'nin temel mekanizması, oturumun fiziksel olarak kesilip yeniden başlatılmasıdır. Bir IT istemcisi OT'deki historian'a doğrudan TCP oturumu kuramaz; oturum iDMZ sunucusunda **sonlanır**, iDMZ sunucusu ayrı, yeni bir oturumu OT'ye **başlatır**. Bunun derin nedeni: protokol seviyesi saldırılarının (buffer overflow, protokol tünelleme, oturum kaçırma) iDMZ sınırında "kırılması"dır. Saldırgan IT oturumunu ele geçirse bile, OT oturumu farklı bir bağlam, farklı kimlik ve farklı IP ile yeniden kurulduğu için zincir kopar. Bu, ağ katmanında uygulanan "hava boşluğu" (logical air gap) eşdeğeridir.
+
+### Veri Diyotu Donanım Düzeyinde Neden Zorlanır?
+Yazılım güvenlik duvarı kuralı "tek yön" diyebilir; ancak yazılım hatası, yanlış yapılandırma veya 0-day ile çift yönlü hale gelebilir. Veri diyotu, fiziksel katmanda tek yönü zorlar: gönderici tarafta yalnızca optik verici (TX), alıcı tarafta yalnızca optik alıcı (RX) bulunur — geri dönüş yolu **fiziksel olarak yoktur**. Hiçbir yazılım hatası fiziği değiştiremez. Bedeli: TCP gibi geri-bildirim (ACK) gerektiren protokoller çalışmaz; diyot üzerinden yalnızca tek yönlü UDP veya özel uygulama katmanı protokolleri (ileri hata düzeltmeli) geçer.
+
+### IEC 62443 Zone-Conduit ile Purdue Hiyerarşisinin İlişkisi
+Purdue katı bir dikey hiyerarşidir (her katman yalnızca komşusuyla konuşur). IEC 62443 zone-conduit ise **mantıksal ve esnek**tir; coğrafi olarak dağıtık ama aynı risk profilindeki cihazları (örn. tüm tesisteki SIS'ler) tek bir zone'da toplayabilir. Derin fark: Purdue "trafik nereden geçer?" (yapısal), zone-conduit "hangi risk birlikte yönetilir?" (risk-tabanlı) sorusunu cevaplar. Modern tasarım ikisini katmanlar: Purdue iskeleti fiziksel/ağ akışını, zone-conduit risk gruplamasını ve SL atamasını yönetir. Bulut/IoT entegrasyonu Purdue'nun katı dikeyliğini zorladığı için (L0 sensör doğrudan L5 buluta veri gönderebilir) zone-conduit'in esnekliği bu boşluğu doldurur.
+
+### Defense-in-Depth'in Matematiği: Neden Katmanlar Çarpılır?
+Tek bir kontrolün bypass olasılığı p ise, k bağımsız katmanın hepsinin aynı anda bypass olma olasılığı p^k'dır (katmanlar gerçekten bağımsızsa). Üç katmanın her biri %10 bypass olasılığına sahipse, üçünün birden aşılma olasılığı %0.1'e iner. **Kritik koşul: bağımsızlık.** Eğer iki katman aynı zaafı paylaşıyorsa (örn. hepsi aynı Active Directory'ye bağlı, AD düşerse hepsi düşer) çarpım bozulur ve katmanlar tek noktaya çöker. Bu, "neden farklı üreticiden, farklı teknolojiden katmanlar" sorusunun matematiksel cevabıdır.
 
 ---
 

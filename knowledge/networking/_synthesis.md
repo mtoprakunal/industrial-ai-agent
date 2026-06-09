@@ -2,8 +2,8 @@
 KONU        : Endüstriyel Ağ — Sentez
 KATEGORİ    : networking
 ALT_KATEGORI: networking
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/networking/01_topologies.md"
     başlık: "Endüstriyel Ağ Topolojileri"
@@ -48,6 +48,20 @@ Bu sentez, "Endüstriyel ağ tasarlamak isteyen biri topoloji, güvenlik ve perf
 **03_performance.md** ise iskelet üzerinde doğru zamanlamayı kurar: PROFINET RT/IRT, EtherCAT, TSN, QoS ve yedeklilik protokollerinin nicel parametreleri.
 
 Tek cümlelik öz: **Topoloji ağın şeklini, güvenlik ağın sınırlarını, performans ağın zamanlamasını belirler — ve bu üçü birbirini kısıtlar.**
+
+### Birleştirici İlke: Ağ, Determinizm ve Güvenilirliğin Omurgasıdır
+
+Üç belge yüzeyde ayrı konulardır (topoloji, güvenlik, performans); ancak hepsini bir arada tutan **tek bir mühendislik ilkesi** vardır: *endüstriyel ağ, fiziksel sürecin determinizm ve güvenilirlik omurgasıdır.* IT ağında bir paketin gecikmesi rahatsızlık, OT ağında bir paketin geç/kayıp gelmesi ise fiziksel olaydır — durmuş bir hat, bozulmuş bir parça, tetiklenen bir güvenlik fonksiyonu. Bu yüzden her üç belge de aynı çekirdek soruyu üç farklı pencereden sorar: **"Veri, garanti edilen zamanda, garanti edilen şekilde, doğru tarafa ulaşıyor mu?"**
+
+Bu birleştirici ilkenin üç tezahürü, üç belgeye karşılık gelir:
+
+| Belge | Birleştirici tema | Çekirdek mekanizma | Başarısızlığın fiziksel sonucu |
+|---|---|---|---|
+| **01_topologies** | Güvenilir teslimat — *yol her zaman var* | Segmentasyon + halka yedekliliği (MRP/HSR/PRP) | Kopma → izole düğüm, durmuş hücre |
+| **02_security** | Doğru tarafa teslimat — *yalnızca yetkili akış* | Defense-in-depth + zone/conduit izolasyonu | Yanal hareket → fidye yazılımı tüm tesisi durdurur |
+| **03_performance** | Zamanında teslimat — *garanti edilen gecikme* | Deterministik iletim (IRT/EtherCAT/TSN) + QoS | Jitter → senkronizasyon kaybı, mekanik hasar |
+
+Üçü de aynı tasarım felsefesini paylaşır: **best-effort'u (en iyi çaba) kabul etme; çekişmeyi/belirsizliği tasarımla yok et.** Topoloji belirsizliği yedeklilikle, güvenlik belirsizliği katmanlı izolasyonla, zamanlama belirsizliği zaman-bölmeli iletimle ortadan kaldırır. Uzman seviyesinde bu üç belge ayrı ayrı değil, **tek bir "garantili omurga" tasarımının üç boyutu** olarak okunmalıdır — ve bu boyutlar birbirini kısıtlar (güvenlik DPI'ı gecikme yer, halka boyutu hem kurtarma süresini hem jitter'i etkiler, VLAN hem segmentasyon hem broadcast domain sınırıdır).
 
 ## Nasıl Çalışır
 
@@ -168,6 +182,47 @@ CoS 4-5  → Kuyruk 3  (WRR ağırlık 40) — HMI, zaman-kritik kontrol
 CoS 2-3  → Kuyruk 2  (WRR ağırlık 30) — SCADA sorgu/yanıt
 CoS 0-1  → Kuyruk 1  (WRR ağırlık 30) — Yedek yazılım, güncelleme, IT trafiği
 ```
+
+### E. Konsolide Edge-Case ve Sistem Limiti Tablosu (Üç Belgeden)
+
+Sınır koşulları, üç belgenin en pahalı derslerini bir araya getirir. Her satır "nominalde çalışır, sınırda çöker" sınıfındandır.
+
+| Edge-Case / Limit | Belge | Kök Neden | Sonuç | Önlem |
+|---|---|---|---|---|
+| MRP > 50 düğüm | 01 | Test çerçevesi tur süresi garantiyi aşar | Kurtarma süresi tanımsız | Halkayı böl, MRP-Interconnection |
+| Eşzamanlı çift kopma | 01 | Halka 2 segmente bölünür | Her iki segment izole | PRP (iki bağımsız ağ) |
+| RSTP + MRP aynı portta | 01 | İki protokol portu çeker | Port flapping | MRP halkada RSTP'yi kapat |
+| Fiber sync domain mesafesi | 01 | Yayılım gecikmesi (~5 µs/km) | PTCP saat sapması | IRT sync domain'i kısa tut |
+| VLAN/TCAM limiti | 01/02 | Switch donanım kural tablosu dolar | Segment eklenemez | Plan switch limitine göre |
+| L2 broadcast/multicast | 02 | DCP/keşif L3 FW'yi atlar | Saldırgan VLAN içinde keşif | Mikro-segment + L2 ACL |
+| Fail-open vs fail-closed | 02 | FW arıza davranışı belirsiz | Üretim durur / korumasız kalır | Kritik yolda HA çift |
+| Eski protokol kimlik yok | 02 | Modbus/S7Comm auth'suz | IP spoof ile komut yazma | Conduit kısıt + DPI beyaz liste |
+| DPI fail-closed | 02/03 | Protokol sürümü değişti | Mühendislik erişimi kesildi | DPI'ı firmware ile koordine et |
+| IGMP Querier yokluğu | 03 | Snooping tablosu zaman aşımı | Multicast flood / kesinti | Statik querier ata |
+| Çevrim < 250 µs + NRT | 03 | Yeşil faza çerçeve sığmaz | NRT imkansız | Frame preemption / sadece IRT segment |
+| Tail latency (%99.99) | 03 | Ortalama iyi, kuyruk kötü | Tek çevrimde senkron kaybı | Maks/persentil ölç |
+| Mikro-burst | 03 | Anlık tampon dolumu | RT çerçeve gecikir/düşer | Strict priority + ayrı kuyruk |
+| HSR > 32 düğüm | 01/03 | Çoğaltma trafiği halkayı doldurur | Faydalı bant kalmaz | Halka boyutunu sınırla |
+| Gigabit yükseltme QoS sıfırlar | 03 | Yeni ASIC varsayılana döner | Önceliklendirme kaybolur | Donanım değişiminde QoS doğrula |
+
+### F. Uzman Optimizasyon Sıralaması (Üç Belgeyi Birleştiren)
+
+Optimizasyon bağımsız değil, **sıralı**dır — yanlış sırada yapılan bir adım sonrakini geçersiz kılar. Uzman önceliklendirme:
+
+```
+1. ÖLÇ (03)        → Gerçek jitter/persentil/kayıp; baseline trafiği logla (02)
+                     "Görmediğini optimize edemezsin / koruyamazsın"
+2. HATA ALANI (01) → Fault domain'i küçült: halkaları böl, çift uplink
+                     En yüksek getiri burada; sonraki adımlar bunun üzerine kurulur
+3. GÖRÜNÜRLÜK (02) → Pasif varlık keşfi; ne var bilinmeden segmentlenemez
+4. SEGMENT (01+02) → Risk sırasıyla: iDMZ → SIS → kritik hücre → yardımcı
+5. ZAMANLAMA (03)  → Cut-through + hop azalt + QoS (CoS güven → SP → WRR)
+6. SIKILAŞTIR (02) → "İzin+logla" baseline → açık kural → varsayılan engelle
+7. YEDEKLİLİK (01) → MRP/PRP/HSR'i watchdog ve bant bütçesine sığdır
+8. DOĞRULA        → Kabloyu kes (kurtarma), yük bin (jitter), kural test et
+```
+
+**Sıralama mantığı**: Ölçmeden optimize etmek körlemedir (1). Hata alanını küçültmek diğer her şeyi kolaylaştırır (2). Segmentasyon görünürlük olmadan eksik kalır (3→4). QoS, segmentasyon kararından sonra anlamlıdır (5). Kural sıkılaştırma ölçülen baseline'a dayanmalıdır (6). Yedeklilik son katmandır çünkü performans ve güvenlik bütçesini tüketir (7). Hiçbir adım doğrulamadan tamamlanmış sayılmaz (8).
 
 ## Pratikte Nasıl Kullanılır
 
@@ -370,14 +425,23 @@ Bir üretim tesisinde IT ağından OT'ye doğrudan erişim vardı. Muhasebe bilg
 **Not 6 — TSN GCL Planlaması ve Beklenmedik Trafik**
 Bir pilot TSN projesinde GCL (Gate Control List) yapılandırması sırasında bir HMI video akışı gözden kaçırıldı. Video akışı IRT zaman penceresine denk gelince servo eksenlerinde 5 ms gecikme oluştu. 802.1Qcc ile otomatik akış planlamasına geçilince sorun ortadan kalktı. **Ders: TSN'de GCL planlaması, ağdaki her veri akışının önceden karakterize edilmesini gerektirir.** (Belge 3 — Proje Notu 5)
 
+**Not 7 — Aynı Birleştirici İlke, Üç Farklı Pencere: Tek Kök Neden Üç Belgeyi Birden Vurur**
+Bir tesiste yönetim VLAN'ı üretim VLAN'ıyla aynı subnet'teydi (Belge 2 — Not 8: güvenlik açığı). Aynı yanlış yapılandırma, switch yönetim trafiği ile RT trafiğini aynı broadcast domain'de tutuyordu; bir keşif fırtınası RT jitter'ini bozuyordu (Belge 3: performans). Ve bu yapılandırma, topoloji diyagramında "ayrı yönetim ağı" olarak gösteriliyordu (Belge 1: belgeleme tutarsızlığı). Tek bir kök neden, üç belgenin de uyardığı üç ayrı belirti üretti. **Ders: Topoloji/güvenlik/performans ayrı denetlenmez — bir yapılandırma hatası üç boyutta birden tezahür eder. Birleştirici ilke (garantili omurga) ihlal edildiğinde semptomlar her üç pencerede görünür.** (Belge 1+2+3 kesişimi)
+
+**Not 8 — "Daha İyi Donanım" Tuzağı: Yükseltme Determinizmi Bozdu**
+Bir omurga 100 Mbps'ten 1 Gbps'e yükseltildi (Belge 3 — Not 6). Daha geniş bant beklenirken RT jitter kötüleşti çünkü yeni ASIC QoS'u varsayılana sıfırlamıştı. Aynı yükseltme sırasında yeni switch fabrika varsayılanı MRM ile geldi ve halkada çift-MRM çakışması riski doğdu (Belge 1 — Not 5). **Ders: Donanım yükseltmesi, "garantili omurga"nın üç boyutunu (topoloji rolü, QoS, yedeklilik yapılandırması) sıfırlayabilir. Her donanım değişiminden sonra MRP rolü, QoS/CoS haritalaması ve segmentasyon ayrı ayrı yeniden doğrulanmalıdır. "Daha hızlı link" ≠ "daha iyi ağ".** (Belge 1+3 kesişimi)
+
 ## İlgili Konular
 
 ```
 knowledge/networking/                  ← Şu an buradasınız
 ├── 01_topologies.md                   → Fiziksel topoloji, MRP mimarisi, Purdue modeli
+│                                        (Uzman: MRP iç mekanizması, edge-case'ler, optimizasyon)
 ├── 02_security.md                     → IEC 62443 zone/conduit, iDMZ, DPI, defense-in-depth
+│                                        (Uzman: terminate-and-initiate, veri diyotu fiziği, DiD matematiği)
 ├── 03_performance.md                  → RT/IRT/EtherCAT/TSN, QoS, PRP/HSR nicel değerler
-└── _synthesis.md (bu belge)
+│                                        (Uzman: IRT zaman-bölme, cut-through determinizmi, tail latency)
+└── _synthesis.md (bu belge)           → Birleştirici ilke, konsolide edge-case tablosu, optimizasyon sırası
 
 knowledge/standards/
 └── 02_iec62443                        → IEC 62443 standart serisi tüm detaylar (02_security.md özet)
