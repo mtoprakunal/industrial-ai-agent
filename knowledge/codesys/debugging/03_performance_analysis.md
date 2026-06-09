@@ -2,8 +2,8 @@
 KONU        : CODESYS Performans Analizi
 KATEGORİ    : codesys
 ALT_KATEGORI: debugging
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_monitoring_running_tasks.html"
     başlık: "CODESYS Online Help — Monitoring Tasks"
@@ -623,6 +623,112 @@ Bir fabrika hattında PLC devreye alındı, 2 saatlik test güzeldi. Üretime ge
 
 **Not 4 — Task Monitor'u Monitöre Koyma**  
 Bir tesiste büyük ekran monitörler gözetleme için kullanılıyordu. Task Monitor'u HMI üzerinden PLC Shell `task list` çıktısıyla periyodik olarak tazeleyip gösterdik. Bakım ekibi Max Cycle Time grafikleriyle erken uyarı alır hale geldi. İlk spike görüldüğünde mühendis uyarıldı ve müdahale edildi — watchdog alarmı olmadı.
+
+**Not 5 — Yavaşça Şişen Exec Time (Algoritmik Sızıntı)**  
+Bir sistemde exec time haftalar içinde 2ms'den 7ms'ye yavaşça çıktı; ani spike yoktu, bu yüzden kimse fark etmedi. Neden: bir diagnostik buffer (array) her döngü büyüyordu ve içinde lineer arama (`O(n)`) yapan kod, n büyüdükçe yavaşlıyordu. Tek anlık ölçüm normal görünüyordu; sorun trend'deydi. Ders: Max Exec Time'ın **trendini** kaydet (haftalık), tek değeri değil. Büyüyen veri yapısı + lineer algoritma, exec time'a sessizce sızar — indeksli/hash erişime geç (task-structure/02 Not 7).
+
+**Not 6 — Gözlemci Etkisi: Profiler Spike Yarattı**  
+Code Instrumentation modunda çok sayıda POU profillenince, instrumentation overhead'i exec time'ı kendisi artırdı; mühendis "profil ettiğim POU yavaş" sandı, oysa yavaşlatan profiler'dı. Ders: Instrumentation ölçtüğü şeyi etkiler (gözlemci etkisi); önce üst-seviye POU'ları geniş profille, sonra şüpheliyi dar profille. Çok-çekirdekli sistemde Sampling modu (daha az invazif) tercih edilebilir.
+
+**Not 7 — Termal Throttle ile Mevsimsel Performans**  
+Fansız bir kabin PLC'si kışın sorunsuzdu, yazın watchdog alarmı verdi. cyclictest ve Task Monitor yaz öğleden sonra Max Cycle Time'ın %40 arttığını gösterdi. Neden: kabin sıcaklığı CPU termal eşiğini geçince throttling frekansı düşürdü → exec time uzadı. Klimalı test ortamı bunu hiç göstermemişti. Ders: performans bütçesini en kötü termal koşulda doğrula; CPU sıcaklığı + frekansı telemetriye ekle (task-structure/02 Not 5).
+
+## Edge Case'ler ve Ölçüm Sınırları
+
+### Metriklerin Yanılttığı Durumlar
+
+```
+Metrik/Durum                        Yanılgı                   Gerçek
+─────────────────────────────────────────────────────────────────────
+Average Cycle Time düşük            "sistem sağlıklı"          Max'ta spike olabilir
+Tek anlık Exec normal               "sorun yok"                trend şişiyor olabilir (Not 5)
+Freewheeling Max yüksek             "freewheeling, normal"     bloke I/O sorunu (Not 3)
+cyclictest iyi (CODESYS kapalı)     "RT performansı tamam"     CODESYS açıkken farklı olabilir
+Profiler'da POU yavaş               "o POU optimize edilmeli"  profiler overhead'i olabilir (Not 6)
+plcload %50                         "bol CPU var"              periyot buluşma anında %100 olabilir
+```
+
+### Zaman Ölçüm Edge Case'leri
+
+```
+SysTimeGetUs() 32-bit               → ~71 dakikada taşar; fark alırken unsigned dikkat
+TIME tipi                           → ~49.7 günde taşar (fundamentals/01)
+Çok kısa blok ölçümü                → ölçüm overhead'i bloktan büyük olabilir
+İlk çağrı (cache cold)              → ilk iterasyon her zaman daha yavaş (warm-up)
+```
+
+### Jitter Ölçümünün İncelikleri
+
+- **cyclictest CODESYS kapalıyken** OS jitter'ını gösterir; ama CODESYS RT thread'leri çalışırken gerçek jitter farklı olabilir (kaynak rekabeti). Her ikisini de ölç.
+- **Jitter ortalaması yanıltır**; Max Jitter tek bir kötü döngüyü gizleyebilecek ortalamadan daha anlamlıdır — tıpkı Max Cycle Time gibi.
+- **Periyot buluşması:** farklı task'ların periyotları en küçük ortak katta hizalanınca anlık yük zirvesi oluşur (task-structure/02 %70 derin detay); ortalama plcload bunu gizler.
+
+## Optimizasyon
+
+### Optimizasyon Hiyerarşisi (En Az → En Çok İnvazif)
+
+```
+1. Kod: bloke I/O → Freewheeling; loop-invariant hoisting; O(n)→indeksli (Not 5)
+2. Cycle time: gereksiz kısa cycle'ı gerçek gereksinime çek (task-structure/02)
+3. Task bölme: ağır/yavaş işi ayrı düşük-öncelik task'a
+4. Veri yapısı: kopya→referans (VAR_IN_OUT), struct hizalama, bit paketleme
+5. OS/donanım: RT-preempt + isolcpus + irqaffinity + BIOS C-state kapat
+6. Donanım yükseltme (son çare)
+```
+
+Kod ve veri-yapısı optimizasyonu (1-4) genellikle donanımdan (6) daha büyük kazanç verir; "daha güçlü CPU" çoğu zaman yanlış cevaptır (fundamentals/01 multicore yanılgısı).
+
+### Trend İzleme: Tek Ölçüm Değil
+
+```
+- Max Exec Time'ı periyodik (günlük/haftalık) kaydet → şişme trendini yakala (Not 5)
+- xSpikeDetector sayacını OPC UA/MQTT ile SCADA'ya raporla → erken uyarı (Not 4)
+- CPU sıcaklığı + frekansı izle → termal throttle tespiti (Not 7)
+- 48 saat test gece vardiyasını + en kötü termali kapsasın
+```
+
+### Gözlemci Etkisini Yönetme
+
+```
+- Profiler: önce geniş (üst POU), sonra dar (şüpheli) — overhead'i sınırla (Not 6)
+- Kod-içi ölçüm: SysTimeGetUs() blok başına bir kez, döngü içinde değil
+- Trace: kritik ölçümde değişken sayısını sınırla
+- Üretimde sürekli profiling açık bırakma — ölçüm yükü birikir
+```
+
+## Derin Teknik Detay
+
+### Neden Max, Ortalama Değil? — Determinizmin Doğası
+
+Performans analizinde tek anlamlı metrik Max'tır (Hata 1), çünkü bir PLC'nin değeri **en kötü durum** garantisidir, ortalama değil (fundamentals/01 determinizm). 999 döngü 2ms, 1 döngü 45ms süren bir task'ın ortalaması ~2ms'dir ve "sağlıklı" görünür — ama o tek 45ms döngü watchdog'u tetikler veya bir kontrol kararını geciktirir. Gerçek zamanlı sistemlerde "ortalama hız" anlamsızdır; önemli olan "her döngünün üst sınırı". Bu, JIT'in neden yasak olduğuyla (fundamentals/01) aynı felsefedir: öngörülebilir en-kötü-durum > iyi ortalama. Max Cycle Time'ı izlemek, bu felsefeyi ölçüme dökmektir.
+
+### Exec Time Nereye Gider? — I/O Image'in Gizli Payı
+
+Bir task'ın exec time'ı yalnızca "kod" değildir: input image okuma + kod + output image yazma toplamıdır (fundamentals/01 I/O image). Çok I/O'lu bir EtherCAT topolojisinde, "kod" 0.1ms sürse bile I/O image transferi 0.3ms ekleyebilir (task-structure/02 derin detay). Bu yüzden "kodu optimize ettim ama exec time düşmedi" şaşkınlığı yaşanır — darboğaz koda değil, I/O image boyutuna olabilir. Kod-içi zaman ölçümü (SysTimeGetUs) bunu ayırt eder: ölçüm yalnızca kod bloğunu kapsar, I/O image'i değil; Task Monitor'un Exec Time'ı ise her ikisini. İkisi arasındaki fark = I/O image maliyeti.
+
+### Jitter'ın Katmanlı Kaynağı
+
+Jitter tek bir yerden gelmez; bir zincir boyunca birikir (fundamentals/01 + task-structure):
+```
+Donanım (BIOS C-state uyanma latency) → en büyük, en sinsi
+OS scheduler (RT-preempt yoksa kernel araya giremez)
+CPU rekabeti (isolcpus yoksa OS thread'leri yarışır)
+IRQ (ağ interrupt'ı task'ı keser)
+Üst öncelikli task (preemption)
+Kod (değişken exec time)
+```
+cyclictest alttaki üç katmanı (donanım+OS+IRQ) ölçer; Task Monitor jitter'ı tüm zinciri görür. Bu yüzden "kod mükemmel ama jitter var" → alt katmanlara in (BIOS/isolcpus). Jitter analizi, hangi katmanın suçlu olduğunu izole etme sürecidir — ve en kötü halka tüm zinciri belirler (fundamentals/_synthesis "determinizm uçtan uca zincir").
+
+### Profiler'ın İki Modu: Doğruluk vs Gözlemci Etkisi
+
+```
+Instrumentation: her POU girişine/çıkışına ölçüm kodu enjekte → kesin POU zamanı
+                 ama ölçüm kodu kendisi exec time'a eklenir (gözlemci etkisi, Not 6)
+Sampling:        periyodik olarak "şu an hangi POU çalışıyor?" örnekler → istatistiksel
+                 düşük overhead, ama tek spike'ı kaçırabilir; multicore-dostu
+```
+
+Bu, yazılım profiling'indeki klasik "instrumentation vs sampling" takasıdır. Instrumentation tek döngü spike'ını kesin yakalar (motion/dar-çevrim için kritik) ama sistemi etkiler; sampling ortalama yük profilini ucuza verir ama nadir olayı kaçırır. Profiler yoksa kod-içi SysTimeGetUs + ikili arama (belgedeki yöntem) manuel instrumentation'dır — aynı takası elle yapar. Doğru mod seçimi, "kesin tek-döngü mü, ucuz ortalama mı?" sorusudur.
 
 ## İlgili Konular
 

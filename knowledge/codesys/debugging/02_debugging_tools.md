@@ -2,8 +2,8 @@
 KONU        : CODESYS Dahili Debug Araçları
 KATEGORİ    : codesys
 ALT_KATEGORI: debugging
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_using_breakpoints.html"
     başlık: "CODESYS Online Help — Using Breakpoints"
@@ -628,6 +628,103 @@ Müşteri tesisinde devreye alma günü PLC programında küçük ama kritik bir
 
 **Not 4 — Force Sonrası Makine Hareketi**  
 Bir servo motor testi sırasında `xServoEnable := TRUE` force edildi. Ama bir önceki test sırasında position referans değeri sıfırlanmamıştı. Motor enable olunca 50mm hızlı hareket yaptı. Beklenmedik hareket çevre ekipmanına çarptı. Ders: Force öncesi güvenli durumu doğrula; hareket sistemlerinde force öncesi tüm pozisyon/referans değerlerini kontrol et.
+
+**Not 5 — Breakpoint EtherCAT'i Düşürdü**  
+Canlı bir motion sisteminde "sadece bir bakayım" diye breakpoint kondu. Program durunca tüm task'lar dondu, EtherCAT bus cycle task çalışmadı → master sync sinyali kesildi → tüm slave'ler SafeOp'a düştü → servo'lar serbest kaldı, eksen yer çekimiyle düştü. Ders: Breakpoint tüm task'ları durdurur ve fieldbus sync'i öldürür; motion/EtherCAT canlı sistemde ASLA breakpoint — Trace kullan (durdurmaz). Geliştirme/simülasyon için saklı tut.
+
+**Not 6 — Watch Window'un Yanılttığı Hızlı Sinyal**  
+Bir mühendis 1ms'de değişen bir bayrağı Watch Window'da izledi, "hiç TRUE olmuyor" sonucuna vardı ve mantığı yanlış değiştirdi. Gerçekte bayrak her 1ms TRUE oluyordu ama Watch Window 200ms polling yapıyordu — 200 değişimde 1'ini gösteriyordu. Ders: Watch Window monitoring interval'inden (200ms) hızlı değişen sinyalleri güvenilir gösteremez; bu sinyaller Trace ile (her döngü kayıt) izlenmeli. Watch Window "anlık fotoğraf", Trace "film".
+
+**Not 7 — Online Change SFC Adımını Sıfırladı**  
+Çalışan bir dolum sekansında (SFC) küçük bir aksiyon kodu Online Change ile düzeltildi. Değişiklik sonrası SFC mevcut adımı kaybetti, başa döndü — makine dolum ortasındayken valfi kapatıp baştan başladı, ürün taştı. Ders: SFC içeren POU'da Online Change mevcut adım durumunu sıfırlayabilir; sekans-kritik makinelerde SFC değişikliği için planlı duruş + güvenli durumdan başlatma tercih edilmeli (programming/03 + bu belge Online Change riskleri).
+
+## Edge Case'ler ve Araç Sınırları
+
+### Her Aracın Görünmez Sınırı
+
+```
+Araç           Gizli Sınır                          Sonuç
+─────────────────────────────────────────────────────────────────────
+Watch Window   200ms polling                        hızlı sinyal kaçar (Not 6)
+Force          unforce unutulur                      zombi force (stop çalışmaz)
+Breakpoint     TÜM task'ları durdurur               EtherCAT düşer (Not 5)
+Data Breakpoint yalnız Control Win V3                gerçek donanımda yok
+Trace          buffer sonlu                          küçük buffer → olay kaçar
+Online Change  interface/SFC/retain değişimini reddeder tam download gerekir
+PLC Shell      komut platforma göre değişir          ARM'de bazı komut yok
+Log            bazı sorunlar log'a yazılmaz          sessiz hata (01 edge cases)
+```
+
+### Force vs Write: Sık Karıştırılan Ayrım
+
+```
+Write (Ctrl+F7): değişkene BİR döngü değer yazar → program bir sonraki scan EZER
+Force (F7):      değişkeni KİLİTLER → program yazsa da değer sabit kalır
+```
+
+Edge case: bir output'u Write ile test edip "değişmedi" sanmak — program zaten bir sonraki scan'de üzerine yazmıştır. Kalıcı test için Force gerekir. Ama Force unutulursa zombi (Not / Hata 1). İkisinin farkını bilmemek en yaygın araç hatasıdır.
+
+### Trace'in Yakalayamadıkları
+
+```
+- Buffer'dan eski olaylar: ring buffer dolunca en eski üzerine yazılır
+- Trigger'dan önce çok geride olan kök neden: pre-trigger yetmezse görünmez
+- Task cycle'ından hızlı değişim: Trace task cycle'da örnekler, ara değişimi görmez
+- Trace'in kendi yükü: çok değişken + her-döngü kayıt → ölçülebilir CPU (gözlemci etkisi)
+```
+
+## Optimizasyon
+
+### Doğru Aracı Doğru Soruya Eşleme
+
+```
+Soru                                  Araç                 Neden
+──────────────────────────────────────────────────────────────────────
+"Şu an değeri ne?"                     Watch Window         anlık, kurulumu sıfır
+"Kim/ne zaman bu değeri yazdı?"        Data Breakpoint      call stack gösterir
+"Aralıklı arıza, öncesinde ne oldu?"   Trace + trigger      her döngü + pre-trigger
+"Hangi POU yavaş?"                     Profiler / kod-ölçüm POU bazlı zaman
+"I/O fiziksel çalışıyor mu?"           Force                çıkışı sabitle, gözlemle
+"Sistem yükü ne?"                      PLC Shell plcload    runtime metriği
+"Neden durdu/çöktü?"                   Log Viewer           kök neden satırı
+```
+
+Yanlış araç = boşa zaman: hızlı sinyale Watch Window (kaçırır), aralıklı arızaya breakpoint (yakalayamaz), motion'a breakpoint (sistemi düşürür).
+
+### Gözlemci Etkisini (Observer Effect) Azaltma
+
+Debug araçlarının kendisi sistemi etkiler:
+- **Monitoring/Watch:** IDE polling ek ağ+CPU yükü; çok değişken izleme task'ı yavaşlatabilir.
+- **Trace:** çok değişken + her-döngü kayıt CPU yer; kritik ölçümde değişkeni sınırla.
+- **Breakpoint:** sistemi tamamen durdurur — en invazif.
+
+Sıralama (en az → en çok invazif): Log → PLC Shell → Trace → Watch → Force → Breakpoint. Canlı sistemde mümkün olan en az invazif araçla başla.
+
+### Trace Buffer Boyutlandırma
+
+```
+Buffer = (yakalanacak süre) / (task cycle)
+5sn olay, 10ms task → 500 döngü · pre-trigger = buffer'ın %50-80'i
+Kök neden olaydan çok önceyse → buffer'ı büyüt veya sürekli kayıt + sonradan upload
+```
+
+## Derin Teknik Detay
+
+### Breakpoint Neden Tüm Task'ları Durdurur?
+
+Breakpoint, runtime'ın execution engine'ini (fundamentals/01) bir noktada askıya alır — ama IEC task'ları tek bir runtime altında çalıştığı için, biri durunca scheduler tüm IEC yürütmesini dondurur (tutarlı bir "durmuş durum" snapshot'ı için). Bu kasıtlıdır: bir task dururken diğeri çalışsaydı, incelediğiniz değişkenler altınızda değişir, snapshot anlamsızlaşırdı. Bedeli: bus cycle task da durur → EtherCAT/PROFINET sync kaybolur → slave'ler SafeOp'a düşer (Not 5). Bu yüzden breakpoint, "tutarlı snapshot" ile "canlı sistem sürekliliği" arasında temel bir takastır; motion'da snapshot'ın bedeli eksenin düşmesidir. Trace bu takası çözer: durdurmadan, her döngü kaydederek snapshot'ı zaman içinde toplar.
+
+### Trace: Runtime İçi Ring Buffer Mimarisi
+
+Trace, IDE'de değil **runtime içinde** çalışan bir ring buffer'dır (fundamentals/01 bileşen mimarisi). Her seçili task cycle'ında değişken değerlerini buffer'a yazar; IDE bağlı olmasa bile kayıt sürer. Bu, Watch Window'dan temel farkıdır: Watch IDE-polling'dir (IDE ↔ runtime ağ trafiği, 200ms), Trace runtime-yereldir (her döngü, ağ yok). Bu yüzden Trace hiçbir döngüyü kaçırmaz ve gözlemci etkisi minimaldir (yalnızca buffer yazma maliyeti). Trigger + pre-trigger mekanizması, "olaydan önceki ana" bakmayı sağlar — buffer sürekli döndüğü için tetik anında geçmiş zaten kayıtlıdır. Bu mimari, intermittent arızaları (Not 1: 3 günlük arıza) yakalamanın tek güvenilir yoludur.
+
+### Online Change'in Reddetme Mantığı (Debug Perspektifi)
+
+Online Change'in neyi kabul/reddettiği (programming/02 derin detay), çalışan **bellek görüntüsünü koruma** ilkesine dayanır. Debug açısından kritik: Online Change "interface değişmedi" derken, FB'nin bellek layout'unun (VAR offset'leri) aynı kaldığını kontrol eder. Layout aynıysa çalışan instance'ların verisi korunur; değiştiyse (yeni değişken, sıra değişimi) veri taşınamaz → reddedilir veya sıfırlanır. SFC adım sıfırlanması (Not 7) bunun özel bir halidir: SFC'nin iç adım-durumu değişkeni, kod değişikliğiyle yeniden konumlanırsa adım kaybolur. Bu yüzden Online Change "küçük mantık düzeltmesi" için güvenli, "yapısal değişiklik" için tehlikelidir — debug sırasında hızlı düzeltme cazip olsa da, SFC/retain/interface içeren kodda planlı duruş daha güvenlidir.
+
+### Data Breakpoint: Donanım Watchpoint'in PLC Karşılığı
+
+Data Breakpoint (belirli bir değişken değişince dur), CPU'nun donanım watchpoint (debug register) yeteneğine dayanır — bu yüzden yalnızca CODESYS Control Win V3'te (x86, OS debug API erişimi) çalışır, gömülü/ARM runtime'larda yoktur. Mekanizma: değişkenin bellek adresine bir donanım izleme kaydı kurulur; o adrese her yazma CPU'yu durdurur ve call stack'i yakalar. Bu, "kim bu değişkeni bozuyor?" sorusunu (Not 2: 4 saat → 20 dakika) doğrudan yanıtlar — değeri değiştiren kod yolunu call stack'te gösterir. Gerçek donanımda olmadığı için, oradaki aynı sorun için alternatif: değişkene yazan tüm yerleri grep'le + her birine geçici log ekle, veya tek-yazar disiplinini (programming/02) baştan uygula.
 
 ## İlgili Konular
 

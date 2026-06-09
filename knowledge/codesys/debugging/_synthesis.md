@@ -1,18 +1,18 @@
 ---
-KONU        : CODESYS Debugging — Sentez
+KONU        : CODESYS Debugging — Uzman Sentezi
 KATEGORİ    : codesys
 ALT_KATEGORI: debugging
-SEVİYE      : Orta–İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/codesys/debugging/01_common_errors.md"
-    başlık: "CODESYS Sık Karşılaşılan Hatalar ve Çözümleri"
+    başlık: "CODESYS Sık Karşılaşılan Hatalar (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/debugging/02_debugging_tools.md"
-    başlık: "CODESYS Dahili Debug Araçları"
+    başlık: "CODESYS Dahili Debug Araçları (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/debugging/03_performance_analysis.md"
-    başlık: "CODESYS Performans Analizi"
+    başlık: "CODESYS Performans Analizi (Uzman)"
     güvenilirlik: deneyimsel
 BAĞLANTILAR :
   - konu: "01_common_errors.md"
@@ -21,367 +21,256 @@ BAĞLANTILAR :
     ilişki: detaylandırır
   - konu: "03_performance_analysis.md"
     ilişki: detaylandırır
+  - konu: "knowledge/codesys/fundamentals/_synthesis.md"
+    ilişki: gerektirir
 ÖNKOŞUL     :
-  - "CODESYS runtime ve proje yapısı (fundamentals/01_runtime_architecture.md, 02_project_structure.md)"
-  - "Bu sentez, üç debugging belgesini okuduktan sonra bütünsel bakış için tasarlanmıştır."
+  - "Üç debugging belgesinin Uzman bölümleri okunmuş olmalıdır."
+  - "fundamentals/_synthesis (determinizm), task-structure/_synthesis (jitter/watchdog), programming/_synthesis (tek-yazar/retain), networking/_synthesis kavranmış olmalıdır."
+  - "Saha devreye alma ve arıza giderme deneyimi varsayılır."
 ÇELİŞKİLER :
   - kaynak: "CODESYS Profiler erişimi"
-    konu: "Profiler yalnızca Professional Developer Edition ile gelir; standart sürümde yoktur"
-    çözüm: >
-      Profiler olmadığında kod içi SysTimeGetUs() ölçümü + ikili arama yöntemi
-      ile sorunlu POU daraltılabilir. Bu sentez her iki yolu da kapsar.
+    konu: "Profiler yalnızca Professional Developer Edition ile gelir"
+    çözüm: "Profiler yoksa kod-içi SysTimeGetUs + ikili arama aynı işi yapar; sentez her ikisini kapsar."
   - kaynak: "—"
-    konu: "Bu sentez belgesi başka yeni çelişki içermez; kaynak belgelere atıflar yapar."
-    çözüm: "—"
+    konu: "—"
+    çözüm: "Bu sentez yeni çelişki içermez; kaynak belgelere atıflar yapar."
 ---
 
 ## Özün Ne
 
-Bu sentez, "CODESYS'te bir sorunla karşılaşan biri üç debugging belgesini okuyunca ne anlamalı?" sorusuna yanıt verir. Üç belge birbiriyle sıkı sıkıya bağlıdır: **01_common_errors.md** ne tür hatalar çıkacağını ve bunların kökenini söyler; **02_debugging_tools.md** o köklere ulaşmak için hangi araçların kullanılacağını gösterir; **03_performance_analysis.md** ise görünür hata üretmeden sistemi yıpratabilecek gizli performans sorunlarını nasıl tespit edeceğimizi açıklar. Bu üçü birlikte okunduğunda CODESYS debug'ının tek bir yetkinliğe indirgendiği görülür: **Log'u oku, aracı seç, kaynağa in.**
+Debugging üç ayrı beceri gibi görünür (hata kataloğu, araç kullanımı, performans ölçümü); uzman gözüyle hepsi **tek bir yöntemin** uygulamasıdır: **belirtiyi katmana haritala → o katmanda doğru aracı seç → kök nedene in → doğrula.** Bu, dört önceki sentezdeki "belirti→katman/ilke→kök neden" yaklaşımının teşhise dönüşmüş halidir.
 
----
+Üç temel kural her şeyi özetler:
+1. **Log tanıdır, ekran özettir** — ama bazı sorunlar log'a hiç yazılmaz (sessiz hatalar); o zaman katmana göre araç seçilir.
+2. **Araç bağlamı belirler** — Breakpoint motion sistemini düşürür, Trace düşürmez; yanlış araç yeni sorun yaratır.
+3. **Max gerçeği söyler, ortalama yalan söyler** — determinizm en-kötü-durum garantisidir; spike'lar ortalamada gizlenir.
+
+Uzmanlık, hangi katmanda olduğunu hızla teşhis edip (altyapı/yapı/kod/performans) en az invazif doğru aracı seçmektir.
 
 ## Nasıl Çalışır
 
 ### Üç Belgenin Birbirine Bağlantısı
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                  CODESYS DEBUG ZİHİN HARİTASI                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  01_common_errors.md                                                  │
-│  ┌───────────────────────────────────────────────────┐               │
-│  │             HATA KATALOĞU (10 Hata)               │               │
-│  │                                                   │               │
-│  │  • Login/Gateway hatası   • Watchdog              │               │
-│  │  • Download hatası        • RETAIN bozulması      │               │
-│  │  • I/O mapping çakışması  • EtherCAT hatası       │               │
-│  │  • Library not found      • Versiyon uyumsuzluğu  │               │
-│  │                                                   │               │
-│  │  Her hata: Belirti → Log'u oku → Neden → Çözüm   │               │
-│  └──────────────────────┬────────────────────────────┘               │
-│                         │ Hata tespit edildi → Araca ihtiyaç var     │
-│                         ▼                                             │
-│  02_debugging_tools.md                                                │
-│  ┌───────────────────────────────────────────────────┐               │
-│  │           DEBUG ARAÇ KİTİ (7 Araç)                │               │
-│  │                                                   │               │
-│  │  Watch Window   → Anlık değer izleme              │               │
-│  │  Force Values   → I/O ve alarm simülasyonu        │               │
-│  │  Breakpoint     → Kod akışını dondur              │               │
-│  │  Trace Recorder → Her döngü kaydı, trigger        │               │
-│  │  Online Change  → Çalışırken küçük güncelleme     │               │
-│  │  Log Viewer     → Runtime mesajlarının kaynağı    │               │
-│  │  PLC Shell      → plcload, task list, irq-list    │               │
-│  └──────────────────────┬────────────────────────────┘               │
-│                         │ Hata yok ama sistem ağır/jittery?          │
-│                         ▼                                             │
-│  03_performance_analysis.md                                           │
-│  ┌───────────────────────────────────────────────────┐               │
-│  │         PERFORMANS ANALİZ KATMANI                 │               │
-│  │                                                   │               │
-│  │  Task Monitor   → Exec/Cycle/Jitter metrikleri    │               │
-│  │  PLC Shell      → plcload, task list              │               │
-│  │  Kod İçi Ölçüm → SysTimeGetUs() + ikili arama    │               │
-│  │  Profiler       → POU bazlı zaman (Pro Edition)   │               │
-│  │  cyclictest     → OS jitter doğrulaması           │               │
-│  │  Spike Analizi  → Trace + PRG_SpikeDetector       │               │
-│  └───────────────────────────────────────────────────┘               │
-└─────────────────────────────────────────────────────────────────────┘
+01 HATALAR ──────── ne tür sorun + hangi katman (triage)
+        │ sorun tespit → kaynağa ulaşmak için araç gerek
+        ▼
+02 ARAÇLAR ───────── Watch/Force/Breakpoint/Trace/Online Change/Log/PLC Shell
+        │ hata yok ama sistem ağır/jittery?
+        ▼
+03 PERFORMANS ────── Task Monitor/Profiler/cyclictest/spike analizi (gizli birikim)
 ```
 
-### "Sorunu Görünce" İçin Özet Mental Model
+### Teşhisin Çekirdeği: Belirtiyi Katmana Haritala
 
-CODESYS debugging'i anlamanın en kısa yolu şu üç kurala sığar:
+```
+KATMAN              BELİRTİ ÖRNEKLERİ              BİRİNCİL ARAÇ
+──────────────────────────────────────────────────────────────────
+Altyapı (runtime/OS/ağ)  Login, gateway, versiyon  Log + PLC Shell + ping/telnet
+Yapı (config)            RETAIN, library, I/O map   Log + Library Manager + I/O Mapping
+Kod (logic)              watchdog, crash, NaN, değer Watch/Data BP/Trace
+Performans (gizli)       jitter, spike, şişen exec   Task Monitor/Profiler/cyclictest
+```
 
-> **Log her şeydir.** Ekranda gördüğün mesaj özettir, Log sekmesindeki mesaj tanıdır. Her sorun analizine `Device → Log sekmesi` ile başla.
+**Uzman içgörüsü:** Yanlış katmanda debug = boşa saatler. Login hatası kodda aranmaz (altyapı); watchdog gateway'de aranmaz (kod→performans). İlk soru her zaman "hangi katman?"dır.
 
-> **Araç bağlamı belirler.** Breakpoint üretim makinesini durdurur; Trace durdurmadan kaydeder. Watch Window anlık fotoğrafı, Trace arıza öncesi filmi gösterir. Yanlış araç yeni sorun yaratır.
+### "Sorunu Görünce" Mental Modeli
 
-> **Ortalama yalan söyler, Max gerçeği söyler.** Task Monitor'da Average Cycle Time tatmin edici olsa da Max Cycle Time'da spike varsa sistem risk altındadır. Watchdog alarmı, Max'ın ihmal edilmesinin faturasıdır.
+> **Log her şeydir — ama her şey log'da değildir.** Önce `Device → Log`. Log boşsa veya yanıltıyorsa (bozuk bootapp, dangling pointer, sessiz cycle overrun, NaN) → katmana göre araç seç (01 edge cases).
 
----
+> **Araç = bağlam.** Watch anlık fotoğraf (hızlı sinyal kaçar), Trace film (durdurmadan kaydeder), Breakpoint dondurma (motion'da eksen düşürür), Data BP "kim yazdı" (yalnız Win V3). En az invaziften başla: Log → PLC Shell → Trace → Watch → Force → Breakpoint.
 
-## Hızlı Referans Tabloları
+> **Max gerçek, ortalama yalan.** Average Cycle iyi görünse de Max'ta spike varsa risk vardır; üstelik bazı sorunlar spike değil yavaş şişmedir (trend izle). Determinizm = en-kötü-durum.
+
+## Hızlı Referans
 
 ### A. Hata Triage Matrisi (Belge 1)
 
-| Belirti | İlk Kontrol | Büyük Olasılıkla Neden |
-|---|---|---|
-| "Cannot connect to device" | Gateway servisi çalışıyor mu? Port 1217 açık mı? | Gateway durmuş veya ağ/firewall sorunu |
-| "Download failed: Unknown reason" | Log → Exception tipi ne? | GlobalInit, Retain uyumsuzluğu veya versiyon farkı |
-| Uygulama aniden durdu | Log → "Watchdog exception in Task_X" | Sonsuz döngü, bloklanma veya CPU aşırı yük |
-| "Library 'X' not found" | Library Manager → Sarı ikon | Kütüphane kurulu değil veya versiyon uyumsuz |
-| "%Q0.0 address conflict" | Build çıktısı → Hangi dosyalar? | GVL'de aynı AT adresi iki değişkene atanmış |
-| EtherCAT slave OP'a geçmiyor | EtherCAT → Diagnostics → Slave durumu | Kablo yanlış porta takılı (IN/OUT karışıklığı) |
-| Power cycle sonrası parametreler sıfır | RETAIN yapısı değişti mi? | Yeni değişken eklendi → Retain sıfırlandı |
-| "Device description not installed" | Device tree → Uyarı ikonu | .devdesc dosyası bu makinede kurulu değil |
-
-### B. Debug Aracı Seçim Tablosu (Belge 2)
-
-| Araç | Ne Zaman Kullan | Ne Zaman Kullanma | Kritik Kısayol |
+| Belirti | Katman | İlk Kontrol | Olası Neden |
 |---|---|---|---|
-| **Watch Window** | Anlık değer kontrolü, genel durum izleme | Hızlı değişen sinyallerde (200ms polling kaçırır) | Drag & drop veya sağ tık → Add Watch |
-| **Force Values** | I/O testi, alarm simülasyonu, HMI olmadan test | Safety interlock aktifken, unforce risksizse | F7 force, Shift+F7 unforce |
-| **Breakpoint** | Kod akışı debug, veri üzerine yazma tespiti | Canlı üretim makinesi, EtherCAT motion | F9 koy, F5 devam, F10 step |
-| **Data Breakpoint** | Beklenmedik değişken değişimi kimin yaptığı | (Yalnızca Control Win V3'te çalışır) | Debug → New Data Breakpoint |
-| **Trace Recorder** | Intermittent arıza, arıza öncesi analiz, her döngü | Basit anlık durum kontrolü | Trigger: rising edge + pre-trigger |
-| **Online Change** | Küçük hata düzeltme (interface değişmeden) | Yeni değişken/POU/GVL değişimi, büyük refactor | Online → Login → "Yes" |
-| **PLC Shell** | CPU yük, IRQ, versiyon, sistem bilgisi | Kod debug (bu araç değil) | `plcload`, `task list`, `irq-set-prio` |
-| **Log Viewer** | **Her hata için — ilk bakış, hiç atla** | — | View → Log veya Device → Log sekmesi |
+| "Cannot connect" | Altyapı | gateway + port 1217 + ping | gateway durmuş / ağ |
+| "Download failed" | Yapı/Kod | Log → Exception tipi | GlobalInit / retain / versiyon |
+| Aniden durdu | Kod→Perf | Log → watchdog task | sonsuz döngü / bloke / yük |
+| "Library not found" | Yapı | Library Manager sarı ikon | kurulu değil / sürüm |
+| "%Q address conflict" | Yapı | Build çıktısı | AT adres çakışması |
+| Slave OP'a geçmiyor | Altyapı | EtherCAT diag + **kablo** | IN/OUT port (fiziksel) |
+| Power-cycle eski davranış | Yapı | bootapp | Create Boot App unutuldu |
+| Sporadik crash, farklı yer | Kod | — | dangling pointer (Online Change) |
+| Çalışıyor ama ağır | Perf | Task Monitor Max | spike / şişen exec / jitter |
 
-### C. Performans Eşik Değerleri (Belge 3)
+### B. Araç Seçim Tablosu (Belge 2)
+
+| Araç | Kullan | Kullanma | İnvazivlik |
+|---|---|---|---|
+| **Log** | her hata, ilk bakış | — (asla atla) | sıfır |
+| **PLC Shell** | yük/IRQ/versiyon/sistem | kod debug | sıfır |
+| **Trace** | aralıklı arıza, arıza-öncesi, hızlı sinyal | basit anlık | düşük (runtime-yerel) |
+| **Watch** | anlık değer, genel izleme | hızlı sinyal (200ms kaçar) | düşük (IDE polling) |
+| **Force** | I/O/alarm testi | safety aktifken; unforce unutma | orta |
+| **Data BP** | "kim bu değişkeni yazdı" | gerçek donanım (yalnız Win V3) | yüksek (durdurur) |
+| **Breakpoint** | kod akışı, simülasyon | canlı motion/EtherCAT (düşürür) | en yüksek |
+| **Online Change** | küçük mantık (interface aynı) | SFC/retain/interface/yapısal | değişir |
+
+### C. Performans Eşikleri (Belge 3)
 
 | Metrik | Güvenli | İzle | Tehlike |
 |---|---|---|---|
-| Max Exec Time / Cycle Time | < %70 | %70–%85 | ≥ %100 (Watchdog) |
-| Max Jitter / Cycle Time | < %10 | %10–%20 | > %20 (RT sorunu) |
-| Toplam CPU Yükü (tüm task'lar) | < %70 | %70–%85 | > %85 |
-| cyclictest Max Latency (RT kernel) | < 100µs | 100–500µs | > 500µs (motion için yetersiz) |
-| EtherCAT Send/Recv Time (x64) | < 10µs | 10–50µs | > 50µs |
-| EtherCAT Send/Recv Time (ARM) | < 50µs | 50–200µs | > 200µs |
+| Max Exec / Cycle | < %70 | %70-85 | ≥ %100 (watchdog) |
+| Max Jitter / Cycle | < %10 | %10-20 | > %20 (RT sorunu) |
+| Toplam CPU | < %70 | %70-85 | > %85 |
+| cyclictest Max (RT) | < 100µs | 100-500µs | > 500µs (motion yetersiz) |
+| EtherCAT Send/Recv x64 | < 10µs | 10-50µs | > 50µs |
 
-### D. PLC Shell Kritik Komutları (Belge 2 + 3)
-
-```bash
-version           # Runtime versiyonu
-plcload           # Anlık CPU yükü (%)
-task list         # Tüm task'ların exec/cycle/jitter değerleri
-app info Application  # Uygulama durumu
-irq-list          # IRQ numaraları ve öncelikleri
-irq-set-prio 32 85    # IRQ 32'nin önceliğini 85'e çek
-rt-get kernelinfo # RT kernel kullanılıyor mu?
-log clear         # Log'u temizle
-```
-
-### E. Online Change: Ne Olur / Ne Olmaz (Belge 2)
+### D. PLC Shell Komutları
 
 ```
-Yapılabilir:             Yapılamaz:
-✓ POU kodunun içi        ✗ Yeni değişken ekleme/silme
-✓ Sabit değerleri güncelle  ✗ Yeni POU/GVL
-✓ IF koşullarını düzenle    ✗ Task yapılandırması
-✓ Yorum ekleme/silme        ✗ Library ekleme/silme
-                            ✗ I/O Mapping değiştirme
+version · plcload · task list · app info Application
+irq-list · irq-set-prio <n> <prio> · rt-get kernelinfo · log clear
 ```
 
-### F. Trace Buffer Boyutu Hesaplama (Belge 2)
+### E. Uzman Edge Case Konsolidasyonu
 
 ```
-Gerekli Buffer = Yakalanmak istenen süre (ms) / Cycle Time (ms)
-Örnek: 5 saniye, 10ms task → 5000 / 10 = 500 döngü buffer
-       3 saniye, 1ms task  → 3000 / 1  = 3000 döngü buffer
-Pre-trigger genellikle buffer'ın %50–80'i olarak ayarlanır.
+ALAN       EDGE CASE                       YANILGI/BELİRTİ          KORUMA
+──────────────────────────────────────────────────────────────────────────────
+Hata(01)   bozuk bootapp                   "download başarılı" ama eski Create Boot App + power-cycle test
+Hata(01)   dangling pointer crash          farklı yerde AccessViolation pointer her scan, saklama
+Hata(01)   __TRY 64-bit                    derlendi ama çalışmıyor   savunmacı null/index kontrol
+Hata(01)   sessiz cycle overrun            log'da hata yok           Task Monitor Max Cycle
+Araç(02)   breakpoint motion'da            EtherCAT/eksen düşer       Trace kullan
+Araç(02)   Watch hızlı sinyal              "hiç değişmiyor" sanılır   Trace (her döngü)
+Araç(02)   force unforce unutuldu          stop çalışmaz (zombi)      Watch All Forces
+Araç(02)   Online Change SFC               adım sıfırlanır            planlı duruş
+Perf(03)   ortalamaya bakmak               "sağlıklı" ama spike var   Max Cycle Time
+Perf(03)   yavaş şişen exec                tek ölçüm normal           trend izle (haftalık)
+Perf(03)   profiler overhead'i             "o POU yavaş" yanılgısı    geniş→dar profil
+Perf(03)   termal throttle                 yazın watchdog             en kötü termalde test
 ```
 
----
+### F. Trace Buffer & Online Change
+
+```
+Buffer = yakalanacak süre / task cycle · pre-trigger = %50-80
+Online Change YAPILABİLİR: POU içi mantık, sabit, IF, yorum
+Online Change YAPILAMAZ: yeni değişken/POU/GVL, task config, library, I/O map, SFC yapısı
+```
 
 ## Pratikte Nasıl Kullanılır
 
-### "Sorun Çıktı" Kontrol Akışı
-
-Her hata ve beklenmedik davranış için tek bir başlangıç noktası vardır:
+### "Sorun Çıktı" Kontrol Akışı (Uzman)
 
 ```
 Sorun gözlemlendi
-       │
-       ▼
-1. Log sayfasını aç (Device → Log sekmesi)
-       │
-       ├── Hata mesajı net mi? → 01_common_errors.md'deki hata kataloğuna bak
-       │
-       ├── Hata mesajı yok, davranış yanlış?
-       │     → Watch Window: şüpheli değişkenleri izle
-       │     → Sorun izole edildi ama neden olduğu bilinmiyor?
-       │           → Data Breakpoint veya Trace kur
-       │
-       ├── Watchdog alarmı?
-       │     → Hangi task → Task Monitor → Max Exec Time bak
-       │     → Dosya/ağ kodu mu → Freewheeling'e taşı
-       │     → Sonsuz döngü mü → FOR/WHILE kontrolü
-       │
-       └── Hata yok ama sistem hissettiriyor ki ağır?
-             → Task Monitor → 03_performance_analysis.md akışına geç
+   │
+   ▼ 1. Log oku (Device → Log) — ekran özetine güvenme
+   │
+   ├── Log net hata veriyor → katmanı belirle (01 triage matrisi)
+   │      Altyapı → gateway/ağ/versiyon · Yapı → retain/lib/mapping
+   │      Kod → araç seç (02) · Perf → Task Monitor (03)
+   │
+   ├── Log boş/yanıltıyor (sessiz hata)
+   │      → bozuk bootapp? (power-cycle test) · dangling pointer? (data BP)
+   │      → cycle overrun? (Task Monitor) · NaN? (__FINITE/watch)
+   │
+   ├── Hata yok, davranış yanlış
+   │      → Watch (şüpheli değişken) → izole → Data BP/Trace (kim/ne zaman)
+   │
+   ├── Watchdog → hangi task (Log) → Task Monitor Max Exec → kök neden
+   │      bloke I/O → Freewheeling · sonsuz döngü → FOR/WHILE · yük → böl
+   │
+   └── Çalışıyor ama ağır → 03 akışı: Task Monitor → spike/trend → optimizasyon hiyerarşisi
 ```
 
-### "Devreye Alma Günü" Performans Kontrol Listesi (Belge 3'ten)
+### Devreye Alma Performans Kontrol Listesi
 
 ```
-□ Task Monitor'u 48 saat izle (gece vardiyasını kapsasın)
-□ Max Cycle Time < Cycle Time × 0.70 mı?
-□ Tüm task'ların toplam yükü < %70 mı?
-□ Max Jitter < Cycle Time × 0.10 mı?
-□ EtherCAT sync zamanlaması (varsa) eşik altında mı?
-□ Freewheeling task Max değeri anormal yüksek değil mi?
-□ 48 saatte kaç spike? (PRG_SpikeDetector sayacı)
+□ Task Monitor 48 saat (gece vardiyası + en kötü termal dahil)
+□ Max Cycle < Cycle × 0.70 · Toplam CPU < %70 · Max Jitter < Cycle × 0.10
+□ EtherCAT sync eşik altında · Freewheeling Max anormal değil
+□ cyclictest (RT kernel): Max < 100µs (motion için)
+□ Spike sayacı ~0 · Max Exec trend kaydı başlatıldı (şişme izleme)
+□ Create Boot Application + power-cycle test yapıldı
+□ Tüm force kaldırıldı · tüm breakpoint silindi
 ```
 
-### Üç Belgeyi Birleştiren Pratik Senaryo
-
-**Görev**: Çalışan bir sistemde motor akımı zaman zaman yüksek alarm veriyor, ama nedeni bilinmiyor.
+### Üç Belgeyi Birleştiren Senaryo
 
 ```
-ADIM 1 — Hata neyle başladı? (Belge 1)
-  Log: "Alarm triggered: xMotorCurrentHigh"
-  Download hatası veya watchdog yok → Sistem çalışıyor, belirti anlık.
+Görev: motor akımı zaman zaman yüksek alarm, neden bilinmiyor
 
-ADIM 2 — Aracı seç (Belge 2)
-  Watch Window ile anlık değerlere bak:
-    GVL_IO.rMotorCurrent | GVL_Alarms.xMotorCurrentHigh | fbMotor.eState
-  Sorun aralıklı ve izleme sırasında olmuyor → Watch Window kaçırıyor.
-  
-  Trace kur:
-    Variables: rMotorCurrent, rMotorSpeed, xMotorCurrentHigh, rLoadSetpoint
-    Trigger: xMotorCurrentHigh rising edge
-    Pre-trigger: 300 döngü (10ms task → 3 saniye öncesi)
-    Post-trigger: 100 döngü
-
-ADIM 3 — Veriyi incele (Belge 2 + Belge 3)
-  Alarm tetiklenince trace upload et.
-  Grafik: Alarmdan 1.8 saniye önce rLoadSetpoint aniden arttı → akım yükseldi.
-  rLoadSetpoint'i kimin yazdığını bul → Data Breakpoint kur.
-  Kaynak: PRG_HMIUpdate beklenmedik değer yazıyor.
-
-ADIM 4 — Performans etkisi var mı? (Belge 3)
-  Task Monitor: Bu task'ın Max Exec Time güvenli aralıkta mı?
-  PLC Shell > task list: Yük %55 → Normal.
-
-ADIM 5 — Düzelt ve uygula (Belge 2)
-  Küçük mantık düzeltmesi → Online Change ile canlı uygula.
-  Watch Window ile rLoadSetpoint izle → Doğrula.
+1. Katman? (01) Log: "alarm triggered", download/watchdog yok → Kod/sensör, aralıklı
+2. Araç (02): Watch kaçırıyor (aralıklı) → Trace kur (akım+hız+setpoint+alarm),
+   trigger=alarm rising, pre-trigger=300 döngü
+3. İncele (02+03): alarmdan 1.8sn önce setpoint sıçramış → akım yükselmiş
+   → setpoint'i kim yazdı? Data BP → PRG_HMIUpdate beklenmedik değer
+4. Perf etkisi? (03): Task Monitor Max güvenli, plcload %55 → performans değil mantık
+5. Düzelt (02): küçük mantık fix → Online Change → Watch ile doğrula
 ```
-
----
 
 ## Sık Yapılan Hatalar
 
 ### Belgeler Arası Ortak Tuzaklar
 
-**1. Log'u atlamak, ekrandaki özet mesajla çözüm aramak** (Belge 1 + 2)  
-"Download failed" ekranda görünce forum araması yerine önce `Device → Log sekmesi` açılmalıdır. Log 9/10 vakada doğrudan nedeni yazar (GlobalInit, Retain, Checksum).
+1. **Log'u atlamak** (01+02) — ekran özetiyle forum araması; önce Log sekmesi.
+2. **Watchdog'u susturmak** (01) — süreyi artırmak kök sorunu maskeler; tanı sinyalidir.
+3. **Force'u unforce etmemek** (02) — Watch All Forces ile session sonu kontrol.
+4. **Breakpoint'i üretimde bırakmak** (02) — Delete All Breakpoints rutini.
+5. **Ortalamaya güvenmek** (03) — Max Cycle Time tek anlamlı metrik.
+6. **Trace buffer küçük** (02+03) — buffer = süre/cycle formülü.
+7. **48 saat test yok** (03) — gece/termal/vardiya kapsanmaz.
+8. **RETAIN değişikliği yedeksiz** (01) — sona ekle, değer yedekle.
 
-**2. Watchdog'u kapatmayı "çözüm" saymak** (Belge 1)  
-Watchdog süresini artırmak kök sorunu maskeleyerek zamanla daha büyük arıza biriktirir. Gerçek çözüm: hangi task, neden uzun sürdüğünü bulmak.
+### Uzman Tuzakları (5)
 
-**3. Force'u Unforce etmeyi unutmak** (Belge 2)  
-Session sonunda `View → Watch → Watch All Forces` kontrolü yapılmadan çıkılmamalıdır. Production'da aktif force kalan bir çıkış, HMI stop komutunu devre dışı bırakabilir.
-
-**4. Breakpoint'i üretim makinesinde bırakmak** (Belge 2)  
-Breakpoint tetiklenince tüm task'lar durur. Session sonunda rutin: `Debug → Delete All Breakpoints`.
-
-**5. Average Cycle Time'a güvenmek, Max'ı görmezden gelmek** (Belge 3)  
-Average: 10.1ms — sorun yok görünür. Max: 45.7ms — kimse bakmamış. Watchdog alarmının büyük çoğunluğu ihmal edilen Max değerlerinin birikiminden kaynaklanır.
-
-**6. Trace buffer'ını küçük tutmak** (Belge 2 + 3)  
-50 döngülük buffer arıza anından 0.5 saniye önceye bakabilir. Sorun 3 saniye önce başlıyorsa kayıp. Buffer = yakalanması gereken süre / cycle time formülüyle hesaplanmalı.
-
-**7. 48 saatlik test olmadan üretime geçmek** (Belge 3)  
-Gündüz devreye alma testleri gece ağ trafiğini, vardiya değişimlerini ve OS interrupt yükünü kapsamaz. İlk hafta uyku vakasının gateway'i, EtherCAT broadcast storm'un IRQ'yu boğduğu arızalar gece vardiyasında ortaya çıkmıştır.
-
-**8. RETAIN değişken yapısını değiştirmeden önce yedek almamak** (Belge 1)  
-RETAIN yapısına (arasına) yeni değişken eklemek download sırasında tüm retain değerlerini sıfırlar. Değişiklik öncesi değerleri kayıt al; sona ekle, araya ekleme.
-
----
+1. **Yanlış katmanda debug** — login'i kodda, watchdog'u gateway'de aramak; önce katman.
+2. **Yanlış araç** — hızlı sinyale Watch, aralıklıya breakpoint, motion'a breakpoint (eksen düşer).
+3. **Sessiz hatayı görmemek** — log'da iz yok (bootapp/pointer/overrun/NaN); katmana göre araç.
+4. **Trend körlüğü** — yavaş şişen exec'i tek ölçümle kaçırmak; haftalık trend.
+5. **Gözlemci etkisi** — profiler/trace'in kendi yükünü ölçtüğü şeyle karıştırmak.
 
 ## Ne Zaman ...
 
-### Ne Zaman hangi belgeye dönülür?
-
 ```
-Durum                                     Birincil Belge
-──────────────────────────────────────────────────────────────
-Login veya download sorunu                01_common_errors.md
-Watchdog alarmı — hangi task, neden?      01_common_errors.md → 03_performance_analysis.md
-Hata var ama nereden geldiği bilinmiyor   02_debugging_tools.md (Data Breakpoint/Trace)
-Motor çıkışı gitmiyor, değer yanlış       02_debugging_tools.md (Watch Window → I/O Mapping)
-Aralıklı arıza, yakalanması zor           02_debugging_tools.md (Trace + Trigger)
-Sistem çalışıyor ama hissettiriyor ağır   03_performance_analysis.md (Task Monitor)
-Spike var, hangi POU yavaş?               03_performance_analysis.md (ikili arama / Profiler)
-Linux'ta jitter problemi, servo sallanıyor 03_performance_analysis.md (cyclictest, isolcpus)
-EtherCAT slave OP'a geçmiyor              01_common_errors.md (Hata 8)
+Hangi belge?           Login/download → 01 · araç gerek → 02 · ağır/jitter → 03
+Breakpoint mi Trace?   adım-adım/simülasyon → BP · aralıklı/canlı/arıza-öncesi → Trace
+                       motion/EtherCAT canlı → ASLA breakpoint → Trace
+Online Change mi DL?   POU içi mantık → OC · yeni değişken/SFC/task/retain → tam download
+Profiler mi kod-ölçüm? Pro Edition var + dar çevrim → Profiler · yoksa → SysTimeGetUs+ikili arama
+Max mı ortalama mı?    HER ZAMAN Max (determinizm en-kötü-durum)
 ```
-
-### Breakpoint mi Trace mi?
-
-```
-Breakpoint seç:
-  → Kod akışını adım adım izlemek istiyorsun
-  → Belirli bir değişkene kimin, ne zaman yazdığını bulmak istiyorsun (Data BP)
-  → Geliştirme/simülasyon ortamındasın — makine üretimde değil
-
-Trace seç:
-  → Arıza aralıklı ve gerçek zamanlı yakalamak istiyorsun
-  → Canlı makinede çalışmayı durdurmak istemiyorsun
-  → Arızadan önceki 2-5 saniyeye bakmak istiyorsun
-  → Watch Window değişimi kaçırıyor (hızlı sinyal)
-```
-
-### Online Change mi Tam Download mi?
-
-```
-Online Change:
-  → POU içindeki mantık değişti, interface (değişken listesi) değişmedi
-  → Üretimi durdurmak maliyetli
-  → Küçük, izole bir düzeltme
-
-Tam Download (makine durur):
-  → Yeni değişken, yeni POU, GVL değişikliği
-  → Task yapılandırması, library, I/O mapping değişti
-  → SFC adım yapısı değişti
-```
-
----
 
 ## Gerçek Proje Notları
 
-**Sentez Notu 1 — Üç Belgenin Tamamlayıcılığı**  
-Bu üç belge birer ayrı araç kutusu değil, katmanlar halinde çalışır: Hata triage (Belge 1) sizi doğru soruya götürür; debug araçları (Belge 2) o sorunun kaynağını bulmanızı sağlar; performans analizi (Belge 3) sorunun görünür hata üretmeden önce birikmesini engeller. Yalnızca Belge 1'i okumak "yangını söndürmek"; üçünü birlikte uygulamak ise "yangın alarm sistemi kurmak" gibidir.
+**Sentez Notu 1 — Tek Yöntem: Belirtiyi Katmana Haritala**  
+Üç belge ayrı beceri değil, tek teşhis yönteminin parçaları: katman belirle (01 triage) → araç seç (02) → kök nedene in → doğrula. Yanlış katmanda (login'i kodda) saatler kaybedilir. Uzman ilk soruyu "hangi katman?" diye sorar, sonra o katmanın aracını seçer. Bu, dört önceki sentezdeki "belirti→ilke→kök neden" pusulasının teşhise dönüşmesidir.
 
-**Sentez Notu 2 — "Garip Davranış" Her Zaman Bir Hata Kodu Üretmez**  
-Sahada en zorlu vakalar hata mesajı üretmeyen vakalardır. Motor zaman zaman geç tepki veriyor; setpoint bazen yanlış değer alıyor; sistem bazen yavaşlıyor. Bu vakaların tamamında başlangıç noktası Trace ve Task Monitor'dur. Hata kodu olmadan da sistematik debug mümkündür; üç belge bu yolu birlikte çizer.
+**Sentez Notu 2 — Log Tanıdır, Ama Her Şey Log'da Değildir**  
+"Log her şeydir" doğru başlangıçtır ama eksiktir: bozuk bootapp, dangling pointer, sessiz cycle overrun, NaN yayılması log'a yazılmaz. Sessiz hatalarda Log boş/yanıltıcıdır; o zaman katmana göre araç (power-cycle test, data BP, Task Monitor, __FINITE) devreye girer. Uzman, log'un sustuğu yerde nereye bakacağını bilir.
 
-**Sentez Notu 3 — Performans Analizi Debug'dan Farklı Bir Disiplindir**  
-Çoğu mühendis hata çıkınca debug yapar, çıkmazsa bakmaz. Oysa Belge 3'ün anlattığı performans analizi, hata üretmeyen gizli birikimi — yükselen Max Exec Time, büyüyen jitter, düzensiz spike'lar — görmek için gerçekleştirilir. 48 saatlik Task Monitor izlemesi ve cyclictest, devreye almadan önce "sessiz riskler"i ortadan kaldırır.
+**Sentez Notu 3 — Araç Bağlamı: En Az İnvazifle Başla**  
+Her aracın görünmez bir bedeli var: Watch hızlı sinyali kaçırır, Breakpoint motion eksenini düşürür, Profiler ölçtüğünü yavaşlatır (gözlemci etkisi). Canlı sistemde sıralama: Log → PLC Shell → Trace → Watch → Force → Breakpoint. Trace'in runtime-yerel ring buffer mimarisi, onu canlı/intermittent vakalarda altın standart yapar — durdurmadan her döngüyü kaydeder.
 
-**Sentez Notu 4 — Sahadan En Çok Öğreten Vakalar**  
-Belgelerdeki gerçek proje notları birer ders kitabı gibidir: Trace ile 3 günlük aralıklı arıza 1.2 saniyede basınç spike'ıyla çözüldü (Belge 2). Data Breakpoint ile 4 saatlik debug 20 dakikaya indi (Belge 2). RETAIN değişkeni eklenmesi operatörün 6 saatlik reçete verisini sildi (Belge 1). 48 saatlik test yapılmadan gece vardiyasında EtherCAT çöktü (Belge 3). Bu dört vakayı ezberlemek, yıllar içinde aynı hataları tekrarlamamak için yeterlidir.
+**Sentez Notu 4 — Performans Debug'dan Ayrı Bir Disiplin**  
+Çoğu mühendis hata çıkınca bakar; performans analizi (03) hata üretmeyen gizli birikimi görmek içindir: yükselen Max Exec, büyüyen jitter, yavaş şişen exec (algoritmik sızıntı), termal throttle. Max'a bakmak (ortalamaya değil), trend izlemek (tek ölçüme değil), 48 saat test (gece+termal) — bunlar "sessiz riskleri" devreye almadan önce ortadan kaldırır. Watchdog alarmı, atlanan performans analizinin faturasıdır.
 
-**Sentez Notu 5 — Bu Bilgi Tabanının Kullanım Önerisi**  
-Bu üç belge + sentez, bir CODESYS mühendisinin "ilk proje devreye alma" sürecinde nelerle karşılaşacağını ve nasıl yönetiyor olacağını kapsar. Önerilen akış:
-1. Bu sentezi oku → Genel debug haritası anlaşıldı
-2. `01_common_errors.md` → Olası hatalar ve triage akışı öğrenildi
-3. `02_debugging_tools.md` → Araçlar denendi (Watch, Trace, Force)
-4. `03_performance_analysis.md` → Task Monitor kuruldu, eşikler belirlendi
-5. İlk projeyi 48 saatlik izlemeyle onayladın → Üretime güvenle geçildi
-
----
+**Sentez Notu 5 — En Çok Öğreten Vakalar**  
+Belgelerdeki gerçek notlar ders kitabıdır: Trace ile 3 günlük aralıklı arıza 1.2sn basınç spike'ıyla çözüldü; Data BP ile 4 saatlik debug 20 dakikaya indi; RETAIN değişikliği 6 saatlik reçeteyi sildi; breakpoint motion eksenini düşürdü; 48 saat test yokluğu gece EtherCAT'i çökertti; termal throttle yazın watchdog verdi. Bu vakaları içselleştirmek, yıllar içinde aynı hataları tekrarlamamaktır — ve hepsi tek yönteme indirgenir: katman → araç → kök neden → doğrula.
 
 ## İlgili Konular
 
 ```
-knowledge/codesys/debugging/       ← Şu an buradasınız
-├── 01_common_errors.md
-├── 02_debugging_tools.md
-├── 03_performance_analysis.md
+knowledge/codesys/debugging/       ← Şu an buradasınız (Uzman seviye)
+├── 01_common_errors.md       (Uzman)
+├── 02_debugging_tools.md     (Uzman)
+├── 03_performance_analysis.md (Uzman)
 └── _synthesis.md (bu belge)
 
-Önkoşul — Temel:
-knowledge/codesys/fundamentals/
-├── 01_runtime_architecture.md    → Watchdog, scan cycle, runtime servisi
-├── 02_project_structure.md       → POU, GVL, Task yapısı
-└── 03_iec61131_languages.md      → ST/SFC kod yapısı debug bağlamı
+Önkoşul / bağlı:
+knowledge/codesys/fundamentals/   → determinizm, watchdog, I/O image, runtime servisi
+knowledge/codesys/task-structure/ → jitter zinciri, %70 yük, RT tuning, omitted-cycle wd
+knowledge/codesys/programming/    → tek-yazar, retain layout, pointer, __TRY/64-bit, NaN
+knowledge/codesys/networking/     → fieldbus diag, blocking I/O, protokol analizi
 
-Bağlantılı — Orta/İleri:
-knowledge/codesys/task-structure/
-├── 02_cycle_time.md              → Exec/Cycle time teorisi
-└── 03_priority_management.md     → Linux IRQ öncelik tablosu
-
-knowledge/codesys/programming/
-└── 05_error_handling.md          → Programdan log'a mesaj yazma
-
-Araçlar (harici):
-  cyclictest    → Linux RT jitter ölçümü (apt install rt-tests)
-  CODESYS Profiler → Professional Developer Edition (ücretli)
-  PLC Shell     → Dahili komut satırı (Online Login → Device → PLC Shell)
+Araçlar:
+  cyclictest (Linux RT jitter) · CODESYS Profiler (Pro Edition) · PLC Shell · Wireshark · Trace
 ```
