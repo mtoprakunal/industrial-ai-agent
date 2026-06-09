@@ -2,8 +2,8 @@
 KONU        : CODESYS GVL Tasarımı
 KATEGORİ    : codesys
 ALT_KATEGORI: programming
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_defining_global_variables.html"
     başlık: "CODESYS Online Help — Declaring Global Variables"
@@ -444,6 +444,110 @@ Bir projede geliştirici konforu için `{attribute 'qualified_only'}` kaldırıl
 
 **Not 4 — GVL_HMI'ın Koruyucu Rolü**  
 Bir projede HMI doğrudan `GVL_Params`'a yazıyordu. Operatör yanlışlıkla bir değeri sıfırladı; makine beklenmedik biçimde çalıştı. Sonraki versiyonda `GVL_HMI` ara katmanı eklendi: HMI → `GVL_HMI.rNewSetpoint`, Task_Control → değer doğrulama → geçerliyse `GVL_Params.rSetpoint` güncellendi. Operatör hatalarına karşı bir güvenlik katmanı kazanıldı.
+
+**Not 5 — PERSISTENT Listesi Sıra Değişince Sessiz Bozulma**  
+Bir makinede `PERSISTENT` kalibrasyon değerleri zamanla "kaymış" değerler gösterdi — biri diğerinin değerini okudu. Neden: PERSISTENT değişkenler `PersistentVars` listesinde **bildirim sırasına göre** bir bellek imajına serileştirilir. Birisi listenin ortasına yeni bir değişken ekleyince, ekleme noktasından sonraki tüm değişkenlerin offset'i kaydı; eski persistent imaj yeni layout'a yanlış eşlendi. Ders: PERSISTENT/RETAIN listelerine **yalnızca sona** ekle, ortadan asla; tip değiştirme (REAL→LREAL) de offset kaydırır. Bu, fundamentals/02'deki retain layout kuralının GVL'ye yansımasıdır.
+
+**Not 6 — `AT %` ile GVL'nin Topolojiye Kilitlenmesi**  
+GVL_IO içinde `xMotor1_Run AT %Q0.0` gibi doğrudan adresler vardı. Bir fieldbus slave eklenince tüm `%Q` adresleri kaydı, GVL'deki sembolik isimler artık yanlış fiziksel kanallara bağlandı — makine yanlış valfleri açtı. Ders: GVL'de `AT %` doğrudan adres yerine **device tree I/O Mapping** üzerinden sembolik eşleme yapın. `AT %` yalnızca topolojisi asla değişmeyecek sistemlerde; değişebilen her yerde mapping ekranı (bkz. fundamentals/02 Not 8).
+
+**Not 7 — GVL'nin OPC UA'ya Aşırı Açılması**  
+Tüm GVL'ler Symbol Configuration'da işaretlenip OPC UA'ya açılmıştı. Sonuç: 8000+ sembol, devasa bootapp, yavaş sembolik erişim ve güvenlik açığı (iç durum değişkenleri dışarıdan yazılabilir). Ders: Yalnızca dışarı açılması gereken değişkenleri (GVL_HMI okunabilir, GVL_Params yazılabilir) sembol setine alın; GVL_State/GVL_Diag iç kalmalı. GVL katmanlaması burada erişim kontrolünün temeli olur.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### RETAIN / PERSISTENT'ın Sessiz Sınırları
+
+```
+Durum                               Sonuç
+─────────────────────────────────────────────────────────────────
+Retain bölge boyutu aşıldı          Download reddedilir veya sessiz kesilir
+Liste ortasına değişken eklendi     Offset kayar → tüm sonraki değerler bozulur
+Tip değişti (INT→DINT, REAL→LREAL)  Offset kayar → değerler çöp olur
+PERSISTENT bir FB instance içinde   Bazı sürümde derlenir AMA kaydedilmez
+RETAIN pointer/referans             Adres saklamak anlamsız (reboot'ta geçersiz)
+Clean download                      RETAIN da silinebilir (sadece power-cycle korur)
+```
+
+**Kritik:** PERSISTENT değişkenler `Add Object → Persistent Variables` listesinde toplanmalı. Rastgele bir POU'da `VAR PERSISTENT` yazmak bazı sürümlerde sessizce kaydedilmez — veri kaybı uyarısız gelir.
+
+### qualified_only ve Namespace Çakışması
+
+```
+qualified_only KAPALI + iki GVL'de aynı isim → "ambiguous" derleme hatası
+qualified_only KAPALI + kütüphanede aynı isim → çakışma (6 ay sonra patlar)
+qualified_only AÇIK → her erişimde GVL prefix zorunlu, çakışma imkânsız
+```
+
+Edge case: Kendi GVL'niz `qualified_only` olsa bile, prefix'siz erişime izin veren eski bir kütüphane aynı ismi taşırsa, kütüphane tarafında belirsizlik oluşabilir. Çözüm: kütüphanelere namespace ver, GVL'lerde qualified_only'yi koru.
+
+### Çoklu Task Erişiminde Atomiklik
+
+GVL bir bellek bölgesidir; iki task aynı değişkene erişebilir. Atomiklik word boyutuna bağlıdır (bkz. task-structure/03):
+
+```
+GVL'de güvenli paylaşım (tek-yazar/tek-okur, ≤word): BOOL, INT, DINT, REAL(32-bit)
+GVL'de TEHLİKELİ (çok-word, bölünebilir): LREAL, STRING, STRUCT, ARRAY
+→ Çok-word paylaşım için double-buffer veya mutex; "GVL'ye koydum, paylaşılır" yetmez
+```
+
+## Optimizasyon
+
+### Bellek Düzeni: GVL Struct'larının Hizalanması
+
+GVL'deki struct/değişken sıralaması bellek dolgusunu (padding) etkiler:
+
+```iecst
+(* ❌ Karışık sıra — padding israfı *)
+VAR_GLOBAL
+    x1 : BOOL;    (* 1 byte + 3 padding *)
+    r1 : REAL;    (* 4 byte *)
+    x2 : BOOL;    (* 1 byte + 3 padding *)
+    r2 : REAL;
+END_VAR
+
+(* ✅ Büyükten küçüğe — padding minimum *)
+VAR_GLOBAL
+    r1 : REAL;    (* 4 byte *)
+    r2 : REAL;    (* 4 byte *)
+    x1 : BOOL;    (* 1 byte *)
+    x2 : BOOL;    (* 1 byte *)
+END_VAR
+```
+
+Bu özellikle PERSISTENT/RETAIN bölgesinde kritik: küçük retain bütçesini padding ile israf etmek, sığmayan veri demektir.
+
+### BOOL Paketleme ve Fieldbus Bant Genişliği
+
+100 ayrı `BOOL` global yerine bir `DWORD` + bit erişimi (`GVL.dwFlags.0`), hem belleği hem de fieldbus/OPC UA üzerinden taşınan veriyi yoğunlaştırır — özellikle Modbus gibi register-tabanlı protokollerde 16 BOOL = 1 register tasarrufu.
+
+### Symbol Configuration'ı Daraltma
+
+OPC UA / sembolik erişim için üretilen sembol seti, hem bootapp boyutunu hem indirme süresini hem de runtime sembolik erişim hızını etkiler. Yalnızca gerçekten dışarı açılan GVL'leri (GVL_HMI, GVL_Params, seçili GVL_Diag) sembol setine dahil edin — GVL_State/iç değişkenler hariç tutulmalı.
+
+## Derin Teknik Detay
+
+### GVL Neden Var? — POU Kapsülleme ile Global Durum Gerilimi
+
+İyi mimari "global durumdan kaçın" der; ama bir PLC fiziksel dünyada paylaşılan durumdur (I/O herkesindir). GVL bu gerilimin çözümüdür: global durumu **yapısallaştırır** ve sahiplik kuralı dayatır. Tek büyük GVL anti-pattern'i, global durumun yapısızlaşmasıdır — her POU her şeye dokunabilir, yani kapsülleme tamamen çöker. GVL katmanlaması (IO/HMI/Params/Alarms/Config), global durumu "sahipli alt-alanlara" böler; her alanın tek yazarı vardır. Bu, paylaşımlı belleği nesne-benzeri bir disipline sokmanın PLC yoludur.
+
+### Kalıcılık Mekanizmasının İç Çalışması
+
+```
+Standart VAR_GLOBAL → çalışma belleği (RAM), her başlangıçta init değeri
+RETAIN              → ayrı "retain segment" (RAM + power-fail koruması: NVRAM/flush)
+PERSISTENT          → retain segment + bootproject ile birlikte saklanır
+```
+
+RETAIN bölgesi neden download'da silinir ama power-cycle'da korunur? Çünkü retain, **kod-bağımsız bir bellek imajıdır**: power-cycle kodu değiştirmez, layout aynı kalır, imaj geçerli. Download ise yeni bir layout getirebilir; runtime eski imajın yeni koda uyduğunu garanti edemez, bu yüzden temkinli davranıp sıfırlar. PERSISTENT, layout'u bootproject ile birlikte sakladığı için download'a da dayanır. Bu, "neden RETAIN download'da gider ama PERSISTENT gitmez" sorusunun mekanik cevabıdır — ve neden ikisinde de **sıra değiştirmek ölümcül** olduğunun (layout = offset eşlemesi) kökü.
+
+### qualified_only: Derleyici Sembol Çözümleme Politikası
+
+`qualified_only` bir derleyici sembol-arama (name resolution) politikasıdır. Kapalıyken derleyici, niteliksiz bir isim için tüm GVL'leri ve kütüphaneleri tarar; iki eşleşme bulursa belirsizlik (ambiguity) hatası verir. Açıkken arama uzayı tek bir GVL'ye daraltılır (prefix ile). V2'de bu yoktu (düz isim alanı); V3 büyük projeler ve kütüphane ekosistemi için bunu varsayılan yaptı. Anti-pattern (qualified_only kaldırmak), kısa vadeli yazım kolaylığı için derleyicinin çakışma korumasını kapatmaktır — 6 ay sonra üçüncü taraf kütüphane geldiğinde patlar (Not 3).
+
+### GVL ve Task Race'i: Aynı Madalyonun İki Yüzü
+
+GVL tasarımı (bu belge) ve task öncelik/race yönetimi (task-structure/03) ayrılmaz: GVL paylaşımın **nerede** olduğunu, task modeli paylaşımın **ne zaman tehlikeli** olduğunu tanımlar. "Her GVL'ye tek task yazar" kuralı, aslında preemptive scheduler'da race condition'ı önlemenin GVL-katmanındaki ifadesidir. GVL'yi tasarlarken her zaman "bu değişkeni hangi task yazıyor, hangisi okuyor?" matrisini çıkarmak, ikisini birleştiren uzman pratiğidir.
 
 ## İlgili Konular
 

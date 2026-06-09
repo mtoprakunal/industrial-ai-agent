@@ -2,8 +2,8 @@
 KONU        : CODESYS Kütüphane Sistemi
 KATEGORİ    : codesys
 ALT_KATEGORI: programming
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_struct_installing_libraries.html"
     başlık: "CODESYS Online Help — Library Repository and Manager"
@@ -512,6 +512,79 @@ Bir projede iki farklı OEM kütüphanesi aynı anda kullanılıyordu. Her ikisi
 
 **Not 4 — Kütüphane Geliştirmede İki IDE Yaklaşımı**  
 FB_Motor'u kütüphane projesinde geliştirirken test için ayrı bir CODESYS IDE açıldı. Kütüphane projesinde değişiklik → kaydedildi → test projesine reload → test edildi. Bu iki pencereli yaklaşım, geliştirme döngüsünü hızlandırdı.
+
+**Not 5 — Compiled Library'nin Platform/Sürüm Kilidi**  
+Bir OEM, `compiled-library` olarak teslim ettiği kütüphanenin yalnızca derlendiği compiler sürümüyle uyumlu olduğunu sahada öğrendi. Müşteri CODESYS'i güncelleyince compiled kütüphane "incompatible compiler version" hatası verdi; kaynak olmadığı için müşteri hiçbir şey yapamadı, OEM'in yeniden derlemesini beklemek zorunda kaldı. Ders: compiled-library, açık kütüphaneden farklı olarak compiler sürümüne sıkı bağlıdır; OEM, desteklenen CODESYS sürümlerini sözleşmede netleştirmeli ve her sürüm için yeniden derleme süreci kurmalı. IP koruması, bakım esnekliğini feda eder.
+
+**Not 6 — Placeholder ve Device-Specific Library Çözümü**  
+Bir kütüphane farklı cihazlarda farklı sürümler gerektiriyordu (ARM vs x86 native). Sabit sürüm referansı taşınabilirliği kırdı. Çözüm: **Library Placeholder** kullanıldı — proje soyut bir placeholder'a referans verir, gerçek sürüm device/target tarafından çözülür. Ders: Birden fazla hedef platforma dağıtılan projelerde placeholder, sabit sürümden daha taşınabilirdir; ama "hangi sürüm yüklendi" belirsizliğini de getirir — device-specific çözümleme dikkatle test edilmeli.
+
+**Not 7 — Container Library ile Bağımlılık Paketleme**  
+İç içe bağımlılıkları olan bir kütüphane ailesi (MyMachineLib → MyBaseLib → Util) her müşteride eksik bağımlılık hatası veriyordu. Çözüm: bağımlılıkları **container library** içine gömerek tek bir dağıtılabilir paket oluşturuldu. Ders: Karmaşık bağımlılık ağaçları için container library veya `.projectarchive` ile "include all referenced libraries", saha kurulum hatalarını ortadan kaldırır.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Bağımlılık Çözümleme Edge Case'leri
+
+```
+Senaryo                                    Sonuç
+─────────────────────────────────────────────────────────────────
+İki lib aynı alt-lib'in FARKLI sürümünü ister  Çözülemez → derleme hatası (Not 3)
+Lib namespace'i proje GVL ile çakışır          Belirsiz erişim
+Compiled lib + farklı compiler sürümü          "incompatible compiler version"
+Placeholder çözülemez (target eşleşmez)        Derleme reddedilir veya yanlış sürüm
+Açık lib içinde kütüphaneye özel GVL           Tüm projeler global'i paylaşır (Not 5)
+Lib MAJOR güncellemesi (API kırılması)         Tüm instance'larda hata (changelog şart)
+```
+
+### Versiyon Numaralandırma Tuzakları
+
+```
+1.2.3.0 vs 1.2.10.0  → string karşılaştırma yapılırsa 1.2.10 < 1.2.3 sanılabilir
+"Use newest" + pre-release → kararsız geliştirme sürümü üretime sızabilir
+BUILD numarası farkı → aynı kod sanılır ama derleme farklı olabilir
+```
+
+### Kütüphane İçi Global Durum Yasağı
+
+Bir kütüphane kendi `VAR_GLOBAL`'ını yazarsa, o kütüphaneyi kullanan **tüm uygulamalar aynı global'i paylaşır** — iki bağımsız makine kontrolü aynı kütüphaneyi kullanınca durumları çakışır. Kütüphane FB'leri yalnızca kendi instance state'i + VAR_OUTPUT ile iletişmeli; global durum çağırana bırakılmalı.
+
+## Optimizasyon
+
+### Bootapp Boyutu ve Yüklenmeyen Kütüphane
+
+Projeye eklenen ama kullanılmayan kütüphaneler, ölü kod olarak bootapp'ı şişirebilir. CODESYS çoğunlukla kullanılmayan POU'ları eler (tree-shaking), ama büyük CAA aileleri ve initialization kodu yine de yer kaplar. Yalnızca gerçekten kullanılan kütüphaneleri ekleyin; "lazım olur" diye eklenen kütüphaneler kısıtlı cihazlarda (32MB RAM) sorun olur.
+
+### Compiled vs Açık Library: Derleme Süresi
+
+Açık kütüphane (`.library`) her proje derlemesinde kaynak kodu yeniden derlenir; compiled-library önceden derlenmiştir, proje derleme süresini kısaltır. Büyük, kararlı, sık değişmeyen kütüphaneler için compiled-library hem IP korur hem build hızlandırır — ama compiler sürüm kilidi bedeliyle (Not 5).
+
+### Namespace ile Erişim Netliği ve Çakışma Önleme
+
+Her kütüphaneye benzersiz namespace vermek (Library Manager → Properties → Namespace) hem çakışmayı baştan engeller hem de kodda `MyLib.FB_Motor` ile nereden geldiğini netleştirir — büyük projede okunabilirlik ve refactoring güvenliği kazandırır.
+
+## Derin Teknik Detay
+
+### Kütüphane Referansı Neden Kütüphaneyi İçermez?
+
+`.project` dosyası kütüphaneyi değil, ona bir **referansı** (isim, sürüm, namespace) saklar (bkz. fundamentals/02). Bu kasıtlı bir tasarım:
+- Aynı kütüphane onlarca projede paylaşılır; her projeye gömmek devasa tekrar olurdu.
+- Library Repository merkezi bir önbellektir; referans çözümleme oradan yapılır.
+- Bedeli: proje taşınınca kütüphane eksik olabilir → bu yüzden `.projectarchive` (bağımlılıkları paketler) dağıtım için doğru formattır.
+
+Bu, yazılım dünyasındaki "package manifest + dependency cache" (npm/Maven) modeliyle aynı felsefedir: kod değil, çözümlenebilir bir bildirim saklanır.
+
+### Semantik Versiyonlama ve API Sözleşmesi
+
+MAJOR.MINOR.PATCH şeması bir **API sözleşmesidir**: MINOR/PATCH geriye uyumlu olmalı, yalnızca MAJOR kırabilir. CODESYS bunu zorlamaz (otomatik kontrol yok); disiplin geliştiricidedir. Bir FB'nin VAR_INPUT'unu kaldırmak veya yeniden adlandırmak MAJOR değişikliktir — tüm çağıran instance'lar kırılır (Örnek 3). Geçiş kolaylığı için eski parametreyi `deprecated` işaretleyip korumak, yenisini eklemek (genişletme, kırma değil) profesyonel kütüphane bakımının özüdür. Bu, fundamentals/02 ve task-structure'daki "sabit sürüm kilitle" kuralının neden var olduğunun kökü: çünkü sözleşme makine tarafından zorlanmaz.
+
+### Compiled Library ve Compiler Bağımlılığı
+
+Compiled-library, kaynak yerine hedef-bağımsız derlenmiş ara temsil saklar; ama bu ara temsil compiler sürümüne bağlıdır (fundamentals/01'deki "V3 native kod üretir" ile ilişkili). Compiler değişince ara temsil uyumsuz olabilir — açık kütüphane yeniden derlenebildiği için bu sorunu yaşamaz. IP koruması (kaynağı gizleme) ile bakım esnekliği (her sürümde yeniden derlenebilme) arasındaki ödünleşim, compiled-library kararının özüdür.
+
+### Kütüphane Mimarisinin Yeniden Kullanım Ekonomisi
+
+Bir FB'yi kütüphaneye taşımak, fundamentals/02'deki "kütüphane-merkezli mimari" optimizasyonunun somut uygulamasıdır. Ekonomi şudur: tek noktada bug fix → tüm projelere yayılır; tek noktada test → her projede güven; IP koruması → ticari değer. Maliyet: sürüm yönetimi disiplini, dağıtım karmaşıklığı, compiler kilidi. Kütüphaneleştirme kararı (3+ proje kuralı), bu ekonominin maliyet/fayda eşiğidir — eşiğin altında proje-içi FB daha pratiktir.
 
 ## İlgili Konular
 

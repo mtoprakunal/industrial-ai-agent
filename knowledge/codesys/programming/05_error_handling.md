@@ -2,8 +2,8 @@
 KONU        : CODESYS'te Hata Yönetimi
 KATEGORİ    : codesys
 ALT_KATEGORI: programming
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://wiki.kontron.ch/kchcdsv3/codesys-exception-handling"
     başlık: "Kontron Wiki — CODESYS Exception Handling"
@@ -580,6 +580,107 @@ Müşteri x64 endüstriyel PC istedi. `__TRY/__CATCH` kullanan tüm kod bölüml
 
 **Not 4 — Alarm Kodu Stratejisinin Değeri**  
 32-bit hata kodu (bit maskeleme) kullanılan bir projede operatör paneli tek bir DWORD değerini OPC UA üzerinden SCADA'ya gönderiyordu. SCADA tarafında her bit ayrı bir alarm satırına eşlendi; birden fazla eş zamanlı hata tek kayıt olarak saklandı. 6 ay sonra makine bakımında bu log, bakım süresini yarıya indiren ayrıntılı arıza geçmişi sağladı.
+
+**Not 5 — Çıkışların "Son Değerde Kilitlenmesi" mi, Fail-Safe mi?**  
+Bir ekip "watchdog tetiklenince çıkışlar kapanır" varsaydı; gerçekte CODESYS application durunca çıkışlar **fieldbus master'ın fail-safe ayarına** göre davranır — otomatik 0 değil. EtherCAT SafeOp'a düşer, slave'in kendi fail-safe değerleri devreye girer; bu yapılandırılmamışsa çıkışlar son değerde kalabilir. Motor çalışır durumda kilitlendi. Ders: Watchdog/STOP sonrası çıkış davranışı **fieldbus slave fail-safe konfigürasyonunda** ayarlanır (SDO/CoE startup, fail-safe data) ve mutlaka fiziksel test edilmeli — "STOP = güvenli" otomatik değildir (fundamentals/01 ile aynı uyarı).
+
+**Not 6 — Alarm "Chattering" (Titreme) Sel Baskını**  
+Bir basınç alarmı eşik değerinin tam etrafında salınan bir sensör yüzünden saniyede onlarca kez set/reset oldu; alarm log'u 10 dakikada doldu, gerçek alarmlar kayboldu. Neden: Histerezis (deadband) yoktu. Ders: Her analog-tetikli alarma **histerezis** (set eşiği ≠ reset eşiği) ve **minimum süre** (`TON` ile debounce) ekleyin. Alarm chattering, SCADA/log sistemini boğan en yaygın saha sorunudur.
+
+**Not 7 — Exception Handler İçinde Yapılamayanlar**  
+`excpt_watchdog` system event handler'ında geliştirici karmaşık kurtarma mantığı + dosya yazma koydu. Handler exception bağlamında çalışır; bloke eden/uzun işlemler veya yeni exception fırlatan kod sistemi tamamen kilitledi. Ders: Exception/system-event handler **minimum, non-blocking** olmalı — bayrak set et, güvenli çıkışları kapat, zaman damgası al; gerçek kurtarma ayrı bir task'ta. Handler içinde dosya/ağ/yeni-exception riskli kod yasak.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Hata Mekanizmalarının Platform/Sürüm Sınırları
+
+```
+Mekanizma            Sınır
+─────────────────────────────────────────────────────────────────
+__TRY/__CATCH        Yalnızca 32-bit; 64-bit'te derlenir ama çalışmaz
+Watchdog             Application'ı durdurur, runtime'ı DEĞİL (V3); V2 reboot ederdi
+Watchdog → çıkış     Fieldbus fail-safe'e bağlı, otomatik 0 değil (Not 5)
+NOW()/RTC            Pil bitikse 1970; zaman damgalı alarm bozulur
+STRING alarm mesajı  Varsayılan 80 byte; uzun mesaj sessiz kesilir (truncate)
+Alarm log array      Sabit boyut; FIFO taşması en eski kaydı ezer (kayıp)
+Exception in handler Sistemi tamamen kilitleyebilir (Not 7)
+```
+
+### `__TRY/__CATCH`'in Yakalayamadıkları
+
+32-bit'te bile `__TRY/__CATCH` her şeyi yakalamaz:
+- **Watchdog timeout** yakalanmaz (zaten task'ı durduran mekanizma).
+- **Stack overflow** (derin recursion) genelde yakalanamaz — sistem çöker.
+- **Bölünme** (DIV by zero) bazı platformlarda exception, bazılarında sessiz sonuç (INF/NaN REAL'de).
+
+### Sayısal Edge Case'ler (Sessiz Hatalar)
+
+```
+Tamsayı /0          → Exception (32-bit yakalanabilir) veya runtime crash
+REAL /0             → +INF/-INF/NaN (exception YOK, sessiz yayılır)
+NaN karşılaştırma   → tüm karşılaştırmalar FALSE (NaN = NaN bile FALSE)
+INT taşması         → wrap (sessiz), alarm sayacında yanlış değer
+```
+
+NaN bir kez oluşunca tüm aritmetiğe yayılır ve `>`/`<`/`=` hep FALSE döner — bir PID çıkışı NaN olursa hiçbir limit kontrolü yakalamaz. `__FINITE()`/açık kontrol gerekir.
+
+## Optimizasyon
+
+### Alarm Sisteminin Performans Maliyeti
+
+```
+Pahalı (sıcak task'ta kaçın):
+  - Her scan STRING CONCAT ile mesaj kurma → string işlemi yavaş
+  - Her alarm için ayrı FB instance + NOW() çağrısı
+
+Optimizasyon:
+  - Mesaj string'lerini SABIT tut (CONCAT yerine önceden tanımlı)
+  - Alarm değerlendirmesini orta task'ta (10-50ms) yap, 1ms'de değil
+  - Sadece DURUM DEĞİŞİMİNDE (R_TRIG) mesaj kur, her scan değil
+  - Hata kodunu DWORD bit-mask ile taşı (string değil) → SCADA'da çöz
+```
+
+### Savunmacı Kontrolün Maliyeti vs Değeri
+
+Her FB'de giriş doğrulama (range check, null check) küçük bir CPU maliyeti getirir ama saatlerce debug'ı önler. Optimizasyon: ucuz kontrolleri (range, null) her scan yap; pahalı kontrolleri (frozen detection timer'lı) yalnızca gerekli FB'lerde. Savunma kodu "her ihtimale karşı" değil, "bilinen başarısızlık modlarına karşı" olmalı.
+
+### Hata Kodu: String yerine Bit-Mask
+
+İnsan-okunabilir string mesajı runtime'da taşımak yerine, makine-okunabilir DWORD bit-mask taşıyın; string'e çevirmeyi HMI/SCADA katmanında yapın (Not 4). Bu hem bant genişliği (1 DWORD vs 80+ byte string) hem CPU (string CONCAT yok) tasarrufu sağlar ve birden fazla eş zamanlı hatayı tek değerde kodlar.
+
+## Derin Teknik Detay
+
+### Neden Genel try/catch Yok? — Determinizm ve Sertifikasyon
+
+CODESYS'te Java/Python tarzı genel exception handling yokluğu (ve 64-bit'te `__TRY` desteğinin olmaması) tesadüf değil:
+- **Determinizm:** Exception unwinding (stack çözme) öngörülemeyen sürede çalışır; bir PLC'nin her scan'i sabit sürmeli (fundamentals/01). Exception tabanlı kontrol akışı bu garantiyi kırar.
+- **Fail-safe felsefesi:** PLC dünyasında "hatayı yakala ve devam et" yerine "hatayı önle, oluşursa güvenli duruma kaç" hakimdir. Savunmacı programlama (önleme) + watchdog (son çare durma), exception-ve-devam modelinden daha güvenlidir.
+- **Sertifikasyon:** Fonksiyonel güvenlik (SIL), öngörülebilir kod yolları ister; exception'ların dinamik sıçraması doğrulamayı zorlaştırır.
+
+Bu yüzden CODESYS hata stratejisi "exception yakalama" değil, "savunmacı önleme + katmanlı fail-safe"dir — bu, fundamentals'taki determinizm felsefesinin hata-yönetimi yüzüdür.
+
+### Watchdog Neden Application'ı Durdurur, Runtime'ı Değil (V3)?
+
+V2'de watchdog tüm PLC'yi reboot ederdi; V3'te yalnızca etkilenen Application durur, runtime ve diğer application'lar çalışmaya devam eder. Bu, fundamentals/01'deki Component Manager / çoklu-application mimarisinin doğrudan sonucu: runtime bir servistir, application'lar onun üzerinde çalışan bağımsız birimler. Bir application'ın watchdog'u, diğerini (ör. diagnostic application) etkilememeli. Bedeli: çıkışların otomatik güvenli hale gelmemesi (Not 5) — bu yüzden kritik çıkışlar ayrı Task_Safety + fieldbus fail-safe ile korunmalı. "Runtime ayakta ama application durdu" durumu, V2'den gelen mühendisler için en büyük sürprizdir.
+
+### Dört Katmanın Neden Ayrı Olduğu
+
+Hata yönetiminin dört katmanı (watchdog / savunmacı kod / __TRY / alarm) farklı **başarısızlık ölçeklerini** ele alır:
+
+```
+Katman               Yakaladığı Başarısızlık Ölçeği
+─────────────────────────────────────────────────────
+Savunmacı kod (FB)   Mantık-seviyesi: kötü giriş, range dışı, sensör arızası
+__TRY/__CATCH        Bellek-seviyesi: null deref, geçersiz erişim (32-bit)
+Watchdog             Zaman-seviyesi: sonsuz döngü, takılma, starvation
+Alarm + Safety task  Sistem-seviyesi: operatör bildirimi, güvenli duruma geçiş
+```
+
+Tek bir mekanizma tüm ölçekleri kapsayamaz: savunmacı kod sonsuz döngüyü yakalamaz (watchdog yakalar); watchdog kötü sensör değerini bilmez (savunmacı kod bilir). Katmanlar dik (orthogonal) olduğu için biri eksik olunca o ölçekteki başarısızlık tamamen korumasız kalır — "8 saatlik debug" hikâyelerinin çoğu eksik bir katmandır.
+
+### Alarm Histerezisi ve Debounce: Sinyal İşleme Kökü
+
+Alarm chattering (Not 6), aslında bir sinyal-işleme problemidir: gürültülü bir sinyalin eşik etrafında salınması. Çözüm kontrol mühendisliğinden gelir — **histerezis** (Schmitt-trigger: set ve reset için farklı eşik) + **debounce** (minimum süre filtresi). Bu, bir alarmın "fiziksel olay" ile "ölçüm gürültüsü" arasında ayrım yapmasını sağlar. Aynı prensip task-structure/02'deki Nyquist/örnekleme tartışmasıyla akrabadır: sinyalin gerçek dinamiği ile gürültüsünü ayırmak, hem kontrolün hem alarmın doğruluğunun temelidir.
 
 ## İlgili Konular
 

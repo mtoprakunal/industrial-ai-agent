@@ -1,24 +1,24 @@
 ---
-KONU        : CODESYS Programlama Mimarisi — Sentez
+KONU        : CODESYS Programlama Mimarisi — Uzman Sentezi
 KATEGORİ    : codesys
 ALT_KATEGORI: programming
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/codesys/programming/01_pou_types.md"
-    başlık: "CODESYS POU Tipleri — Program, Function Block, Function"
+    başlık: "CODESYS POU Tipleri (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/programming/02_gvl_design.md"
-    başlık: "CODESYS GVL Tasarımı"
+    başlık: "CODESYS GVL Tasarımı (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/programming/03_function_blocks.md"
-    başlık: "İyi Bir Function Block Nasıl Yazılır"
+    başlık: "İyi Bir Function Block Nasıl Yazılır (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/programming/04_libraries.md"
-    başlık: "CODESYS Kütüphane Sistemi"
+    başlık: "CODESYS Kütüphane Sistemi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/programming/05_error_handling.md"
-    başlık: "CODESYS'te Hata Yönetimi"
+    başlık: "CODESYS'te Hata Yönetimi (Uzman)"
     güvenilirlik: deneyimsel
 BAĞLANTILAR :
   - konu: "01_pou_types.md"
@@ -32,9 +32,9 @@ BAĞLANTILAR :
   - konu: "05_error_handling.md"
     ilişki: detaylandırır
 ÖNKOŞUL     :
-  - "CODESYS temeller sentezi (fundamentals/_synthesis.md)"
-  - "IEC 61131-3 ST dili temelleri"
-  - "Task ve project structure kavramları"
+  - "Beş programlama belgesinin Uzman bölümleri okunmuş olmalıdır."
+  - "fundamentals/_synthesis.md (determinizm felsefesi) ve task-structure/_synthesis.md kavranmış olmalıdır."
+  - "Saha kodlama, devreye alma ve bakım deneyimi varsayılır."
 ÇELİŞKİLER :
   - kaynak: "—"
     konu: "—"
@@ -43,413 +43,295 @@ BAĞLANTILAR :
 
 ## Özün Ne
 
-Bu sentez, beş programlama belgesini okuyunca edinilmesi gereken bütünsel mimari anlayışı özetler: CODESYS'te iyi bir proje, birbirini tamamlayan beş kararın ürünüdür. Hangi POU tipi, nasıl bir GVL yapısı, nasıl tasarlanmış Function Block'lar, kütüphane yönetimi ve hata stratejisi — bu beş karar birlikte doğru alındığında proje bakımı kolaylaşır, hata analizi hızlanır ve aynı kod onlarca projede yeniden kullanılabilir hale gelir. Tek bir karar yanlış alındığında — örneğin her şeyi PROGRAM'a yazmak ya da tüm değişkenleri tek GVL'ye koymak — tüm mimar çökme noktasına ilerler.
+Beş programlama kararı (POU tipi, GVL, FB tasarımı, kütüphane, hata yönetimi) ayrı konular gibi görünür; uzman gözüyle bunlar **üç değişmez ilkenin** uygulamalarıdır:
+
+1. **Tek yönlü veri akışı** — Fiziksel I/O → GVL → FB → PROGRAM → GVL → I/O. Her şey bu akışı korumak içindir.
+2. **Sahipli kapsülleme** — Her veri parçasının tek bir yazarı vardır (FB yalnızca output'una, her GVL'ye tek task). Bu, preemptive scheduler'da race'i ve çok-yazar kaosunu önler.
+3. **Katmanlı fail-safe** — Hata "yakalanıp devam edilen" değil, "önlenip oluşursa güvenli duruma kaçılan" bir şeydir; dört dik katman (savunmacı kod, __TRY, watchdog, alarm+safety task) farklı başarısızlık ölçeklerini kapsar.
+
+Bu üç ilke `fundamentals/_synthesis`'teki determinizm felsefesinin programlama-katmanı ifadesidir. Uzmanlık, beş kararı tek tek "doğru" yapmak değil; bir saha belirtisini (kopyalanamayan kod, race, yapışık çıkış, kaybolan retain, alarm seli) hangi ilkenin ihlal edildiğine haritalayabilmektir.
 
 ## Nasıl Çalışır
 
 ### Beş Belgenin Zihin Haritası
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│              CODESYS PROGRAMLAMA MİMARİSİ — ZİHİN HARİTASI                │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  01_pou_types.md                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  POU TİPLERİ — Kodun temel yapı taşları                             │    │
-│  │                                                                       │    │
-│  │  PROGRAM ──────── Singleton, task orkestratörü (PRG_Control)         │    │
-│  │  FUNCTION_BLOCK── Çoklu instance, cihaz yaşam döngüsü (FB_Motor)    │    │
-│  │  FUNCTION ──────── Durumsuz, saf hesaplama (FC_ScaleAnalog)          │    │
-│  └──────────────────────────┬────────────────────────────────────────────┘  │
-│                              │ POU'lar veri için GVL'ye başvurur            │
-│                              ▼                                               │
-│  02_gvl_design.md                                                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  GVL TASARIMI — POU'lar arası veri akışının omurgası                │    │
-│  │                                                                       │    │
-│  │  GVL_IO       ← Fiziksel I/O sinyalleri (AT %I/%Q)                  │    │
-│  │  GVL_HMI      ← Operatör komutları (HMI yazar)                      │    │
-│  │  GVL_Params   ← Proses parametreleri (ayarlanabilir)                 │    │
-│  │  GVL_Alarms   ← Alarm ve uyarı bayrakları                            │    │
-│  │  GVL_Config   ← PERSISTENT kalibrasyon verisi                        │    │
-│  └──────────────────────────┬────────────────────────────────────────────┘  │
-│                              │ FB'ler GVL'yi okur, çıkışlarını PROGRAM      │
-│                              │ aracılığıyla GVL'ye yazar                    │
-│                              ▼                                               │
-│  03_function_blocks.md                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  FUNCTION BLOCK TASARIMI — Cihaz mantığının kapsüllenmesi           │    │
-│  │                                                                       │    │
-│  │  VAR_INPUT  → Komutlar + konfigürasyon                               │    │
-│  │  VAR_OUTPUT → Durum + hata raporlama                                  │    │
-│  │  VAR_IN_OUT → Büyük struct referansı (kopyasız)                      │    │
-│  │  CASE eState → State machine: Idle→Starting→Running→Fault            │    │
-│  │  ELSE: → Bilinmeyen durum → eFault (savunmacı programlama)           │    │
-│  └──────────────────────────┬────────────────────────────────────────────┘  │
-│                              │ Olgun FB'ler kütüphaneye alınır              │
-│                              ▼                                               │
-│  04_libraries.md                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  KÜTÜPHANE SİSTEMİ — Tekrar kullanımın altyapısı                    │    │
-│  │                                                                       │    │
-│  │  Standard.lib → TON, CTU, R_TRIG, SR (her projede)                  │    │
-│  │  Util.lib     → FIFO, string, istatistik                             │    │
-│  │  CAA_File     → Dosya sistemi / log                                   │    │
-│  │  MyMachineLib → Kendi FB'lerin (sabit versiyon!)                     │    │
-│  └──────────────────────────┬────────────────────────────────────────────┘  │
-│                              │ FB'ler hata durumunu raporlar;               │
-│                              │ proje alarm mimarisini besler                │
-│                              ▼                                               │
-│  05_error_handling.md                                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  HATA YÖNETİMİ — Dört katmanlı güvenlik ağı                         │    │
-│  │                                                                       │    │
-│  │  Katman 1: Task Watchdog (runtime koruması)                          │    │
-│  │  Katman 2: __TRY/__CATCH (yalnızca 32-bit, pointer güvenliği)        │    │
-│  │  Katman 3: FB içi savunmacı programlama (giriş doğrulama)            │    │
-│  │  Katman 4: Alarm yönetimi + operatör bilgilendirme                   │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└────────────────────────────────────────────────────────────────────────────┘
+01 POU TİPLERİ ──────── Kodun yapı taşı (PROGRAM/FB/FUNCTION = bellek yaşam döngüsü)
+        │ POU'lar veri için GVL'ye başvurur
+        ▼
+02 GVL TASARIMI ─────── Paylaşımlı durumun sahipli katmanları (IO/HMI/Params/Alarms/Config)
+        │ FB GVL'yi okur; çıkışını PROGRAM aracılığıyla GVL'ye yazar
+        ▼
+03 FUNCTION BLOCK ───── Cihaz mantığının kapsüllenmesi (state machine + hata çıkışı)
+        │ Olgun FB'ler kütüphaneye taşınır
+        ▼
+04 KÜTÜPHANE ────────── Tekrar kullanım altyapısı (sürüm-sabit, namespace, IP)
+        │ FB'ler hata raporlar; proje alarm mimarisini besler
+        ▼
+05 HATA YÖNETİMİ ────── Dört katmanlı fail-safe ağı
 ```
 
-### Bütünsel Mental Model — Bir CODESYS Projesi Nasıl Nefes Alır?
+### Üç İlke ↔ Beş Karar Matrisi
 
-CODESYS programlama mimarisini anlamanın en kısa yolu şu akışa bakmaktır:
+| İlke | 01 POU | 02 GVL | 03 FB | 04 Lib | 05 Hata |
+|---|---|---|---|---|---|
+| **Tek yönlü akış** | PROGRAM orkestra eder | I/O→GVL→… katmanı | FB output→PROGRAM yazar | lib global yazmaz | alarm akışı tek yön |
+| **Sahipli kapsülleme** | FB instance kendi belleği | GVL'ye tek yazar | FB sadece output'una yazar | lib instance state | safety task tek sahip |
+| **Katmanlı fail-safe** | ELSE→eFault | GVL_Alarms katmanı | savunmacı giriş + ELSE | sürüm kilidi | 4 dik katman |
 
-> **Fiziksel dünya → GVL_IO** (AT % eşlemeli sinyaller)  
-> **GVL_IO → FB_Motor/FB_Valve** (Function Block'lar fiziksel sinyali okur)  
-> **FB_Motor → PROGRAM** (PROGRAM, FB'yi çağırır ve çıkışları GVL'ye yazar)  
-> **PROGRAM → GVL_IO** (çıkış komutları fiziksel dünyaya döner)  
-> **Herhangi bir adımda hata → GVL_Alarms** (alarm mimarisi tüm katmanları izler)  
-> **Olgun FB'ler → Kütüphane** (bir sonraki projede sıfırdan başlanmaz)
+**Uzman içgörüsü:** "Kod doğru ama bakım/saha sorunu var" → ihlal edilen ilkeyi bul. Kopyalanan kod → kapsülleme (PROGRAM yerine FB). Race/yapışık çıkış → tek-yazar ihlali. Kaybolan değer → kalıcılık+layout. Alarm seli → fail-safe katmanı eksik/histerezissiz.
 
-Bu akış tek yönlüdür ve her adımın sorumluluğu nettir. Karışıklık, bu akışın dışına çıkıldığında başlar: FB'nin GVL'ye doğrudan yazması, PROGRAM'ın birden fazla yerden çağrılması, GVL_IO'ya iş mantığı değişkeni eklenmesi — her biri bu temiz akışı kırar.
+### Bütünsel Akış: Bir CODESYS Projesi Nasıl Nefes Alır
 
-## Hızlı Referans Tabloları
+> Fiziksel dünya → **GVL_IO** (mapping) → **FB** (okur, durum işler) → **PROGRAM** (FB çağırır, çıkışı GVL'ye yazar) → **GVL_IO** → fiziksel dünya. Her adımda hata → **GVL_Alarms** + **Task_Safety**. Olgun FB → **Kütüphane**.
 
-### A. POU Türü Seçim Tablosu (Belge 1)
+Karışıklık hep bu akışın dışına çıkınca başlar: FB'nin global'e yazması, PROGRAM'ın çok yerden çağrılması, GVL_IO'ya iş-mantığı değişkeni, kütüphanenin global tutması — her biri tek-yönlü akışı kırar.
 
-| Soru | Cevap | POU Türü |
+## Hızlı Referans
+
+### A. POU Türü (Belge 1)
+
+| Soru | Türü | Neden (bellek yaşam döngüsü) |
 |---|---|---|
-| Birden fazla kopyaya ihtiyaç var mı? | Evet | **FUNCTION_BLOCK** |
-| Task tarafından doğrudan çağrılacak mı? | Evet, tek kopya | **PROGRAM** |
-| Durum/hafıza tutuluyor mu? | Hayır | **FUNCTION** |
-| Timer veya sayaç kullanıyor mu? | Evet | **FUNCTION_BLOCK** |
-| OOP, interface, inheritance gerekiyor mu? | Evet | **FUNCTION_BLOCK** |
-| Saf dönüşüm / hesaplama | Evet | **FUNCTION** |
+| Çoklu kopya? | **FB** | instance-başına statik bellek |
+| Task'tan tek kopya? | **PROGRAM** | tekil global singleton |
+| Saf hesap, durumsuz? | **FUNCTION** | stack — reentrant, çağrıda doğar/ölür |
+| Timer/sayaç/OOP? | **FB** | kalıcı instance state + method/THIS^ |
 
-Pratik dağılım — orta büyüklükte bir projede:
-```
-PROGRAM        → 3-5 adet (task başına bir, orkestrasyon)
-FUNCTION_BLOCK → 10-50 adet, çoklu instance (cihaz başına bir tip)
-FUNCTION       → 5-20 adet (ölçekleme, dönüşüm, limit kontrol)
-```
+### B. GVL Katmanı (Belge 2)
 
-### B. GVL Tasarım Kuralları (Belge 2)
-
-| GVL Adı | İçerik | Kim Yazar | Kalıcılık |
+| GVL | İçerik | Tek Yazar | Kalıcılık |
 |---|---|---|---|
-| GVL_IO | AT % eşlemeli fiziksel sinyaller | Task_Control | Standart |
-| GVL_HMI | HMI komutları, ekran değerleri | Task_HMI | Standart |
-| GVL_Params | Proses parametreleri | Task_HMI (operatör) | Standart / RETAIN |
-| GVL_Alarms | Alarm ve uyarı bayrakları | Task_Control, Task_Safety | Standart |
-| GVL_Recipes | Reçete verileri | Task_HMI | **RETAIN** |
-| GVL_Config | Makine kimliği, kalibrasyon | Mühendis (sadece) | **PERSISTENT** |
-| GVL_Comm | Haberleşme ara değişkenleri | Task_Comm | Standart |
+| GVL_IO | AT% fiziksel sinyal (tercihen mapping) | Task_Control | Standart |
+| GVL_HMI | operatör komutu | Task_HMI | Standart |
+| GVL_Params | proses parametresi | Task_HMI (doğrulamalı) | Std/RETAIN |
+| GVL_Alarms | alarm bayrağı | Task_Control/Safety | Standart |
+| GVL_Config | kalibrasyon, kimlik | mühendis | **PERSISTENT** |
 
-**Altın kural:** Bir değişken birden fazla POU tarafından paylaşılmıyorsa GVL'ye koyma. Bir GVL'ye yalnızca tek bir task yazar; diğerleri okur.
+### C. FB Arayüz Standardı (Belge 3)
 
-### C. Function Block Tasarım Desenleri (Belge 3)
-
-| Desen | Ne Zaman | Nasıl |
-|---|---|---|
-| Standart cihaz FB'si | Motor, vana, sensör | VAR_INPUT + VAR_OUTPUT + CASE eState |
-| Savunmacı giriş doğrulama | Tüm FB'lerde | RETURN ile erken çıkış, hata kodu set et |
-| VAR_IN_OUT struct geçirme | Büyük struct (>50 byte) | Kopyalama yerine referans — CPU tasarrufu |
-| Array of FB | Aynı cihazdan N adet | ARRAY[1..N] OF FB_Motor + FOR döngüsü |
-| State machine ELSE | Her CASE içinde | ELSE: eState := eFault — bilinmeyen durum koruması |
-
-**FB arayüz standardı** — her FB'de olması gereken minimum çıkışlar:
 ```
-xFault      : BOOL      ← Hata var mı
-eFaultCode  : DWORD     ← Makine okunabilir hata kodu
-sFaultMsg   : STRING(80)← İnsan okunabilir mesaj
-eState      : E_...State← Mevcut durum (HMI/diagnostik)
+VAR_OUTPUT minimumu: xFault, eFaultCode:DWORD, sFaultMsg:STRING, eState
+Kural: her scan koşulsuz çağır · önce çağır sonra oku · CASE'de ELSE→eFault
+       output salt-okunur · büyük veri VAR_IN_OUT · durumlu blok FB body'de
 ```
 
-### D. Kütüphane Seçim ve Versiyon Kuralları (Belge 4)
+### D. Kütüphane (Belge 4)
 
-| Kütüphane | İçerik | Her Projede? |
-|---|---|---|
-| Standard.library | TON, CTU, R_TRIG, SR, SEL, LIMIT | **Evet, otomatik** |
-| Util.library | FIFO, string fonksiyonları, istatistik | Gerektiğinde |
-| CAA_File | Dosya okuma/yazma | Log gereken projelerde |
-| CAA_SerialCom | RS-232/485 seri port | Seri haberleşme |
-| OSCAT Basic | Açık kaynak endüstriyel bloklar | PID, filtre alternatifi |
-| MyMachineLib | Kendi geliştirdiğin FB'ler | 3+ projede aynı FB kullanılıyorsa |
+```
+Sürüm: ASLA "newest"/* → sabit (3.5.17.0) · MAJOR=kırma, MINOR/PATCH=uyumlu
+Namespace: her lib'e benzersiz · global durum lib'de YASAK
+Dağıtım: .projectarchive (bağımlılık paketler) · compiled=IP+compiler kilidi
+Kütüphaneleştir: 3+ projede aynı FB
+```
 
-**Versiyon kural:** Üretim projesinde `*` (newest) asla kullanma. Her kütüphane sabit versiyonla kilitlenmeli: `Standard, 3.5.17.0`.
+### E. Hata Katmanları (Belge 5)
 
-### E. Hata Yönetimi Stratejileri (Belge 5)
-
-| Katman | Mekanizma | Platform | Zorunlu mu? |
+| Katman | Ölçek | Platform | Zorunlu |
 |---|---|---|---|
-| Runtime koruması | Task Watchdog (Cycle × 3-5) | Tüm | **Her task'ta zorunlu** |
-| İstisna yakalama | `__TRY/__CATCH` | Yalnızca 32-bit | Pointer işlemlerinde |
-| Pointer koruması | `IF pData <> 0 THEN` | Tüm (özellikle 64-bit) | 64-bit'te zorunlu |
-| FB içi doğrulama | Giriş sınır kontrolü, RETURN | Tüm | Her FB'de |
-| Operatör bildirimi | FB_AlarmManager + ST_AlarmRecord | Tüm | Her üretim projesinde |
-| Güvenli durum | Ayrı Task_Safety (Prio:0) | Tüm | Kritik çıkışlar için |
+| Savunmacı kod | mantık (kötü giriş) | tüm | her FB |
+| __TRY/__CATCH | bellek (null deref) | yalnız 32-bit | pointer işlemde |
+| Watchdog | zaman (takılma) | tüm | her task |
+| Alarm + Safety task | sistem (bildirim+güvenli durum) | tüm | her üretim |
 
-**Watchdog ayarı:** `Watchdog Time = Cycle Time × 3..5`. Sensitivity: 3 ardışık ihlalde tetikle.
-
-### F. İsimlendirme Özeti (Belgeler 1-2)
+### F. İsimlendirme
 
 ```
-Tip Prefiksleri:
-  x=BOOL   n=INT/UINT   w=WORD   dw=DWORD   r=REAL
-  s=STRING  t=TIME   dt=DATE_AND_TIME   a=ARRAY   st=STRUCT   e=ENUM
+x=BOOL n=INT w=WORD dw=DWORD r=REAL s=STRING t=TIME dt=DT a=ARRAY st=STRUCT e=ENUM
+GVL prefix (qualified_only): GVL_IO.x / GVL_HMI.x / GVL_Params.r / GVL_Alarms.x
+Postfix: ...Cmd(yaz) ...Feedback(oku) ...Setpoint  ..._C/_Bar/_Pct
+```
 
-GVL Kaynak Prefiksleri (qualified_only zorunlu):
-  GVL_IO.x    → Fiziksel I/O
-  GVL_HMI.x   → HMI komutu
-  GVL_Params.r → Proses parametresi
-  GVL_Alarms.x → Alarm bayrağı
+### Uzman Edge Case Konsolidasyonu
 
-Yön Postfiksleri:
-  ...Cmd      → Komut (yazılır)
-  ...Feedback → Geri bildirim (okunur)
-  ...Setpoint → Hedef değer
-  ..._C / ..._Bar / ..._Pct → Birim
+```
+İLKE/ALAN   EDGE CASE                        BELİRTİ                  KORUMA
+──────────────────────────────────────────────────────────────────────────────
+POU(01)     VAR_STAT Function'da POU-tekil    Paylaşılan tek sayaç     Per-instance→FB
+POU(01)     Function'da recursion             Stack overflow crash     İteratif çöz
+POU(01)     output'a dışarıdan yazma          FB bir sonraki scan ezer Salt-okunur muamele
+GVL(02)     RETAIN/PERSIST sıra değişti        Sessiz değer bozulması   Yalnızca sona ekle
+GVL(02)     PERSISTENT FB içinde              Kaydedilmez (sessiz)     PersistentVars listesi
+GVL(02)     çok-word paylaşım (LREAL/STRUCT)  Frankenstein değer       double-buffer/mutex
+GVL(02)     AT% topoloji kayması              Yanlış çıkış aktif        Sembolik mapping
+FB(03)      koşullu FB çağrısı                Timer donar              bEnabled ile çağır
+FB(03)      çıkışı çağrıdan önce oku          1 scan gecikme           Önce çağır sonra oku
+FB(03)      ELSE yok + bozuk eState           Tanımsız çıkış           ELSE→eFault
+FB(03)      REFERENCE TO atanmamış             Deref crash              __ISVALIDREF kontrol
+Lib(04)     iki lib farklı alt-sürüm ister    Çözülemez derleme hatası placeholder/container
+Lib(04)     compiled + farklı compiler        "incompatible version"   sözleşmede sürüm
+Hata(05)    REAL /0 → NaN                      Sessiz yayılır, < hep F  __FINITE/açık kontrol
+Hata(05)    alarm chattering                  Log seli, gerçek kaybolur histerezis+debounce
+Hata(05)    __TRY 64-bit                       Derlenir, çalışmaz       savunmacı programlama
+Hata(05)    watchdog→çıkış                     Otomatik 0 DEĞİL          fieldbus fail-safe+test
 ```
 
 ## Pratikte Nasıl Kullanılır
 
-### Yeni Bir Makine Projesi İçin Kontrol Listesi
+### Yeni Makine Projesi — Mimari Kontrol Listesi (Uzman)
 
 ```
-PROJE BAŞLANGIÇ MİMARİ KARARLARI
-─────────────────────────────────────────────────────────
-□ 1. Kaç farklı cihaz türü var? → Her cihaz türü için bir FB
-□ 2. GVL ayrımını yap: IO, HMI, Params, Alarms, Config, Comm
-□ 3. Hangi task'lar var? → Task başına bir PROGRAM
-□ 4. RETAIN neler? → Üretim sayaçları, reçete aktif verisi
-□ 5. PERSISTENT neler? → Kalibrasyon, makine kimliği, lifetime sayaç
-□ 6. Watchdog her task'ta AÇIK — cycle × 3, sensitivity 3
-□ 7. qualified_only her GVL'de AÇIK
+BAŞLANGIÇ
+□ Cihaz türü başına bir FB (kopyalama yok)
+□ GVL katmanla: IO/HMI/Params/Alarms/Config/Comm — her birine tek yazar
+□ Task başına bir PROGRAM (orkestra)
+□ RETAIN=üretim sayacı/aktif reçete · PERSISTENT=kalibrasyon/kimlik
+□ RETAIN/PERSIST listesi: yalnızca sona ekleme kuralı belgelendi
+□ qualified_only her GVL'de açık · her lib'e namespace
+□ Symbol Configuration daraltıldı (sadece dışa açılan GVL)
 
-KODLAMA AKIŞI
-─────────────────────────────────────────────────────────
-□ 8.  DUT: Enum (E_MotorState) + Struct (ST_MotorDiag, ST_AlarmRecord) tanımla
-□ 9.  FB_Motor, FB_Valve, FB_AnalogSensor yaz (state machine, hata çıkışları)
-□ 10. GVL_IO — AT % eşlemeleri (fiziksel sinyaller)
-□ 11. GVL_HMI, GVL_Params, GVL_Alarms tanımla
-□ 12. PRG_Control: FB'leri çağır → çıkışları GVL_IO'ya yaz → alarmları GVL_Alarms'a aktar
-□ 13. PRG_Safety: xAnyCriticalAlarm → tüm kritik çıkışları kapat
-□ 14. FB_AlarmManager instance'larını PRG_Control içinde çağır
-□ 15. Build → Download → Test
+KODLAMA
+□ DUT: E_State enum + ST_Diag/ST_AlarmRecord struct
+□ FB'ler: state machine + ELSE→eFault + xFault/eFaultCode/sFaultMsg çıkışları
+□ FB'ler output-only yazar; büyük veri VAR_IN_OUT
+□ Durumlu bloklar FB body'de (method yerel VAR'da değil)
+□ PRG_Control: FB çağır → çıkış GVL_IO'ya → alarm GVL_Alarms'a
+□ PRG_Safety (Prio:0): xAnyCriticalAlarm → kritik çıkışları kapat
+□ Analog alarmlara histerezis + debounce
 
-KÜTÜPHANELEŞTİRME KARAR NOKTASI
-─────────────────────────────────────────────────────────
-□ 16. Bu FB 3+ projede kullanılacak mı? → Library projesi oluştur
-□ 17. Kütüphane versiyonu sabitle, Project Archive ile dağıt
+HATA / FAIL-SAFE
+□ Her task watchdog açık (cycle×3-5, sensitivity 2-3)
+□ 64-bit ise __TRY yok → null/index savunmacı kontrol
+□ Çıkış fail-safe fieldbus slave'de yapılandırıldı + FİZİKSEL test
+□ Exception handler minimum/non-blocking
+□ Hata kodu DWORD bit-mask (string HMI/SCADA'da çözülür)
+
+KÜTÜPHANELEŞTİRME
+□ 3+ projede FB → library, sürüm-sabit, .projectarchive dağıtım
 ```
 
-### Beş Belgeyi Bağlayan Pratik Senaryo
-
-**Görev:** 2 konveyör motoru + 1 ısıtıcı + sıcaklık sensörü olan bir proses hattı.
+### Belirti → İlke/Belge → Kök Neden
 
 ```
-ADIM 1 — POU Türü Kararı (Belge 1)
-  FB_Motor         ← 2 instance (fbMotor1, fbMotor2)
-  FB_TemperatureCtrl ← 1 instance, PID içerir
-  FB_AnalogSensor  ← 1 instance (sıcaklık sensörü)
-  FC_ScaleAnalog   ← Saf dönüşüm fonksiyonu
-  PRG_ProcessControl ← Task_Control tarafından çağrılır (tek kopya)
-  PRG_Safety       ← Task_Safety tarafından (Prio:0, 1ms)
+Belirti                              İlke/Belge   Kök Neden / Çözüm
+─────────────────────────────────────────────────────────────────────
+4 motor için 4 kopya kod             Kapsülleme/01 PROGRAM→FB + array of FB
+Sayaç bazen sıfırlanıyor             Tek-yazar/02  iki task yazıyor → tek yazar
+Kalibrasyon download'da gitti        Kalıcılık/02  RETAIN→PERSISTENT
+Persistent değerler "kaymış"         Layout/02     liste sırası değişti→sona ekle
+Çıkış 5 instance'ta yapışık          Tek-yazar/03  FB global'e yazıyor→output-only
+Timer bazen donuyor                  Çağrı/03      koşullu çağrı→bEnabled
+Bozuk durumda makine kaçtı           Fail-safe/03  ELSE yok→ELSE→eFault
+Lib güncellemesi her şeyi kırdı      Sürüm/04      newest→sabit sürüm
+3. taraf lib aynı isim çakıştı       Namespace/02,04 qualified_only+namespace
+8 saat süren arıza araması           Bildirim/05   kötü alarm mesajı→ne/nerede/ne yap
+Watchdog sonrası motor durmadı       Fail-safe/05  fieldbus fail-safe + safety task
+Alarm log 10 dk'da doldu             Histerezis/05 deadband + debounce
+PID çıkışı NaN, limit yakalamadı     Sayısal/05    __FINITE kontrol + /0 önleme
+```
 
-ADIM 2 — GVL Yapısı (Belge 2)
-  GVL_IO
-    xConv1_RunFB    AT %I0.0 : BOOL;   (* Motor 1 geri bildirim *)
-    xConv2_RunFB    AT %I0.1 : BOOL;
-    wTemp_ADC       AT %IW0  : WORD;   (* Sıcaklık ADC *)
-    xConv1_Out      AT %Q0.0 : BOOL;
-    xConv2_Out      AT %Q0.1 : BOOL;
-    xHeater_Out     AT %Q0.2 : BOOL;
-  GVL_Params
-    rTemp_Setpoint_C   : REAL := 75.0;
-    rConv_MaxSpeed_Pct : REAL := 80.0;
-  GVL_Alarms
-    xAlarm_Conv1_Fault : BOOL;
-    xAlarm_Temp_High   : BOOL;
-    xAnyCriticalAlarm  : BOOL;
-  GVL_Config PERSISTENT
-    rTemp_CalOffset : REAL := 0.0;   (* Kalibrasyon — download'a dayanır *)
+### Performans Optimizasyon Sıralaması (Beş Belgeden)
 
-ADIM 3 — Function Block Tasarımı (Belge 3)
-  FB_Motor:
-    VAR_INPUT: xStartCmd, xStopCmd, xFaultReset, tStartDelay
-    VAR_OUTPUT: xRunOutput, xFault, eState, sFaultMsg
-    CASE eState: eIdle → eStarting → eRunning → eStopping / eFault
-    ELSE: eState := eFault; xRunOutput := FALSE;
+```
+1. Büyük veri VAR_IN_OUT (kopya elimine)        02,03 — ölçülebilir CPU
+2. Array of FB + FOR (tekrar→döngü)             01,03 — kod+bakım
+3. STRUCT/GVL alan sıralama (padding↓)          02 — bellek, retain bütçesi
+4. Hata kodu bit-mask (string CONCAT yok)       05 — sıcak task CPU
+5. Alarm değerlendirme orta task'ta (1ms değil) 05 — sıcak task yükü
+6. Function inline (sıcak döngüde çağrı yükü)   01 — çağrı overhead
+7. Symbol set daralt (bootapp/sembolik erişim)  02 — boyut+hız
+8. Kullanılmayan lib çıkar (bootapp)            04 — bellek
+```
 
-ADIM 4 — Kütüphane Kullanımı (Belge 4)
-  Standard.library: TON (tStartTimer), R_TRIG (fault reset), CTU (üretim sayacı)
-  MyMachineLib 1.2.0.0: FB_Motor, FB_AnalogSensor (sabit versiyon!)
+## Örnekler
 
-ADIM 5 — Hata Yönetimi (Belge 5)
-  Task_Control watchdog: 30ms cycle × 3 = 90ms, sensitivity 3
-  Task_Safety  watchdog: 1ms cycle × 5 = 5ms, sensitivity 3
+### Uçtan Uca: 2 Motor + 1 Isıtıcı + Sıcaklık Sensörü (Uzman)
 
-  PRG_ProcessControl içinde:
-    fbMotor1(xStartCmd := GVL_HMI.xConv1_Start, ...);
-    GVL_IO.xConv1_Out      := fbMotor1.xRunOutput;
+```
+POU (01): FB_Motor×2, FB_TemperatureCtrl×1, FB_AnalogSensor×1, FC_Scale,
+          PRG_ProcessControl (Task_Control), PRG_Safety (Task_Safety Prio:0)
+
+GVL (02): GVL_IO (mapping, AT% değil) · GVL_Params · GVL_Alarms ·
+          GVL_Config PERSISTENT (rTemp_CalOffset)
+
+FB (03):  FB_Motor: input(Start/Stop/Reset/tDelay) output(xRunOutput/xFault/eState/sMsg)
+          CASE eIdle→eStarting→eRunning→eStopping/eFault · ELSE→eFault
+
+Lib (04): Standard(TON,R_TRIG,CTU) + MyMachineLib 1.2.0.0 (sabit sürüm)
+
+Hata(05): Task_Control wd 30ms×3 · Task_Safety wd 1ms×5
+          Sıcaklık alarmı: histerezis (set 90°C, reset 87°C) + 2s debounce
+
+PRG_ProcessControl:
+    fbMotor1(xStartCmd:=GVL_HMI.xConv1_Start, bEnabled:=xEnable1);  (* koşulsuz *)
+    GVL_IO.xConv1_Out             := fbMotor1.xRunOutput;          (* output-only *)
     GVL_Alarms.xAlarm_Conv1_Fault := fbMotor1.xFault;
+    GVL_Alarms.xAnyCriticalAlarm  := GVL_Alarms.xAlarm_Conv1_Fault OR GVL_Alarms.xAlarm_Temp_High;
 
-  PRG_Safety içinde:
+PRG_Safety:  (* bağımsız watchdog, fieldbus fail-safe ile birlikte *)
     IF GVL_Alarms.xAnyCriticalAlarm THEN
-        GVL_IO.xConv1_Out  := FALSE;
-        GVL_IO.xConv2_Out  := FALSE;
-        GVL_IO.xHeater_Out := FALSE;
+        GVL_IO.xConv1_Out := FALSE; GVL_IO.xConv2_Out := FALSE; GVL_IO.xHeater_Out := FALSE;
     END_IF
-
-  GVL_Alarms.xAnyCriticalAlarm :=
-      GVL_Alarms.xAlarm_Conv1_Fault OR
-      GVL_Alarms.xAlarm_Temp_High;
 ```
 
 ## Sık Yapılan Hatalar
 
-### Hata 1: Her Şeyi PROGRAM'a Yazmak (Belge 1)
+### Başlangıç Hataları (5)
 
-4 motor için `PRG_Motor1..4` oluşturmak. Bir hata düzeltmesi 4 dosyayı aynı anda değiştirmek demektir. Çözüm: Tek `FB_Motor` tanımı, 4 instance — bir değişiklik her yere yansır.
+1. **Her şeyi PROGRAM'a** (01) — kopyalama; FB kullan.
+2. **Tek büyük GVL** (02) — kategorisiz; katmanla.
+3. **Function'a timer** (01) — sıfırlanır; FB kullan.
+4. **Watchdog kapalı** (05) — donma; her task'ta aç.
+5. **RETAIN'de kalibrasyon** (02) — download'da gider; PERSISTENT.
 
-### Hata 2: Tek Büyük GVL Anti-Pattern'i (Belge 2)
+### Uzman Hataları (5)
 
-500 değişkeni tek GVL'ye yığmak. "xRun kim yazar? rSetpoint RETAIN mı? xAlarm nereden geliyor?" soruları yanıtsız kalır. Çözüm: Her GVL'nin tek, net sorumluluğu — GVL_IO yalnızca fiziksel sinyal, GVL_Alarms yalnızca alarm.
+1. **FB global'e yazar / çok-yazar** (02,03) — race, yapışık çıkış; output-only + tek yazar.
+2. **RETAIN/PERSIST sıra değiştirme** (02) — sessiz veri bozulması; yalnızca sona ekle.
+3. **"newest" lib + compiler kilidi körlüğü** (04) — sürpriz davranış / uyumsuzluk; sabit sürüm + sözleşme.
+4. **64-bit'te __TRY + NaN/histerezissiz alarm** (05) — çalışmayan koruma, alarm seli; savunmacı kod + histerezis.
+5. **"Watchdog/STOP = güvenli" varsaymak** (05) — çıkış fail-safe otomatik değil; fieldbus fail-safe + safety task + fiziksel test.
 
-### Hata 3: Function'a Timer Koymak (Belge 1)
+## Ne Zaman Tercih Edilmeli / Edilmemeli
 
-`FC_DelayedOutput` içinde `TON` kullanmak. Timer her çağrıda sıfırlanır, çıkış asla gelmez. Durum tutan her yapı → Function Block.
-
-### Hata 4: FB'nin Global'e Doğrudan Yazması (Belge 3)
-
-FB içinden `GVL_IO.xMotorOut := TRUE` yazmak. 5 instance aynı değişkeni ezer. Çözüm: FB yalnızca `VAR_OUTPUT`'a yazar; atamayı çağıran PROGRAM yapar.
-
-### Hata 5: Watchdog Kapalı Üretim Projesi (Belge 5)
-
-Geliştirme kolaylığı için watchdog kapalı bırakılırsa bir sonsuz döngü runtime'ı dondurur, motorlar son komutlarında kilitlenir. Her task'ta watchdog zorunludur.
-
-### Hata 6: Kalibrasyon Datasını RETAIN ile Saklamak (Belge 2)
-
-RETAIN verisi program download'unda sıfırlanır. Kalibrasyon RETAIN'e konursa yeni firmware yüklendiğinde saha kalibrasyonu kaybolur. Kural: kalibrasyon = PERSISTENT, üretim sayacı = RETAIN.
-
-### Hata 7: "Use Newest Version" Kütüphanesi (Belge 4)
-
-Kütüphane versiyonu `*` bırakılırsa üçüncü taraf güncelleme beklenmedik davranış değişikliği getirir. Üretim projelerinde her kütüphane sabit versiyon ile kilitlenmeli.
-
-### Hata 8: State Machine'de ELSE Kullanmamak (Belge 3)
-
-RETAIN bozulursa `eState` tanımlanmamış değer alabilir. ELSE yoksa çıkış belirsiz — makine beklenmedik biçimde hareket eder. Her CASE: `ELSE: eState := eFault; xRunOutput := FALSE;`
-
-### Hata 9: FB'yi Koşullu Çağırmak (Belge 3)
-
-```iecst
-(* YANLIŞ: *)
-IF xEnable THEN fbMotor1(xStartCmd := ...); END_IF
-(* xEnable = FALSE iken TON/CTU içindeki timerlar ve sayaçlar donar. *)
-
-(* DOĞRU: *)
-fbMotor1(xStartCmd := ..., bEnabled := xEnable);
+```
+FB yerine PROGRAM?     → tek kopya, task orkestratörü, kopyalanmayacak
+PROGRAM yerine FB?     → çoklu kopya VEYA cihaz yaşam döngüsü VEYA OOP
+FUNCTION?              → durumsuz saf hesap (timer/sayaç YOKsa)
+Kütüphane oluştur?     → 3+ projede aynı FB / dağıtım / IP
+__TRY/__CATCH?         → yalnız 32-bit, pointer/external lib
+PERSISTENT?            → güç+download'a dayanmalı (kalibrasyon/kimlik)
+RETAIN?                → yalnız güç kesilmesine (sayaç/aktif reçete)
+Ayrı Task_Safety?      → kritik çıkış başka task'ın wd'sinden etkilenmemeli
 ```
 
-### Hata 10: Çıkışı Çağrıdan Önce Okumak (Belge 3)
-
-Önce `xRunning := fbMotor1.xRunning` okunursa önceki döngünün değeri alınır. Doğru sıra: önce çağır (`fbMotor1(...)`), sonra çıkışı oku.
-
-## Ne Zaman ...
-
-### Ne Zaman Kütüphane Oluşturulur?
-
-Aynı FB 3 veya daha fazla projede kullanılıyorsa. Farklı müşterilere dağıtılacaksa. IP koruma gerekliyse → compiled-library. Küçük prototip ya da tek projeye özgüyse kütüphane gerekmez, proje içinde bırakılabilir.
-
-### Ne Zaman PROGRAM Yerine FUNCTION_BLOCK Yazılır?
-
-Kod birden fazla kopyalanacaksa her zaman FUNCTION_BLOCK. Cihazın (motor, vana, sensör) yaşam döngüsü yönetiliyorsa her zaman FUNCTION_BLOCK. Task'tan doğrudan çağrılan ve kopyalanmayacak orkestrasyon kodu → PROGRAM.
-
-### Ne Zaman `__TRY/__CATCH` Kullanılır?
-
-Yalnızca 32-bit platformda, pointer manipülasyonu veya external kütüphane çağrısı içeren kodda. 64-bit x64 sistemlerde `__TRY/__CATCH` desteklenmez — savunmacı programlama (null kontrolü, index sınır kontrolü) zorunludur.
-
-### Ne Zaman PERSISTENT Kullanılır?
-
-Veri hem güç kesilmesine hem de program download'una karşı korunmalıysa. Kalibrasyon, makine serial numarası, ömür boyu üretim sayacı, son bakım tarihi — bunların tamamı PERSISTENT. Yalnızca güç kesilmesine karşı korunması yeterli veriler (shift sayacı, aktif reçete) → RETAIN.
-
-### Ne Zaman Ayrı Task_Safety Oluşturulur?
-
-Kritik çıkışlar (motor, ısıtıcı, vana) başka bir task'ın watchdog hatasından etkilenmemeli ise her zaman. Task_Safety en yüksek öncelikte (Prio:0), en kısa döngü süresiyle (1ms), bağımsız watchdog ile çalışır ve yalnızca güvenli duruma geçiş mantığını yürütür.
+Yetersiz kalınca: OOP derinliği → advanced/oop_codesys · birim test → advanced/unit_testing · compiled lib → advanced/compiled_library_guide · SIL → standards/safety_plc · profiling → debugging.
 
 ## Gerçek Proje Notları
 
-**Not 1 — Beş Belgenin Birikimli Değeri**  
-Her belge tek başına değerlidir; ancak beşi birlikte uygulandığında etki çok daha büyük olur. PROGRAM → FB ayrımı kopyalamayı ortadan kaldırır, GVL ayrımı race condition'ı önler, FB tasarım prensipleri test edilebilirliği sağlar, kütüphane sistemi projeye taşır, hata yönetimi sahada 8 saatlik debug oturumunu tek saate indirir. Birini ihmal etmek zincirin en zayıf halkasını oluşturur.
+**Sentez Notu 1 — Üç İlke, Beş Karar**  
+Uzmanlığın eşiği: POU/GVL/FB/lib/hata kararlarını ayrı ayrı ezberlemek değil, üçünü tek yönlü akış + sahipli kapsülleme + katmanlı fail-safe ilkelerinden türetebilmek. Her saha tuhaflığı bu üçten birinin ihlalidir; ilke pusula, edge case harita.
 
-**Not 2 — FB_Motor'un 50 Projede Yolculuğu**  
-İyi tasarlanmış bir `FB_Motor` — temiz arayüz, state machine, hata çıkışları — bir kez yazılır ve onlarca projede parametresiyle uyarlanır. `tStartDelay := T#2S` ile birinde, `tStartDelay := T#5S` ile diğerinde. Arayüz aynı, davranış öngörülebilir, test kümesi paylaşılıyor. Kötü tasarlanmış bir FB ise her projede kopyalanır, her kopyada bir fark oluşur, yıllar içinde 20 farklı "FB_Motor" versiyonu ortaya çıkar — hangisinin doğru olduğu kimse tarafından bilinmez.
+**Sentez Notu 2 — Beş Kararın Birikimli Değeri**  
+PROGRAM→FB ayrımı kopyalamayı, GVL katmanlama race'i, FB tasarımı test edilemezliği, kütüphane sıfırdan-başlamayı, hata yönetimi 8 saatlik debug'ı ortadan kaldırır. Beşi bir zincir; en zayıf halka projeyi belirler — biri eksikse diğer dördü telafi edemez.
 
-**Not 3 — GVL Kategorisizliğinin Maliyeti**  
-600 satırlık tek bir GVL'de `xRun`, `xStop`, `xAlarm` gibi belirsiz isimler: Hangi motorun, hangi ünitenin? Komut mu geri bildirim mi? RETAIN mi değil mi? 3 gün analiz, 6 GVL'ye bölme, %60 bakım süresi azalması. Proje başında yapılan 2 saatlik GVL tasarımı, ilerleyen aylarda haftalar kurtarır.
+**Sentez Notu 3 — Tek-Yazar Kuralı Her Katmanda Tekrar Eder**  
+"FB sadece output'una yazar" (03), "her GVL'ye tek task yazar" (02), "PROGRAM tek noktadan çağrılır" (01), "kütüphane global tutmaz" (04) — hepsi aynı kuralın farklı katmanlardaki ifadesi: paylaşımlı durumun tek sahibi olmalı. Bu, preemptive scheduler'da (task-structure/03) race condition'ı önlemenin programlama-katmanı stratejisidir.
 
-**Not 4 — Kalibrasyon Kaybının Üretim Maliyeti**  
-RETAIN'de saklanan kalibrasyon verisi, bug fix download'unda sıfırlandı. Dolum makinesi 2 saat yanlış miktarda doldurdu, üretim partisi iptal edildi. PERSISTENT eklenmesi 5 dakikalık bir değişiklikti — erteleme maliyeti üretim partisine mal oldu.
+**Sentez Notu 4 — Fail-Safe "Yakala-Devam Et" Değil, "Önle-Güvenli Duruma Kaç"tır**  
+CODESYS'te genel try/catch'in olmaması (ve 64-bit'te __TRY yokluğu) bir eksiklik değil, felsefe: determinizm ve sertifikasyon, exception unwinding'in öngörülemez sürelerini kabul etmez. Bu yüzden hata stratejisi savunmacı önleme + katmanlı fail-safe'tir. Dört katman dik (orthogonal) olduğu için biri eksik olunca o ölçekteki başarısızlık tamamen korumasız kalır.
 
-**Not 5 — 64-bit Platformun __TRY/__CATCH Tuzağı**  
-Müşteri x64 IPC istedi. `__TRY/__CATCH` kullanan tüm bölümler derlendi ama çalışmadı — 64-bit CODESYS runtime bu özelliği desteklemez. Kodu yeniden yazmak: her pointer erişiminde null kontrolü, her dizi erişiminde index sınır kontrolü. Daha fazla satır, ama platforma taşınabilir ve gerçekten güvenli.
-
-**Not 6 — Alarm Mesajı Kalitesinin Saha Etkisi**  
-"Motor arızası" mesajıyla 8 saat süren arıza araştırması yaşandı. "Motor 1 çalışma geri bildirimi 50ms içinde gelmedi — Kontaktör K1 veya kablo J14'ü kontrol edin" mesajıyla aynı arıza 45 dakikada çözüldü. İyi alarm mesajı yazmak zaman alan bir disiplindir; saha maliyetini doğrudan etkiler.
+**Sentez Notu 5 — Mimari Başta 2 Saat, Sonra Aylar**  
+GVL katmanlama 2 saat, sonradan bölmek 3 gün + %60 bakım yükü (sahada görülmüş). FB mimarisi başta kurulursa bir bug fix tek noktadan yayılır; kurulmazsa yıllar içinde 20 farklı "FB_Motor" versiyonu doğar. PERSISTENT 5 dakikalık karar, eksikliği bir üretim partisine mal olur. Programlama mimarisinde "önce çalıştır sonra düzelt" işlemez — çünkü kötü mimari aylarca "çalışıyor" görünür, en kötü anda çöker.
 
 ## İlgili Konular
 
 ```
-knowledge/codesys/programming/      ← Şu an buradasınız
-├── 01_pou_types.md
-├── 02_gvl_design.md
-├── 03_function_blocks.md
-├── 04_libraries.md
-├── 05_error_handling.md
+knowledge/codesys/programming/      ← Şu an buradasınız (Uzman seviye)
+├── 01_pou_types.md          (Uzman)
+├── 02_gvl_design.md         (Uzman)
+├── 03_function_blocks.md    (Uzman)
+├── 04_libraries.md          (Uzman)
+├── 05_error_handling.md     (Uzman)
 └── _synthesis.md (bu belge)
 
-Önkoşul — Temel Seviye:
-knowledge/codesys/fundamentals/
-├── 01_runtime_architecture.md
-├── 02_project_structure.md
-├── 03_iec61131_languages.md
-└── _synthesis.md
+Önkoşul:
+knowledge/codesys/fundamentals/   → determinizm felsefesi, runtime/proje/diller
+knowledge/codesys/task-structure/ → tek-yazar/race, watchdog, öncelik
 
-Sonraki adım — Task Yapılandırması:
-knowledge/codesys/task-structure/
-├── 01_task_types.md
-├── 02_cycle_time_design.md
-└── 03_priority_management.md
-
-Sonraki adım — İleri Seviye:
-knowledge/codesys/advanced/
-├── oop_codesys.md           → FB ile Interface, Inheritance, Polymorphism
-├── unit_testing_codesys.md  → FB'yi test etmek
-├── compiled_library_guide.md → IP koruma, compiled-library oluşturma
-└── application_events.md    → excpt_watchdog sistem olayı işleyici
-
-Protokol / Haberleşme:
-knowledge/protocols/
-├── opc-ua/
-└── modbus/
-
-knowledge/networking/
-└── ethercat/
-
-Standartlar:
-knowledge/standards/
-└── safety_plc.md            → SIL gereksinimi, güvenlik mimarisi
+Sonraki adım — İleri/Uzman:
+knowledge/codesys/advanced/   → oop_codesys, unit_testing, compiled_library, application_events
+knowledge/codesys/debugging/  → profiling, hata ayıklama, performans analizi
+knowledge/protocols/ (opc-ua, modbus) · knowledge/networking/ (ethercat)
+knowledge/standards/safety_plc.md → SIL, güvenlik mimarisi
 ```

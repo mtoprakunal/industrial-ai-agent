@@ -2,8 +2,8 @@
 KONU        : CODESYS POU Tipleri — Program, Function Block, Function
 KATEGORİ    : codesys
 ALT_KATEGORI: programming
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_obj_program.html"
     başlık: "CODESYS Online Help — Object: Program"
@@ -436,6 +436,107 @@ Reçete yönetiminde `ST_Recipe` struct'ı 200 byte'tı. Her scan'de `VAR_INPUT`
 
 **Not 4 — Function'ın Okunabilirlik Gücü**  
 `rTemperature := (GVL_IO.wTempADC / 4095.0) * 100.0 - 273.15` gibi satırlar proje boyunca 20 yerde tekrar ediyordu. `FC_ADCToTemperature` fonksiyonu yazıldıktan sonra aynı mantık tek satıra indi ve kalibrasyon katsayısı değiştiğinde yalnızca tek yer güncellendi.
+
+**Not 5 — Function'ın "Gizli Durumu": VAR_STAT Tuzağı**  
+Bir geliştirici, "Function durumsuzdur" kuralını bildiği halde `VAR_STAT` (static) ile bir sayaç tuttu — ve işe yaradı. Sorun şuydu: `VAR_STAT` Function'da tek bir global örnek paylaşır; Function 5 farklı yerden çağrılınca beşi de aynı sayacı artırdı. Görünürde "durumlu Function" elde edildi ama bu durum tüm çağrı noktalarınca paylaşılan tek bir bellek oldu. Ders: `VAR_STAT` Function'da çalışır ama instance-başına değil, **POU-başına tekildir** — gerçek per-instance durum gerekiyorsa hâlâ FB şart. `VAR_STAT` yalnızca tüm çağrılarda paylaşılması istenen sayaç/önbellek için doğrudur.
+
+**Not 6 — `THIS^` ve Method'ların Program/Function'da Olmaması**  
+Bir ekip, PROGRAM içinde METHOD tanımlamaya çalıştı (OOP alışkanlığıyla) — derleyici reddetti. METHOD, PROPERTY, `THIS^`, `SUPER^` yalnızca FUNCTION_BLOCK'a aittir. PROGRAM tek instance olduğu için method'a ihtiyaç duymaz; Function durumsuz olduğu için `THIS^` anlamsızdır. Ders: OOP gerektiren her şey FB'dir; "program da bir nesne olsun" beklentisi CODESYS'in nesne modeline aykırıdır.
+
+**Not 7 — Function Çağrı Maliyeti (Sıcak Döngüde)**  
+Analog ölçekleme `FC_Scale` 1ms task'ta 200 kanal için döngüde çağrılıyordu. Her çağrı bir stack frame kurar/yıkar; 200 çağrı/scan ölçülebilir overhead yarattı. Inline'lanabilir basit ifadeler için `{attribute 'inline'}` pragması veya doğrudan satır içi hesap, fonksiyon çağrı yükünü ortadan kaldırdı. Ders: Function soyutlaması bedavadır sanılır; sıcak döngüde çağrı sıklığı yüksekse inline değerlendirin.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Üç Tipin Bellek ve Yaşam Döngüsü Sınırları
+
+```
+Durum                                   PROGRAM    FUNCTION_BLOCK   FUNCTION
+─────────────────────────────────────────────────────────────────────────
+Statik bellek (her zaman ayrılı)        ✓          ✓ (instance)     ✗ (stack)
+Reentrant (özyineleme/çoklu task)       ✗          dikkat           ✓ (stack-safe)
+Recursion (kendini çağırma)             ✗          ✗ (instance state)✓ ama dikkat
+VAR_STAT (POU-tekil kalıcı)             ✓          ✓                ✓ (paylaşımlı!)
+Method/Property/THIS^                   ✗          ✓                ✗
+RETAIN değişken                         ✓          ✓                ✗
+```
+
+### Function'da Recursion ve Stack
+
+Function özyinelemeli (recursive) çağrılabilir — ama PLC'de stack sınırlıdır. Derin recursion (ör. ağaç gezme) **stack overflow → runtime crash** üretir; üstelik exception 64-bit'te yakalanamaz (bkz. 05_error_handling). Deterministik PLC kodunda recursion yerine açık stack/iteratif çözüm tercih edilir.
+
+### Function Block Instance'ının "Sıfırlanması" Sorunu
+
+Bir FB instance'ını çalışma anında "fabrika ayarına" döndürmenin standart bir yolu yoktur — `VAR` alanları yalnızca download/reset'te init değerine döner. Çalışırken reset gerekiyorsa FB'ye açık bir `xReset` girişi + iç init metodu yazılmalıdır. "Instance'ı yeniden oluşturmak" mümkün değildir; instance statik olarak ayrılmıştır.
+
+### VAR_OUTPUT'a Dışarıdan Yazma — Derlenir Ama Tehlikeli
+
+CODESYS, `fbMotor.xRunOutput := TRUE` gibi output'a dışarıdan yazmaya izin verir (derleme hatası vermez). Ama FB bir sonraki çağrıda bunu ezer. Bu "yarı-yazılabilir output" davranışı, sessiz mantık hatalarının kaynağıdır. Kural: output'lar salt-okunur muamelesi görmeli.
+
+## Optimizasyon
+
+### Tip Seçiminin Performans Profili
+
+```
+PROGRAM        → çağrı maliyeti yok (task doğrudan çalıştırır)
+FUNCTION_BLOCK → instance pointer geçişi (çok ucuz) + gövde
+FUNCTION       → stack frame kurulum/yıkım (her çağrıda)
+```
+
+Sıcak döngüde binlerce kez çağrılan saf hesap için **Function çağrısını inline'lamak** (`{attribute 'inline'}`) veya FB metoduna çevirmek (instance pointer cache'lenir) ölçülebilir kazanç sağlar.
+
+### Pass-by-Reference ile Kopya Eliminasyonu
+
+`VAR_INPUT` değere göre kopyalar; büyük struct/array'de bu her çağrı maliyetidir.
+
+```iecst
+(* ❌ 500 byte struct her çağrı kopyalanır *)
+FUNCTION_BLOCK FB_Process VAR_INPUT stData : ST_Big; END_VAR
+
+(* ✅ Referans — kopya yok *)
+FUNCTION_BLOCK FB_Process VAR_IN_OUT stData : ST_Big; END_VAR
+(* veya salt-okunur referans için: VAR_INPUT pData : POINTER TO ST_Big; *)
+```
+
+`VAR_IN_OUT` IEC'de referanstır; salt-okuma niyetinde bile kopya maliyetini siler. CODESYS V3.5 SP15+ ayrıca `VAR_INPUT {attribute 'by_reference'}` veya `REFERENCE TO` ile salt-okunur referans sağlar.
+
+### Array of FB + FOR: Tekrarı Sıfıra İndirme
+
+30 motor için 30 ayrı instance + 30 çağrı satırı yerine `ARRAY[1..30] OF FB_Motor` + tek `FOR` döngüsü; hem kod hacmini hem de bakım yüzeyini düşürür. Parametreler paralel bir `ARRAY OF ST_MotorParams`'tan beslenir.
+
+## Derin Teknik Detay
+
+### Neden Üç Ayrı Tip? — Bellek Modelinin Dayattığı Ayrım
+
+Üç POU tipi keyfi bir API tercihi değil, üç farklı **bellek yaşam döngüsünün** doğrudan yansımasıdır:
+
+```
+FUNCTION       → otomatik (stack) ömür: çağrıda doğar, dönüşte ölür
+FUNCTION_BLOCK → statik, instance-başına: download'da ayrılır, kalıcı
+PROGRAM        → statik, tekil: instance kavramı yok, global singleton
+```
+
+Bu, C dilindeki yerel değişken (stack) / global static / dosya-statik ayrımıyla aynı temel ayrımdır. IEC bunu PLC'ye uyarlamıştır: Function = saf hesap (stack güvenli, reentrant), FB = durum makinesi (kalıcı instance state), PROGRAM = uygulamanın kök düğümü. "Hangi tipi seçeyim?" sorusunun gerçek cevabı her zaman "verimin yaşam döngüsü nedir?"dir.
+
+### PROGRAM Aslında Bir Singleton FB'dir
+
+Derleyici seviyesinde PROGRAM, instance'ı tek ve global olan özel bir FB gibi davranır — kendi statik bellek bloğuna sahiptir, task tarafından "çağrılır" (`PRG_X()`). Fark semantiktir: PROGRAM'ın instance'ı oluşturulamaz/kopyalanamaz, doğrudan adıyla erişilir. Bu yüzden PROGRAM'ı iki task'tan çağırmak (Not / Hata 3) tek paylaşılan belleği iki zaman tabanında bozar — tıpkı bir FB instance'ını iki task'tan çağırmak gibi (bkz. task-structure/01).
+
+### Function'ın "Saf Olması" Determinizmle İlişkili
+
+Function'ın yan etkisiz (saf) olması yalnızca bir stil tercihi değil; reentrancy ve test edilebilirlik garantisidir. Yan etkisiz bir Function:
+- Aynı girişe her zaman aynı çıkışı verir → birim testi trivial.
+- Stack'te çalıştığı için aynı anda farklı task'lardan reentrant çağrılabilir → race yok.
+- Derleyici tarafından inline/optimize edilebilir (sabit katlama).
+
+GVL'ye yazan bir Function bu üç garantiyi de kırar — bu yüzden "Function'da yan etki yapma" kuralı, kozmetik değil mimari bir sözleşmedir (bkz. fundamentals/_synthesis determinizm felsefesi).
+
+### VAR_IN_OUT'un Pointer Gerçeği
+
+`VAR_IN_OUT`, perde arkasında bir pointer (adres) geçişidir — bu yüzden literal/sabit geçirilemez (sabitin adresi yoktur). Bu mekanizma:
+- Büyük veriyi kopyalamadan paylaşır (performans).
+- Çağıranın orijinal değişkenini doğrudan değiştirir (yan etki — bilinçli olmalı).
+- Online Change ile etkileşir: referans gösterilen değişken yeniden konumlanırsa pointer güncellenir, ama scan'ler arası saklanan ham `ADR()` sonuçları dangling olabilir (bkz. fundamentals/02 Online Change pointer tuzağı).
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : İyi Bir Function Block Nasıl Yazılır
 KATEGORİ    : codesys
 ALT_KATEGORI: programming
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_obj_function_block.html"
     başlık: "CODESYS Online Help — Object: Function Block"
@@ -537,6 +537,108 @@ Büyük bir üretim hattında 30 konveyör motorunu yönetmek için `ARRAY[1..30
 
 **Not 4 — State Machine ELSE Olmayan Projenin Felaketi**  
 Bir arıza sonrası program download edildi, RETAIN değişkenleri bozuldu, `eState` değeri `127` olarak kaldı. CASE yapısında `ELSE` yoktu; motor çıkışı belirsiz bir değerde kaldı — ne TRUE ne FALSE, tanımsız. Makine beklenmedik biçimde hareket etti. `ELSE → eFault` eklendikten sonra aynı senaryo güvenle sonuçlandı.
+
+**Not 5 — Inheritance Zincirinde "Kaybolan" Method Çağrısı**  
+Bir ekip `FB_Motor`'dan `FB_ServoMotor EXTENDS FB_Motor` türetti ve servo'da bir `Execute` metodu override etti. Ama base FB'nin gövdesindeki (FB body) kod hâlâ eski mantığı çalıştırıyordu — override beklenen yerde devreye girmedi. Neden: FB **gövdesi** (implementation) ile **metodları** ayrı çağrı yollarıdır; gövde kodu otomatik olarak türetilen sınıfın metodunu çağırmaz, açık `THIS^.Method()` veya sanal metot deseni gerekir. Ders: OOP'ta FB gövdesine mantık koymak yerine her şeyi metoda taşıyıp polimorfizmi açıkça kurun; "gövde + override" karışımı sessiz hata üretir.
+
+**Not 6 — `REFERENCE TO` ve Atanmamış Referans Crash'i**  
+Bir FB, `VAR_IN_OUT` yerine `REFERENCE TO ST_Data` aldı. Bir senaryoda çağıran referansı hiç atamadı (`__ISVALIDREF` kontrolü yoktu); FB atanmamış referansı dereference edince runtime exception (64-bit'te yakalanamaz) ile çöktü. Ders: `REFERENCE TO` kullanan FB, erişimden önce `__ISVALIDREF(refData)` ile geçerlilik kontrolü yapmalı. `VAR_IN_OUT` derleyici tarafından atama zorunluluğu getirir; `REFERENCE TO` getirmez — esneklik, sorumlulukla gelir.
+
+**Not 7 — Method İçindeki Yerel Timer Tuzağı**  
+Geliştirici bir TON'u FB metodunun `VAR` bölümünde tanımladı. Method her çağrıldığında timer sıfırlandı — Function'daki timer tuzağının (01_pou_types) FB-metot versiyonu. Method'un yerel `VAR`'ı, tıpkı Function gibi her çağrıda taze başlar; kalıcı durum FB'nin kendi `VAR` bölümünde olmalı, metodun değil. Ders: Durumlu bloklar (TON/CTU/R_TRIG) FB gövde-seviyesi `VAR`'da; method yerel değişkenleri stack'tedir, kalıcı değildir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### FB Çağrı Semantiği Edge Case'leri
+
+```
+Durum                                   Davranış
+─────────────────────────────────────────────────────────────────
+FB koşullu çağrılır (IF içinde)         İç timer/sayaç DONAR (çağrılmadığı scan)
+Çıkış çağrıdan ÖNCE okunur              Bir önceki scan'in değeri (gecikme)
+Aynı instance iki task'tan çağrılır     Tanımsız iç durum (bkz. task-structure/01)
+VAR_IN_OUT'a literal geçirilir          Derleme hatası (literalin adresi yok)
+Method yerel VAR'da TON                 Her çağrı sıfırlanır (durumsuz)
+eState init değeri verilmemiş           0'dan başlar — ilk enum değeri olmalı
+```
+
+### State Machine'in "Geçiş Arası" Tutarsızlığı
+
+Bir CASE state machine'de aynı scan içinde durum geçişi yapıldığında, geçişten sonraki kod **o scan çalışmaz** (CASE bir kez değerlendirilir). Bu kasıtlıdır (her scan bir adım) ama beklenmedik olabilir:
+
+```iecst
+CASE eState OF
+    eStarting:
+        eState := eRunning;   (* Bu scan eRunning kodu ÇALIŞMAZ *)
+    eRunning:
+        xRunOutput := TRUE;   (* Bir sonraki scan çalışır → 1 scan gecikme *)
+END_CASE
+```
+
+Hızlı geçişler için ya `WHILE`/tekrar değerlendirme (dikkatli!) ya da geçiş tasarımını 1-scan gecikmeyi kabul edecek şekilde yapın.
+
+### Output Persistensi
+
+FB output'ları (`VAR_OUTPUT`) instance belleğinde kalıcıdır — FB bir durumda output'u set edip başka durumda sıfırlamayı unutursa, output "yapışık" kalır. Her state'in tüm ilgili output'ları açıkça yönetmesi (veya CASE öncesi varsayılan atama) gerekir.
+
+## Optimizasyon
+
+### Büyük Veri için Referans, Kopya Değil
+
+```iecst
+(* ❌ 200 byte recipe her çağrı kopyalanır *)
+VAR_INPUT stRecipe : ST_Recipe; END_VAR
+
+(* ✅ Referans — kopya yok, CPU tasarrufu (gerçek projede ~%3 yük düşüşü) *)
+VAR_IN_OUT stRecipe : ST_Recipe; END_VAR
+```
+
+### Method vs Gövde: Çağrı Sıklığına Göre
+
+- **FB gövdesi (implementation):** Her FB çağrısında çalışır — ana state machine buraya.
+- **Method:** Yalnızca açıkça çağrılınca çalışır — opsiyonel/seyrek işlemler (Init, Reset, GetDiag) metoda taşınırsa, her scan değil yalnızca gerektiğinde maliyet doğar.
+
+Sıcak döngüde her scan çağrılan FB'de, seyrek mantığı metoda ayırmak ana gövdeyi yalın ve hızlı tutar.
+
+### Array of FB + FOR: Toplu İşleme
+
+```iecst
+VAR afbMotor : ARRAY[1..30] OF FB_Motor; END_VAR
+FOR i := 1 TO 30 DO
+    afbMotor[i](xStartCmd := aStart[i], bEnabled := aEnable[i]);
+    GVL_IO.aMotorOut[i] := afbMotor[i].xRunOutput;
+END_FOR
+```
+
+30 instance tek döngüde; instance pointer'ı cache'lenir, çağrı overhead'i minimuma iner.
+
+## Derin Teknik Detay
+
+### FB Instance = Veri + Davranış Pointer'ı
+
+Bir FB instance, perde arkasında bir **veri bloğu** (VAR_INPUT/OUTPUT/VAR alanları ardışık bellekte) + ortak bir **kod gövdesi**dir. `fbMotor1(...)` çağrısı aslında "bu instance'ın veri bloğunun adresini ortak FB koduna geçir"dir. Bu yüzden:
+- N instance, N veri bloğu + 1 kod kopyası (bellek verimli).
+- Instance'ın adresi `ADR(fbMotor1)` ile alınabilir, `POINTER TO FB_Motor` ile gezilebilir.
+- OOP'ta `THIS^` tam olarak "şu anki instance'ın veri bloğu pointer'ı"dır.
+
+Bu model, C++'taki "nesne = veri + vtable pointer" modelinin PLC karşılığıdır; CODESYS OOP bunun üzerine inşa edilir.
+
+### Encapsulation Neden Determinizmle İlgili
+
+"FB global'e yazmasın, sadece output'a yazsın" kuralı estetik değil; **veri akış yönünü tek yönlü** kılar (fundamentals/_synthesis akış modeli). FB global'e yazarsa:
+- İki instance aynı global'i ezer (race, son-yazar-kazanır).
+- FB'nin çıktısı artık arayüzünden okunamaz (test edilemez).
+- Veri akışı çok yönlü olur, izlenemez.
+
+Output-only yazım, FB'yi saf bir "girişten çıkışa dönüşüm + iç durum" kutusu yapar — çağıran PROGRAM tek "yazar" olarak global'leri yönetir. Bu, GVL "tek-yazar" kuralının (02_gvl_design) FB seviyesindeki ikizidir.
+
+### ELSE'in Savunma Felsefesi: Tanımsız Durum = Tehlikeli Durum
+
+`CASE ... ELSE: eState := eFault` neden hayati? Çünkü `eState` bir bellek hücresidir; RETAIN bozulması, online change, pointer hatası veya enum'a olmayan değer ataması onu tanımsız bir sayıya (`127`) sürükleyebilir. ELSE'siz bir CASE, tanımsız durumda **hiçbir dalı çalıştırmaz** → output'lar son değerlerinde donar → makine "ne TRUE ne FALSE" belirsizliğinde hareket eder. ELSE, "bilmediğim her durumda güvenli duruma kaç" diyen savunma hattıdır — fail-safe tasarımın CASE seviyesindeki ifadesi. Bu, fundamentals'taki determinizm felsefesinin ("her yol öngörülebilir olmalı") kod-seviyesi uygulamasıdır.
+
+### Her Scan Çağrı Zorunluluğunun Kökü
+
+TON/CTU/R_TRIG gibi bloklar **kendi `.ET`/`.CV`'lerini çağrıldıkları anda günceller** — iç zaman tabanları yoktur, çağrı sıklığına göre ilerlerler (bkz. task-structure/01 Not 5). Koşullu çağrı, bu blokların zamanını dondurur. Bu yüzden FB'lerin `bEnabled` gibi bir girişle "her scan çağrıl, davranışı parametreyle kontrol et" deseni temeldir: çağrının kendisi zaman tabanını besler, mantık girişle yönetilir. "Her scan koşulsuz çağır" kuralı, IEC zamanlayıcı bloklarının çağrı-güdümlü doğasının doğrudan sonucudur.
 
 ## İlgili Konular
 
