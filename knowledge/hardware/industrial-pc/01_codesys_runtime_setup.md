@@ -2,8 +2,8 @@
 KONU        : Endüstriyel PC'ye CODESYS Runtime Kurulumu
 KATEGORİ    : hardware
 ALT_KATEGORI: industrial-pc
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Control/_rtsl_install_runtime_on_controller.html"
     başlık: "CODESYS Control — Installing the Runtime on the Controller (Resmi Dokümantasyon)"
@@ -453,6 +453,69 @@ Bir devreye alma anında CODESYS lisans sunucusu erişilemezdi. Acil çözüm: d
 
 **Not 5 — Windows Update ve Win SL**
 Win SL ile test ortamı kuran bir ekip, gece otomatik Windows Update tetiklenmesi ve servis yeniden başlaması nedeniyle test sürecini kaybetti. Üretimde veya uzun süreli test ortamlarında Windows Update otomatik güncelleme **mutlaka devre dışı** bırakılmalı.
+
+**Not 6 — CodeMeter Servisi Boot Yarışı (Race Condition)**
+Bir IPC'de runtime boot'ta sporadik olarak demo moduna düşüyordu; yeniden başlatınca lisans bulunuyordu. Kök neden: `codesyscontrol.service` ile `codemeter.service` aynı anda başlatılıyor, runtime CodeMeter container'ı henüz hazır olmadan lisansı sorguluyordu. CodeMeter ilk açılışta lisans dosyalarını okuyup CmContainer'ı RAM'e map ediyor; bu birkaç yüz ms sürüyor. Çözüm: override.conf içine `After=codemeter.service` + `Requires=codemeter.service` eklemek. `systemctl list-dependencies codesyscontrol` ile bağımlılık zincirini doğrula. Bu yarış özellikle SSD'li hızlı boot eden sistemlerde daha sık görülür çünkü servisler neredeyse eşzamanlı başlar.
+
+**Not 7 — apt full-upgrade Runtime Binary'sini Değiştirmedi ama .cfg'yi Ezdi**
+Bir bakım penceresinde `apt full-upgrade` çalıştırıldığında CODESYS deb paketi güncellendi; paketin postinst scripti `/etc/codesyscontrol/CODESYSControl.cfg` dosyasını **dağıtılan varsayılan ile değiştirdi** (dpkg conffile davranışı değil, manuel kopyalama yapıyor). Sonuç: tüm NIC/affinity/RT ayarları kayboldu, runtime tüm arayüzlerden gateway yayınlamaya başladı. Ders: özel ayarlar `CODESYSControl_User.cfg` (override dosyası) içinde tutulmalı — bu dosya paket güncellemesinde korunur. Ana `.cfg` dosyasını minimum tutup tüm site-özel ayarları User.cfg'ye taşı. Güncelleme öncesi her iki dosyayı da yedekle.
+
+**Not 8 — Sürüm Farkı: v4.x ile v3.5 Servis Adı ve Binary Yolu**
+Eski projelerde CODESYS Control V3 (`/opt/codesys/...`, servis `codesyscontrol`) ile yeni V4 SL (Deploy Tool ile gelen, bazı dağıtımlarda `codesyscontrol_*` instance bazlı servis isimleri) karıştırılıyor. V4 SL'de birden fazla runtime instance aynı IPC'de çalışabilir; her instance kendi config dizinine (`/var/opt/codesys/<instance>/`) sahiptir. Eski script'lerde sabit kodlanmış `/etc/codesyscontrol/CODESYSControl.cfg` yolu V4 multi-instance kurulumda yanlış instance'ı hedefleyebilir. Devreye almadan önce `systemctl status` ve `ps aux | grep codesys` ile gerçek binary yolu ve config dizini teyit edilmeli.
+
+## Edge Case'ler ve Sistem Limitleri
+
+CODESYS runtime kurulumu "çalışıyor / çalışmıyor" ikiliğinin ötesinde, sınır koşullarında öngörülemeyen davranışlar sergiler. Aşağıdaki tablo saha deneyiminde karşılaşılan limit ve edge case'leri özetler:
+
+| Edge Case | Davranış | Limit / Eşik | Önlem |
+|---|---|---|---|
+| Demo mod expiry tam saat sınırında | Runtime 2 saatte tam durur; uygulama çıkışları **son değerde donar** (fail-safe değil) | 7200 s ± birkaç s | Demo modda asla fiziksel aktüatör bağlama |
+| CodeMeter container bozulması | Lisans "geçersiz" değil "bulunamadı" olur; demo'ya düşer | `.WibuCmRaU` corrupt | `cmu --list-content` ile container bütünlüğü kontrol |
+| Sistem saati geriye atlaması (NTP düzeltmesi) | CmActLicense süreli lisanslarda lisans erken bitebilir | Saat farkı > lisans toleransı | `timedatectl set-ntp` boot'ta, lisans aktivasyonundan önce |
+| Disk doluluğu (`/var/opt/codesys` %100) | Boot project yazılamaz; runtime başlar ama uygulama yüklenemez | inode veya blok tükenmesi | `/var` ayrı partition + monitoring |
+| Çok küçük RAM (< 512 MB) | Runtime başlar ama büyük uygulama RETAIN bölgesi alloc edemez | platform bağımlı | Hedef RAM ≥ 1 GB önerilir |
+| 32-bit vs 64-bit deb karışımı | `dpkg` mimari uyumsuzluğunda sessizce yanlış paket | `dpkg --print-architecture` | Mimariyi kurulumdan önce doğrula |
+| Saat dilimi / UTC karmaşası | Log timestamp'leri ve RTC tabanlı zamanlayıcılar kayar | yerel saat vs UTC | IPC'leri UTC'de tut, SCADA'da çevir |
+
+**Lisans modeli sınırları:** Soft Container lisansı yalnızca *ilk* NIC'in (genelde en düşük PCI/bus numaralı) MAC adresine bağlanır. IPC'de birden fazla NIC varsa, BIOS/kernel'ın NIC enumerasyon sırası değiştiğinde (BIOS update, NIC ekleme) "ilk NIC" değişebilir ve lisans geçersiz olur. Bu, fiziksel olarak NIC değişmese bile yaşanabilen sinsi bir durumdur.
+
+**Demo mod ve fonksiyonel güvenlik:** Demo modda çalışan runtime durduğunda çıkışlar fail-safe değildir; PROFIsafe/FSoE gibi güvenlik katmanları olmadan çıkışlar son değerde kalır. Bu, demo modda sahada fiziksel test yapmanın neden tehlikeli olduğunun teknik gerekçesidir.
+
+## Optimizasyon
+
+Kurulum aşamasında alınan kararlar, sonraki performans ve güvenlik aşamalarının tavanını belirler. Kurulumu "ilk seferde doğru" yapmanın optimizasyon stratejisi:
+
+**1. Minimal OS yüzeyi (boot süresi ve jitter tavanı):**
+```bash
+# Headless server kurulumu; gereksiz servisleri kaldır
+sudo systemctl disable --now snapd ModemManager bluetooth cups avahi-daemon
+sudo apt-get purge -y snapd            # snap, periyodik refresh ile jitter kaynağı
+# Boot süresini analiz et — runtime'ın ne kadar geç başladığını gör
+systemd-analyze blame | head -20
+systemd-analyze critical-chain codesyscontrol.service
+```
+snapd özellikle önemlidir: arka planda periyodik `snap refresh` mount/unmount işlemleri yapar ve bu I/O jitter'ı RT görevlere yansır.
+
+**2. Config'i katmanlı yönet (bakım maliyeti):** Site-özel ayarları `CODESYSControl_User.cfg`'ye, varsayılanları ana `.cfg`'ye koy. Bu, paket güncellemelerinde ayar kaybını önler (bkz. Not 7) ve Ansible ile yalnızca tek dosyayı template'lemeyi sağlar.
+
+**3. Boot project ön-derleme:** Büyük uygulamalarda runtime, boot project'i ilk başlatmada derler/yükler; bu boot süresini uzatır. `Bootproject.RetainMismatch.Init` ve önceden derlenmiş boot project ile soğuk başlatma hızlandırılır. Üretimde IPC güç kesintisi sonrası **runtime'ın ne kadar sürede çıkış verdiği** (recovery time) ölçülmeli ve proses gereksinimine göre optimize edilmeli.
+
+**4. Lisans yedekleme otomasyonu:**
+```bash
+# CmContainer'ı periyodik yedekle (cron veya systemd timer)
+cmu --export-license --file /backup/cm_$(hostname)_$(date +%F).WibuCmRaU --all
+```
+Bu yedek, NIC arızası/değişimi sonrası hızlı kurtarma sağlar; manuel re-aktivasyon (lisans sunucusu erişimi) gerektirmez.
+
+## Derin Teknik Detay
+
+**Neden CodeMeter ve neden MAC'e bağlama?** CODESYS lisanslama, Wibu-Systems CodeMeter altyapısını kullanır. Soft Container (CmActLicense), donanıma bağlanmak için bir "binding scheme" kullanır; varsayılan şema NIC MAC adresi, disk seri numarası ve CPU bilgisi gibi donanım parmak izlerinin bir kombinasyonudur. Bu tasarımın amacı, lisansın kopyalanıp başka makinede çalıştırılmasını (license piracy) engellemektir. Dezavantajı, donanım değişiminin lisansı kırmasıdır — bu yüzden kritik sistemlerde fiziksel CmDongle tercih edilir: dongle, parmak izini USB token'ın güvenli elemanında taşır, host donanımından bağımsızdır.
+
+**Runtime'ın Linux'taki süreç modeli:** `codesyscontrol` binary'si tek bir Linux süreci içinde çok sayıda POSIX thread çalıştırır. IEC görevleri ayrı kernel thread'leri değil, runtime'ın kendi zamanlayıcısının (CmpSchedule) yönettiği thread'lerdir. Runtime ana thread'i SCHED_FIFO önceliğiyle çalışır (`[SysProcess] RealTimePriority`), ve CmpSchedule `SchedulerInterval` periyodunda IEC görevlerini tetikler. Bu mimari, runtime'ın OS scheduler'a değil kendi deterministik zamanlayıcısına dayanmasını sağlar — bu da neden PREEMPT_RT + SCHED_FIFO kombinasyonunun kritik olduğunu açıklar: runtime ana thread'i kesilirse tüm IEC görevleri gecikir.
+
+**Neden gateway ayrı bir bileşen (CmpGwServer)?** CODESYS mimarisinde IDE doğrudan runtime'a değil, bir Gateway katmanına bağlanır (TCP 1217). Gateway, birden fazla runtime instance'a tek bir noktadan yönlendirme (routing) yapabilir ve runtime ile IDE arasında protokol soyutlaması sağlar. Bu, bir IDE'nin tek gateway üzerinden ağdaki birçok PLC'ye ulaşmasını mümkün kılar (block driver routing). Alternatif tasarım (IDE'nin doğrudan runtime'a bağlanması) basit olurdu ancak çok-cihazlı dağıtık keşif ve routing yeteneğini kaybederdi. Bu yüzden gateway, headless IPC'de bile runtime ile aynı süreçte gömülü olarak çalışır.
+
+**Deb paketi vs Deploy Tool — altta ne farklı?** Deploy Tool, SSH üzerinden hedefe bağlanıp aslında aynı deb paketini transfer edip `dpkg` ile kuran bir orkestratördür; ek olarak hedefin mimarisini (x86/ARM) tespit edip doğru paketi seçer ve servis kurulumunu doğrular. Yani altta yatan mekanizma aynıdır; Deploy Tool sadece bu adımları IDE'den otomatize eder. Bu nedenle CI/headless ortamda manuel `dpkg` tamamen eşdeğer ve denetlenebilir bir yoldur.
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : Endüstriyel PC — SoftPLC Platformuna Giden Yol (Sentez)
 KATEGORİ    : hardware
 ALT_KATEGORI: industrial-pc
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/hardware/industrial-pc/01_codesys_runtime_setup.md"
     başlık: "CODESYS Runtime Kurulumu"
@@ -62,6 +62,30 @@ BAĞLANTILAR :
 Bu sentez, "Kutudan çıkmış bir endüstriyel PC'yi üretim ortamında çalışan, gerçek zamanlı, ağa bağlı, güvenli ve güvenilir bir SoftPLC platformuna nasıl dönüştürürüm?" sorusunun bütünsel yanıtıdır.
 
 Üç belge zorunlu bir silsiledir: **Runtime kurulumu (01)** ham donanımı IEC 61131-3 yürütücüsüne dönüştürür; **ağ yapılandırması (02)** fieldbus ve IT trafiğini fiziksel ve mantıksal olarak ayırarak güvenli iletişimi sağlar; **performans tuning (03)** OS ve donanım seviyesinde jitter kaynaklarını ortadan kaldırarak ölçülebilir gerçek zamanlı davranış garanti eder. Bu üç aşamanın tamamı uygulanmadan bir IPC "SoftPLC" değil, sadece Linux üzerinde çalışan bir yazılımdır.
+
+### Birleştirici İlke: Determinizm Zinciri
+
+Bu üç belgenin görünürdeki konuları farklıdır (kurulum, ağ, tuning) ama hepsini birbirine bağlayan **tek bir mühendislik teması** vardır: bir IEC görevinin tam zamanında, her zaman, en kötü durumda bile çalışmasını sağlamak. Bu, fiziksel donanımdan IEC görevine uzanan kesintisiz bir **determinizm zinciridir** — ve bir zincir en zayıf halkası kadar güçlüdür:
+
+```
+BIOS C-states / SMI        →  donanım/firmware CPU'yu kaçırmasın
+        ↓
+isolcpus + nohz_full       →  OS o çekirdeği başka işe vermesin, tick atmasın
+        ↓
+PREEMPT_RT kernel          →  kernel kodu RT görevi bloke etmesin (rt_mutex, threaded IRQ)
+        ↓
+IRQ affinity + priority    →  donanım kesmesi RT görevi preempt etmesin
+        ↓
+SCHED_FIFO RT priority     →  RT görev OS scheduler'da en üstte kalsın
+        ↓
+NIC offload/coalescing off →  fieldbus frame'i ağ katmanında gecikmesin (zincirin ağ tarafı)
+        ↓
+IEC Task (CmpSchedule)     →  sonuç: deterministik scan cycle, ölçülebilir düşük jitter
+```
+
+Her halka kendi belgesinde detaylanır: BIOS/SMI/isolcpus/IRQ/SCHED_FIFO → **03**; NIC offload/coalescing/QDISC bypass → **02**; runtime'ın SCHED_FIFO ana thread'i ve CmpSchedule modeli → **01**. Bir halka eksikse (örn. RT kernel var ama BIOS C-state açık), zincir kopar ve worst-case jitter zincirin en zayıf halkası tarafından belirlenir. Bu yüzden "kısmi tuning" çoğu zaman ölçülebilir kazanç vermez: maskeleme etkisi.
+
+**Determinizm tavanı ilkesi:** Zincirin tepesinde (IEC görev) ulaşılabilecek en iyi worst-case, en alttaki donanım/firmware halkası (SMI, cache, bellek latency) tarafından sınırlanır. Yazılım hiçbir zaman donanım tavanının altına inemez — bu yüzden donanım seçimi (RT-aware endüstriyel anakart, Intel NIC, yeterli çekirdek) tüm yazılım tuning'inden *önce* gelen ve tavanı belirleyen karardır.
 
 ## Nasıl Çalışır
 
@@ -251,6 +275,69 @@ Linux.DisableFpuOverflowException=1
 | CODESYS Exec% | < %70 | %70–%80 | > %80 | Task Monitor → Max Cycle Time / Cycle Time |
 | Jitter Max (Task Monitor) | ≤ 20µs | ≤ 100µs | > 100µs | IDE online mod → Task Config → Monitor |
 | Demo mod | — | — | 2 saat sonra durur | `journalctl -u codesyscontrol \| grep demo` |
+
+### F. Konsolide Edge-Case Tablosu (Üç Belgeden — Uzman)
+
+"Her şeyi kitabına göre yaptım ama hâlâ sorun var" sınıfı, üç belgeden derlenmiş sınır koşulları. Hangi belgenin derinleştirdiği parantezde:
+
+| Edge Case | Belirti | Kök Mekanizma | Teşhis / Önlem |
+|---|---|---|---|
+| SMI / SMM girişi (03) | Açıklanamayan periyodik 250µs+ spike | Firmware, OS-görünmez, NMI-üstü | `hwlatdetect`, `turbostat --show SMI`; RT-aware BIOS |
+| CodeMeter boot yarışı (01) | Boot'ta sporadik demo moduna düşme | Servis başlatma race | override: `After/Requires=codemeter.service` |
+| apt upgrade .cfg ezdi (01) | Tüm NIC/RT ayarları kayboldu | postinst config kopyalama | Ayarları `CODESYSControl_User.cfg`'de tut |
+| rp_filter paket düşürme (02) | Ping çalışır, bağlantı kopar | Strict reverse path, asimetrik route | `rp_filter=2`; policy routing |
+| NIC offload + EtherCAT (02) | Sporadik frame/DC sync kaybı | GRO/coalescing frame tamponlar | `ethtool -K ... off`, `-C rx-usecs 0` |
+| RT throttling kotası (03) | Görev sessizce askıya alınır | `sched_rt_runtime_us=950000` | `-1` yap; `perf sched` |
+| Page fault / swap-in (03) | İlk dakikalarda spike, sonra düzelir | demand paging, swap-in | `mlockall`, `swapoff -a` |
+| SL lisans core 0 dönüşü (03) | taskset çalışır görünür, jitter sürer | SL tek-core pinning kısıtı | MC lisansı + Task Groups |
+| NIC enumerasyon → lisans (01) | NIC değişmeden lisans geçersiz | Soft Container ilk-NIC MAC binding | CmDongle; CmContainer yedek |
+| networkd/NM çakışması (02) | IP periyodik resetlenir | İki yönetici aynı NIC | Tek renderer; NM kaldır |
+| VLAN + EtherCAT (02) | EtherCAT başarısız, Modbus çalışır | L2 tag fieldbus frame'i bozar | EtherCAT için ayrı fiziksel NIC |
+| Demo mod fail-safe değil (01) | Durunca çıkışlar son değerde donar | Güvenlik katmanı yok | Demo modda sahada test yapma |
+
+## Uzman Optimizasyon Sıralaması — Determinizm Zinciri Pratiği
+
+Üç belgenin tuning adımları tek bir bağımlılık sırasına oturur. **Sıra kritiktir**: alttaki halka temizlenmeden üsttekinin ölçümü maskelenir. Her adımdan sonra ölç, sonra ilerle; regresyonu izole etmenin tek yolu budur.
+
+```
+ADIM 0  DONANIM SEÇİMİ        → RT-aware endüstriyel anakart, Intel NIC (igb/e1000e),
+        (zincir tavanı)          ≥4 çekirdek. Yazılım bu tavanın altına inemez.   [01]
+
+ADIM 1  BIOS / FIRMWARE       → C-state kapat, SpeedStep kapat, SMI minimize,
+        (donanım halkası)        frekans sabitle (turbo açık ama min=max)         [03]
+        ↳ ÖLÇ: hwlatdetect --duration=120  → firmware tavanını öğren
+
+ADIM 2  PREEMPT_RT KERNEL     → RT kernel kur, preemption modunu doğrula
+        (kernel halkası)         (6.12+ için cmdline/debug, eski için "-rt")      [03]
+        ↳ ÖLÇ: boş sistemde cyclictest → kernel tabanı
+
+ADIM 3  CPU İZOLASYONU        → isolcpus + nohz_full + rcu_nocbs
+        (scheduler halkası)      "1 RT görev = 1 izole çekirdek" (nohz_full şartı) [03]
+        ↳ ÖLÇ: izole çekirdekte cyclictest → izolasyon kazancı
+
+ADIM 4  IRQ AFFINITY+PRIORITY → irqbalance kapat, IRQ→housekeeping core,
+        (kesme halkası)          threaded IRQ priority RT altına çek              [03]
+        ↳ DİKKAT: fieldbus NIC IRQ'su izole core'a DEĞİL, housekeeping'e (Not 7)
+        ↳ ÖLÇ: yük altında cyclictest (stress-ng paralel)
+
+ADIM 5  AĞ KATMANI            → fieldbus NIC offload/coalescing off, QDISC bypass,
+        (zincirin ağ tarafı)     rp_filter ayarı, tek default route               [02]
+        ↳ ÖLÇ: EtherCAT/PROFINET DC sync kaybı sıfır mı
+
+ADIM 6  RT SİSTEM AYARLARI    → sched_rt_runtime_us=-1, swapoff, hugepage off,
+        (askıya alma halkası)    KSM/NUMA balancing off                           [03]
+        ↳ ÖLÇ: uzun yük testi → sessiz askıya alma var mı
+
+ADIM 7  CODESYS UYGULAMA      → RealTimePriority=79, SchedulerInterval ayarı,
+        (zincirin tepesi)        MC lisans + Task Group core pinning              [01+03]
+        ↳ ÖLÇ: Task Monitor Exec% < %70, Jitter Max
+```
+
+**Latency bütçesi disiplini:** Toplam worst-case bütçesini halkalara böl, her birini ayrı ölç, bütçeyi *aşan* halkaya odaklan — her yeri körlemesine optimize etme:
+```
+Toplam (örn. 50µs) = SMI/firmware (hwlatdetect ~5-10) + kernel preempt (boş cyclictest ~5-15)
+                   + IRQ/IPI (yüklü cyclictest ~10-20) + uygulama (CODESYS Jitter Max ~5-10)
+```
 
 ## Pratikte Nasıl Kullanılır
 
@@ -448,6 +535,15 @@ EtherCAT NIC IRQ'su yanlışlıkla izole çekirdeğe (core 3) yönlendirilince E
 
 **Not 8 — Multicore Lisansının Önemi (Belge 03)**
 SL lisanslı 4-çekirdekli sistemde `taskset` ile affinity denenince görünürde çalıştı ancak periyodik jitter spike'ları devam etti. MC deneme lisansıyla Task Groups ataması yapılınca RT görev Core 3'e gerçekten kilitlendi, spike'lar tamamen ortadan kalktı. Performans kritik projelerde MC lisansı başlangıçtan itibaren bütçeye dahil edilmeli.
+
+**Not 9 — SMI: Zincirin En Alt Halkası Tüm Üst Halkaları Yener (Belge 03, Not 7)**
+Tam optimize bir IPC'de cyclictest 12µs ortalama ama saatte birkaç 250µs+ spike veriyordu; hiçbir izole çekirdekte Linux thread'i çalışmadığı için yazılımla açıklanamadı. Kök neden firmware'in tetiklediği SMI — OS'in göremediği, tüm çekirdekleri donduran kesme. `hwlatdetect` ile teşhis edildi. Ders ve birleştirici prensip: determinizm zincirinin tepesindeki (IEC görev) worst-case, en alttaki donanım/firmware halkası tarafından kapatılır. Yazılım tuning'in tavanı firmware'dir; bu yüzden RT-aware endüstriyel donanım seçimi (Belge 01) yazılımdan önce gelir.
+
+**Not 10 — Config'i Katmanlamak: Tek Disiplin, Üç Belgede Kazanç (Belge 01, Not 7)**
+`apt full-upgrade` bir IPC'de `CODESYSControl.cfg`'yi varsayılanla ezdi; NIC bağlama (02), RT priority (03) ve gateway kısıtlaması (01) ayarlarının *hepsi* aynı anda kayboldu ve runtime tüm arayüzlerden açık hale geldi. Tek bir disiplin üç belgenin de ayarını korur: site-özel her şeyi `CODESYSControl_User.cfg`'de tut, ana `.cfg`'yi minimal bırak, güncelleme öncesi yedekle. Bu, ağ güvenliği + RT performans + kurulum bütünlüğünü tek noktadan koruyan birleştirici operasyonel kuraldır.
+
+**Not 11 — Zincirin Ağ Halkası: NIC Offload Tuning RT'nin Parçasıdır (Belge 02, Not 7)**
+EtherCAT DC sync kayıpları yaşayan bir sistemde tüm CPU/RT tuning kusursuzdu; sorun NIC offload (GRO/coalescing) katmanındaydı — frame'ler NIC donanımında tamponlanıp gecikiyordu. Bu, determinizm zincirinin yalnızca CPU/kernel'den ibaret olmadığını, ağ katmanının (Belge 02) da zincirin bir halkası olduğunu gösterir. `ethtool -K ... off` + `-C rx-usecs 0` ile çözüldü. Performans tuning (03) ve ağ yapılandırması (02) ayrı belgeler olsa da aynı determinizm hedefine hizmet eder.
 
 ## İlgili Konular
 

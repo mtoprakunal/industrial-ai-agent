@@ -2,8 +2,8 @@
 KONU        : Endüstriyel PC Ağ Yapılandırması (CODESYS Runtime için)
 KATEGORİ    : hardware
 ALT_KATEGORI: industrial-pc
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Control/_rtsl_start_page.html"
     başlık: "CODESYS Control — Start Page, Port Numaraları Tablosu (Resmi Dokümantasyon)"
@@ -715,6 +715,82 @@ Bazı projelerde Docker yüklü IPC'lerde UFW kuralları Docker tarafından bypa
 
 **Not 6 — Fieldbus NIC'inde Linux Ağ Yığınını Kapatmak**
 EtherCAT kullanılan projelerde fieldbus NIC'inde Linux'un kendi TCP/IP yığınını tamamen kapatmak mümkündür. Bu yaklaşım, fieldbus NIC'ine doğrudan CODESYS sürücüsünün erişmesini sağlar ve maksimum gerçek zamanlı performans sunar. Ancak bu durumda o NIC'e SSH veya başka bir IP servisi ile erişilemez; NIC yalnızca CODESYS sürücüsüne aittir. Uygulama: arayüzü `ip link set enp3s0 down` ile kapatıp CODESYS sürücüsüne bırakmak.
+
+**Not 7 — NIC Offload (GRO/GSO/TSO) ve EtherCAT Çakışması**
+EtherCAT master kullanılan bir IPC'de sporadik frame kayıpları yaşandı; fiziksel kablo ve switch sağlamdı. Kök neden: NIC'in donanım offload özellikleri (Generic Receive Offload, TCP Segmentation Offload) EtherCAT'in raw L2 frame'lerini beklenmedik şekilde tamponluyor/birleştiriyordu. EtherCAT frame'leri offload motorunda gecikince DC (Distributed Clock) senkronizasyonu kayıyordu. Çözüm:
+```bash
+sudo ethtool -K enp3s0 gro off gso off tso off lro off rx-usecs 0
+sudo ethtool -C enp3s0 rx-usecs 0 tx-usecs 0   # interrupt coalescing kapat
+```
+Interrupt coalescing özellikle kritik: NIC, kesmeleri "birkaç frame biriksin sonra kes" mantığıyla geciktirir; RT fieldbus için bu doğrudan jitter'a çevrilir. Fieldbus NIC'inde coalescing sıfırlanmalı.
+
+**Not 8 — Realtek NIC'lerin RT'de Güvenilmezliği**
+Düşük maliyetli IPC'lerdeki Realtek (r8169) NIC'ler EtherCAT/PROFINET RT için sık sorun çıkardı: zayıf Linux sürücü kalitesi, yüksek IRQ latency ve tutarsız timestamping. Aynı projede Intel i210/i350 NIC'e geçince sync kayıpları tamamen bitti. Saha kuralı: RT fieldbus için Intel (igb/e1000e) veya endüstriyel NIC tercih edilmeli; Realtek yalnızca IT/SCADA NIC'i olarak kabul edilebilir. NIC seçimi ağ yapılandırmasından önce gelen bir donanım kararıdır.
+
+**Not 9 — systemd-networkd vs NetworkManager Çakışması**
+Bir Ubuntu IPC'de netplan `renderer: networkd` ile yapılandırıldı ancak sistemde NetworkManager da aktifti; iki servis aynı NIC'i yönetmeye çalışıp IP'yi periyodik olarak resetliyordu, fieldbus zaman zaman kesiliyordu. Teşhis: `networkctl status` ve `nmcli device status` her ikisinin de aynı arayüzü "managed" gösteriyordu. Çözüm: üretim IPC'sinde tek renderer kullan; NetworkManager'ı kaldır veya fieldbus NIC'ini `unmanaged` olarak işaretle. Headless üretimde `systemd-networkd` daha hafif ve deterministiktir.
+
+**Not 10 — VLAN ile Tek Fiziksel NIC Üzerinde IT/Fieldbus Ayrımı Tuzağı**
+Donanımda tek NIC olan bir IPC'de VLAN ile IT ve fieldbus ayrılmaya çalışıldı. Modbus/TCP için sorun olmadı; ancak EtherCAT denendiğinde başarısız oldu çünkü EtherCAT raw L2'de çalışır ve VLAN tag'i CODESYS EtherCAT master'ın frame yapısıyla çakışır. VLAN, IP-tabanlı protokolleri (Modbus/TCP, OPC UA, PROFINET üzerinden bazı senaryolar) mantıksal ayırabilir ancak EtherCAT için fiziksel ayrı NIC zorunludur. VLAN ayrıca paket başına ek işleme (tag insert/strip) getirir, bu da düşük döngülü RT'de marjinal jitter ekler.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Ağ yapılandırması, "ping geçiyor mu" testinin çok ötesinde sınır koşullarında bozulabilir. Aşağıdaki tablo saha deneyiminden derlenmiş edge case'leri özetler:
+
+| Edge Case | Davranış | Limit / Mekanizma | Önlem |
+|---|---|---|---|
+| Çift NIC, aynı subnet (yanlışlıkla) | ARP flux; paketler rastgele NIC'ten çıkar | `rp_filter` ve ARP davranışı | NIC'leri farklı subnet'lere ata |
+| Reverse path filtering (rp_filter=1) | Asimetrik routing'de dönüş paketleri düşer | `net.ipv4.conf.*.rp_filter` | Multi-NIC'te `rp_filter=2` (loose) veya policy routing |
+| MTU uyumsuzluğu (jumbo frame) | Büyük OPC UA/dosya transferi takılır, ping çalışır | path MTU < 1500/9000 | Tüm path'te aynı MTU; PMTUD test |
+| ARP tablosu taşması (büyük fieldbus) | Eski entry'ler düşer, intermittent kayıp | `net.ipv4.neigh.default.gc_thresh*` | gc_thresh değerlerini artır |
+| PROFINET DCP IP üzerine yazma | Statik IP DCP ile resetlenir | `EnableSetIpAndMask` | Sadece device-rol NIC'te aktif |
+| Link flap (kablo/switch sorunu) | Runtime gateway bind'i kaybeder, yeniden bind etmez | NIC carrier down/up | Watchdog + `systemd` restart politikası |
+| Promiscuous mode gereksinimi | ProtocolFilter=3 NIC'i promisc yapar; broadcast yükü artar | ETH_P_ALL semantiği | Yalnızca fieldbus NIC'inde |
+| 802.1p QoS / PCP eksikliği | RT trafiği IT trafiğiyle aynı kuyrukta bekler | switch QoS yok | Managed switch + PROFINET VLAN priority |
+
+**rp_filter — sessiz paket katili:** Linux varsayılan `rp_filter=1` (strict reverse path), bir paketin geldiği arayüz, o kaynağa giden route ile eşleşmiyorsa paketi düşürür. Çift NIC + policy routing senaryolarında bu, "ping çalışıyor ama bağlantı kuruluyor sonra kopuyor" şeklinde teşhisi zor sorunlara yol açar. Multi-NIC IPC'lerde:
+```bash
+# Loose mode (2) veya kapalı (0) — fieldbus NIC için
+sudo sysctl -w net.ipv4.conf.enp3s0.rp_filter=2
+```
+
+**Gateway bind ömrü:** CODESYS gateway, NIC'e boot anında bind olur; link flap sonrası NIC IP'sini geri kazansa bile gateway otomatik yeniden bind etmeyebilir. Bu, IT NIC'inin geçici kopması durumunda IDE erişiminin runtime restart'a kadar gelmemesine yol açar. Üretimde NIC carrier'ı izleyen bir watchdog veya `Restart=on-failure` politikası önerilir.
+
+## Optimizasyon
+
+Ağ optimizasyonu iki ayrı eksende ilerler: **RT fieldbus için latency/jitter minimizasyonu** ve **IT tarafı için güvenli izolasyon**. Bu ikisi çoğu zaman zıt yönde çeker; doğru optimizasyon her NIC'i kendi rolüne göre ayarlamaktır.
+
+**1. Fieldbus NIC — RT latency minimizasyonu:**
+```bash
+# Offload ve coalescing kapat (Not 7) — frame'ler anında işlensin
+sudo ethtool -K enp3s0 gro off gso off tso off
+sudo ethtool -C enp3s0 rx-usecs 0 tx-usecs 0 adaptive-rx off
+# RX/TX ring buffer'ı küçük tut — büyük buffer batching yapar, latency artar
+sudo ethtool -G enp3s0 rx 128 tx 128
+# QDISC bypass — CODESYSControl.cfg [SysEthernet] Linux.PACKET_QDISC_BYPASS=1
+```
+QDISC bypass kritiktir: Linux'un trafik şekillendirme kuyruğu (qdisc) her giden paket için ek işleme ekler. Bypass, CODESYS fieldbus sürücüsünün paketleri doğrudan NIC TX kuyruğuna basmasını sağlar.
+
+**2. Fieldbus NIC IRQ'sunu doğru çekirdeğe yerleştir:** Bu, performans tuning belgesindeki IRQ affinity ile koordine edilmelidir. Kritik nokta (bkz. 03 Not 5): fieldbus NIC IRQ'su **izole RT çekirdeğine değil**, RT görev thread'inin çalıştığı çekirdekle aynı NUMA node'daki bir housekeeping çekirdeğe yerleştirilmeli — böylece NIC kesmesi RT görevi preempt etmez ama cache locality korunur.
+
+**3. IT NIC — güvenlik ve gürültü azaltma:**
+```bash
+# Gereksiz protokolleri kapat (saldırı yüzeyi + broadcast gürültüsü)
+sudo sysctl -w net.ipv6.conf.enp2s0.disable_ipv6=1   # IPv6 kullanılmıyorsa
+# Multicast/IGMP gürültüsünü fieldbus tarafına sızdırma
+```
+
+**4. Switch seviyesinde QoS:** Yazılım optimizasyonunun bir sınırı vardır; RT determinizmi için managed switch'te 802.1p PCP önceliklendirmesi (PROFINET RT için cut-through switching) IPC NIC ayarlarından daha büyük kazanç sağlayabilir. Optimizasyon önceliği: önce NIC seçimi (Intel), sonra offload/coalescing, sonra switch QoS.
+
+## Derin Teknik Detay
+
+**Neden EtherCAT ve PROFINET aynı NIC'i paylaşamaz?** Her ikisi de L2 (Ethernet katmanı) protokolleridir ve NIC'in raw paket arayüzüne (`AF_PACKET`/`PF_PACKET`) özel erişim ister. CODESYS SysEthernet bileşeni, fieldbus için NIC'i `ETH_P_ALL` raw socket ile açar ve tipik olarak promiscuous mode'a alır — NIC'e gelen *tüm* frame'leri yakalar. İki ayrı RT protokol aynı NIC'te bu raw erişimi paylaşamaz çünkü frame demultiplexing belirsizleşir ve her protokolün kendi DC/sync mekanizması diğerinin frame'lerinden etkilenir. Bu, IP-tabanlı protokollerin (port numarasıyla demux edilen) aynı NIC'i paylaşabilmesinin nedenidir de: TCP/UDP soketleri çekirdek tarafından port'a göre ayrıştırılır, raw fieldbus ise ayrıştırılamaz.
+
+**netplan → networkd → kernel zinciri:** netplan bir *üst-seviye soyutlamadır*; YAML'i `renderer`'a göre ya systemd-networkd `.network` dosyalarına ya da NetworkManager bağlantı profillerine çevirir (`netplan generate` bu dönüşümü `/run/systemd/network/` altına yazar). Asıl yapılandırmayı kernel'e uygulayan networkd'dir; netplan boot sonrası bellekte kalmaz. Bu yüzden `networkctl status` ve `/run/systemd/network/` altındaki üretilmiş dosyalar gerçek durumu gösterir — netplan YAML'i sadece "kaynak"tır. `netplan try`'ın geri-alma mekanizması da bu katmanda çalışır: değişikliği uygular, timer kurar, onaylanmazsa önceki networkd state'ini geri yükler.
+
+**Tek default route ilkesinin kernel mekanizması:** İki default route olduğunda kernel, metric (veya filtreleme yoksa ilk eşleşen) route'u seçer; ancak gelen bağlantının dönüş paketi, `rp_filter=1` ile birleşince yanlış NIC'ten çıkmaya çalışır ve düşürülür. Policy-based routing (ayrı routing tabloları + `from` kuralı) bunu çözer: kaynak IP'ye göre doğru tabloyu seçtirir. Bu, neden çift-NIC üretim kurulumunda ya tek default route ya da tam policy routing gerektiğinin altındaki mekanizmadır.
+
+**PROFINET RT ve Ethertype 0x8892 — neden firewall göremez:** PROFINET RT (RT_CLASS_1/2/3) çerçeveleri IP/UDP taşımaz; doğrudan Ethernet header'da Ethertype 0x8892 ile gönderilir. UFW/iptables IP katmanında (L3) çalışır, dolayısıyla bu frame'leri filtreleyemez — `ebtables` (L2 bridge filtering) gerekir. PROFINET'in IP-üstü servisleri (alarm, record data, DCP'nin bazı kısımları) ise farklı mekanizmalar kullanır. Bu mimari ayrım, neden PROFINET güvenliğinin firewall'a değil fiziksel ağ izolasyonuna dayandığını açıklar.
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : Endüstriyel PC'de CODESYS Runtime Gerçek Zamanlı Performans Optimizasyonu
 KATEGORİ    : hardware
 ALT_KATEGORI: industrial-pc
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Control/_rtsl_performance_optimization_linux.html"
     başlık: "CODESYS Control — Performance Optimization (Linux) (Resmi Dokümantasyon)"
@@ -675,6 +675,104 @@ EtherCAT fieldbus kullanan bir sistemde, EtherCAT NIC IRQ'su yanlışlıkla izol
 
 **Not 6 — SchedulerInterval Ayarı Iterasyonu**
 Bir projede varsayılan 1000µs SchedulerInterval ile başlandı; 2ms döngülü görev Exec% %85 gösteriyordu. SchedulerInterval 200µs'ye indirilince Exec% %60'a düştü ve kararlılık iyileşti. Ancak aynı değişiklik farklı bir düşük güçlü ARM sistemde (Cortex-A53) CPU yükünü %95'e çıkardı. SchedulerInterval sisteme özgüdür; her platformda ayrı ayrı optimize edilmeli.
+
+**Not 7 — SMI (System Management Interrupt): Tüm Tuning'i Yenen Görünmez Düşman**
+Tüm optimizasyonlar uygulanmış bir IPC'de cyclictest ortalama 12µs gösterirken, saatte birkaç kez 250µs+ spike'lar çıkıyordu. Bu spike'lar isolcpus/nohz_full ile açıklanamıyordu çünkü hiçbir Linux thread'i o çekirdekte çalışmıyordu. Kök neden: BIOS firmware'inin tetiklediği SMI — CPU'yu SMM (System Management Mode) moduna alan, OS'in göremediği ve maskeleyemediği en yüksek öncelikli kesme. SMI sırasında *tüm* çekirdekler donar; OS bunun farkında bile olmaz. Teşhis:
+```bash
+# hwlatdetect ile SMI/firmware kaynaklı donmaları ölç
+sudo hwlatdetect --duration=120 --threshold=15
+# SMI sayacını izle (Intel)
+sudo turbostat --quiet --show SMI --interval 5
+```
+Çözüm sınırlıdır: BIOS'ta "USB Legacy Support", "ACPI thermal/fan SMI", "Hardware monitoring" gibi SMI üreten özellikleri kapatmak. Bazı tüketici anakartlarda SMI tamamen kapatılamaz — bu yüzden RT için *firmware'i RT-aware* endüstriyel anakart (BIOS'ta SMI minimizasyonu garantili) seçimi donanım aşamasında kritiktir. Ders: yazılım tuning'in bir tavanı var; tavanı firmware belirler.
+
+**Not 8 — mlockall Yapılmayan Runtime'da Page Fault Jitter'ı**
+cyclictest `--mlockall` ile mükemmel sonuç verirken gerçek CODESYS uygulaması ilk dakikalarda sporadik spike'lar gösterdi, sonra düzeldi. Neden: uygulama belleği henüz fiziksel RAM'e map edilmemişti; ilk erişimde major page fault oluşuyordu. CODESYS runtime kendi belleğini kilitler ancak büyük dinamik bellek (CAA Memory blokları, büyük diziler) ilk dokunuşta fault üretebilir. Önlem: `vm.swappiness=10` yetmez, üretimde swap'ı tamamen kapat (`swapoff -a`) — RT sistemde swap-in gecikmesi onlarca milisaniye olabilir. Ayrıca büyük bufferları başlatma (INIT) aşamasında bir kez "dokunarak" RAM'e zorla.
+
+**Not 9 — Kernel 6.12 PREEMPT_RT Mainline ile -rt Paketi Davranış Farkı**
+Kernel 6.12'de PREEMPT_RT mainline'a girdikten sonra bir ekip eski Debian `linux-image-rt-amd64` (6.1-rt) reflekslerini yeni kernel'e uyguladı ve `CONFIG_PREEMPT_RT=y` doğrulaması beklenenden farklı çıktı: 6.12+ kernel'de preemption modeli boot-time seçilebilir hale geldi (`preempt=full` cmdline). Doğrulama artık `uname -r`'da "-rt" aramaktan ibaret değil:
+```bash
+# 6.12+ için runtime preemption modunu kontrol et
+cat /sys/kernel/debug/sched/preempt   # veya dmesg | grep -i preempt
+journalctl -k | grep -i "rt:"
+```
+Eski belge/forum kaynakları hâlâ ayrı "-rt" kernel paketi varsayar; dağıtıma ve kernel sürümüne göre doğrulama yöntemi değişir. Üretimde kullanılan tam kernel sürümünü ve gerçek preemption modunu belgele.
+
+**Not 10 — Turbo Boost Kapatınca Throughput Düştü, Jitter İyileşti — Trade-off**
+Yoğun matematik (çok eksenli kinematik) içeren bir uygulamada Turbo Boost BIOS'ta kapatıldıktan sonra jitter iyileşti ama Max Cycle Time **arttı** çünkü CPU artık tek çekirdekte turbo frekansa çıkamıyordu ve ağır hesaplama base clock'ta daha uzun sürüyordu. Sonuç: Exec% %60'tan %78'e çıktı. Çözüm: turbo'yu açık bırakıp bunun yerine tüm çekirdekleri sabit yüksek frekansa kilitlemek (`intel_pstate=disable` + performance governor + min=max frekans). Jitter, frekansın *değişmesinden* kaynaklanır; yüksek sabit frekans hem düşük jitter hem yüksek throughput verir. Turbo'yu kapatmak körü körüne uygulanmamalı; hesaplama-yoğun uygulamalarda sabit-yüksek-frekans daha iyidir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+RT tuning, sistemin doğrusal davranmadığı sınır bölgelerinde sürprizler barındırır. Aşağıdaki tablo, "her şeyi doğru yaptım ama hâlâ spike var" sınıfı sorunların altındaki edge case'leri özetler:
+
+| Edge Case | Davranış | Mekanizma / Limit | Önlem / Teşhis |
+|---|---|---|---|
+| SMI / SMM girişi | Tüm çekirdekler donar, OS göremez | Firmware, NMI-üstü | `hwlatdetect`, `turbostat --show SMI` |
+| Page fault (mlock yok) | İlk erişimde major fault spike | swap-in, demand paging | `mlockall`, `swapoff -a` |
+| RT throttling kotası | Görev sessizce askıya alınır | `sched_rt_runtime_us=950000` | `-1` yap; `perf sched` |
+| Cache thrashing (L2/L3 paylaşımı) | İzole çekirdekte bile jitter | shared LLC, başka core'un workload'u | CAT (Cache Allocation Technology) varsa partition |
+| nohz_full housekeeping kotası | 1 saniyede 1 tick yine de gelir | dyntick tam sıfırlanmaz | kabul et; jitter bütçesine dahil |
+| Thermal throttling | Frekans aniden düşer, jitter patlar | TjMax aşımı | termal tasarım; `turbostat` sıcaklık izle |
+| C-state exit latency | C6'dan dönüş yüzlerce µs | `cpuidle` exit_latency | `processor.max_cstate=1` + BIOS |
+| IRQ storm (arızalı cihaz) | Housekeeping core %100, dolaylı jitter | bozuk NIC/USB cihaz | `/proc/interrupts` artış izle |
+| Çok az çekirdek (2-core) | isolcpus housekeeping'i boğar | 1 core OS'e yetmez | min 4 core RT izolasyonu için |
+| MC lisans yok + multi-task | Görevler core 0'a toplanır | SL tek-core pinning kısıtı | MC lisansı |
+
+**isolcpus'un kendi limiti:** `isolcpus` çekirdeği *zamanlayıcı dengelemeden* izole eder ama kernel'in bazı global işlemleri (TLB shootdown, IPI — Inter-Processor Interrupt, `on_each_cpu()` çağrıları) yine de izole çekirdekleri keser. Örneğin başka bir çekirdekte yapılan bir bellek unmap işlemi, izole çekirdeğe TLB shootdown IPI gönderir. Bu, izolasyonun *mutlak değil* olduğunun teknik gerçeğidir; `nohz_full` ile birlikte minimize edilir ama sıfırlanamaz.
+
+**Determinizm tavanı:** Yazılım tuning ile ulaşılabilecek en iyi worst-case jitter, donanım/firmware tarafından belirlenir (SMI, cache mimarisi, bellek latency). Tüketici donanımında ~50-100µs taban varken, RT-aware endüstriyel donanımda <10µs mümkündür. Bu yüzden donanım seçimi tuning'den önce gelir.
+
+## Optimizasyon
+
+RT optimizasyonunun en kritik ilkesi **sıralamadır**: katmanlar belirli bir bağımlılık sırasına göre uygulanmalı, çünkü alttaki katman atlanırsa üsttekinin etkisi maskelenir veya ölçülemez. Determinizm zinciri aşağıdan yukarı kurulur:
+
+**Uzman optimizasyon sıralaması (her adımdan sonra ölç, sonra ilerle):**
+
+```
+1. DONANIM/BIOS    → C-state kapat, SpeedStep kapat, SMI minimize, frekans sabitle
+   (ölç: hwlatdetect — firmware tavanını öğren; bu senin teorik limitin)
+        │
+2. PREEMPT_RT      → RT kernel kur, preemption modunu doğrula
+   (ölç: boş sistemde cyclictest — kernel tabanı)
+        │
+3. isolcpus/nohz   → RT çekirdekleri izole et, tickleri durdur
+   (ölç: cyclictest izole çekirdekte — izolasyon kazancı)
+        │
+4. IRQ affinity    → irqbalance kapat, IRQ'ları housekeeping'e topla
+   (ölç: yük altında cyclictest — IRQ jitter kalktı mı)
+        │
+5. RT throttling   → sched_rt_runtime_us=-1, swap kapat, hugepage kapat
+   (ölç: uzun süreli yük testi — sessiz askıya alma var mı)
+        │
+6. CODESYS task    → RealTimePriority, MC lisans + Task Group pinning
+   (ölç: Task Monitor Exec% + Jitter Max — uygulama seviyesi)
+```
+
+**Neden bu sıra?** Her adım bir önceki katmanın gürültüsünü ortadan kaldırdığı için, ölçüm ancak alttaki katman temizlendikten sonra anlamlıdır. Örneğin IRQ affinity'yi (4) RT kernel (2) olmadan ayarlarsan, kernel preemption gürültüsü IRQ kazancını gizler ve "IRQ ayarı işe yaramadı" yanlış sonucuna varırsın. Adım atlamadan ilerlemek, regresyonun hangi katmandan geldiğini de izole eder.
+
+**Latency bütçesi yaklaşımı (uzman pratiği):** Toplam jitter bütçesini katmanlara böl ve her birini ayrı ölç:
+```
+Toplam worst-case bütçe (örn. 50µs) =
+    SMI/firmware tavanı (hwlatdetect)          ~5-10µs
+  + kernel preemption (boş cyclictest)         ~5-15µs
+  + IRQ + IPI (yük altında cyclictest)         ~10-20µs
+  + uygulama scheduling (CODESYS Jitter Max)   ~5-10µs
+```
+Hangi katman bütçeyi aşıyorsa oraya odaklan; her yeri körlemesine optimize etme.
+
+**CPU partitioning ileri tekniği:** Çok çekirdekli sistemde `isolcpus` yerine cgroup v2 `cpuset` controller ile dinamik partition daha esnektir; ayrıca Intel RDT/CAT destekli CPU'larda Last-Level Cache'i RT çekirdek için ayırmak (cache partitioning) shared-LLC thrashing jitter'ını azaltır — bu, tüm çekirdek ve thread doğru pinlenmiş ama hâlâ açıklanamayan jitter olan ileri senaryolarda son çaredir.
+
+## Derin Teknik Detay
+
+**PREEMPT_RT içsel mekanizması — neden spinlock dönüşümü?** Standart Linux'ta `spinlock_t`, tutulduğu sürece preemption'ı kapatır (kritik bölge boyunca o çekirdekte hiçbir görev araya giremez). Bir yüksek öncelikli RT görev, düşük öncelikli bir görevin tuttuğu spinlock yüzünden çekirdek kodunda *milisaniyelerce* bekleyebilir — bu unbounded latency, gerçek zamanlılığın baş düşmanıdır. PREEMPT_RT, çoğu `spinlock_t`'i uyuyabilen `rt_mutex`'e dönüştürür: kilit tutulurken preemption açık kalır, yüksek öncelikli görev araya girebilir. Bedeli, kilidin uykuya dalma/uyanma maliyeti (context switch) ve priority inheritance defteri tutma yüküdür — bu yüzden PREEMPT_RT *ortalama* throughput'u düşürür ama *worst-case* latency'yi dramatik iyileştirir. RT'de önemli olan ortalama değil, en kötü durumdur.
+
+**Priority inheritance — öncelik terslemesi çözümü:** Klasik öncelik terslemesi: düşük öncelikli L görevi bir mutex tutarken, orta öncelikli M görevi L'yi preempt eder, bu sırada yüksek öncelikli H görevi mutex'i bekler — H, M tarafından dolaylı olarak bloke edilmiştir. `rt_mutex`'in priority inheritance'ı: H mutex'i beklemeye başladığında L'nin önceliği geçici olarak H'ye yükseltilir, böylece M, L'yi preempt edemez ve L mutex'i hızla bırakır. Bu mekanizma, CODESYS runtime thread'leri ile kernel thread'leri arasındaki kilit etkileşimlerinde determinizmi korur.
+
+**nohz_full'ün gerçek davranışı:** "Tickless" yanıltıcıdır — nohz_full çekirdekte tek bir runnable görev varken periyodik timer tick'ini kapatır, ama saniyede *bir* tick yine de gelir (RCU ve scheduler bookkeeping için zorunlu minimum). İki veya daha fazla runnable görev olduğunda tick geri döner (scheduler bunları ayırmak için tick'e ihtiyaç duyar). Bu yüzden izole çekirdekte **tam olarak bir** RT thread çalışması kritiktir; ikinci bir runnable görev nohz_full'ü etkisiz kılar. İşte bu, "bir RT görev = bir izole çekirdek" kuralının altındaki mekanizmadır.
+
+**SCHED_FIFO vs SCHED_RR vs SCHED_DEADLINE — neden FIFO?** CODESYS SCHED_FIFO kullanır: aynı öncelikteki görevler arasında zaman dilimleme (time-slicing) yapmaz, görev ya gönüllü bırakana ya da daha yüksek öncelikli görev gelene kadar çalışır. SCHED_RR ise aynı öncelikte round-robin yapar (gereksiz context switch jitter'ı). SCHED_DEADLINE (EDF tabanlı) teorik olarak en iyisidir ama CODESYS'in sabit-periyotlu zamanlayıcı modeline FIFO daha doğrudan eşlenir — runtime kendi CmpSchedule'ı ile periyodu yönetir, kernel'den sadece "kesintisiz çalışma hakkı" ister. Bu yüzden FIFO seçilmiştir.
+
+**IRQ thread'leştirme (threaded IRQs):** PREEMPT_RT'de donanım kesme işleyicileri (top-half) minimal tutulur ve asıl iş, önceliklendirilebilir bir kernel thread'e (`irq/N-devname`) taşınır. Bu, bir IRQ işleyicisinin RT görevden daha düşük önceliğe ayarlanmasını mümkün kılar — standart kernel'de imkansızdır çünkü IRQ her zaman görevi keser. Pratik sonuç: kritik olmayan bir cihazın IRQ thread'inin önceliğini RT görevinin altına çekebilirsin (`chrt -f -p <prio> $(pgrep -f irq/24)`), böylece o IRQ RT görevi bekletmez. Bu, IRQ affinity'den (hangi çekirdek) farklı ve onu tamamlayan bir kontrol eksenidir (hangi öncelik).
 
 ## İlgili Konular
 
