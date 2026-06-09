@@ -2,8 +2,8 @@
 KONU        : JavaScript ile OPC-UA İstemci Geliştirme
 KATEGORİ    : hmi
 ALT_KATEGORI: web-based
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://node-opcua.github.io/"
     başlık: "NodeOPCUA — Official Site and API Documentation"
@@ -591,6 +591,90 @@ Farklı CODESYS runtime versiyonları farklı namespace index atayabilir. Hardco
 
 **Not 3 — Session Timeout'unu Doğru Ayarlamak**  
 CODESYS varsayılan session timeout 30 saniye. WebSocket aracılığıyla bağlanan bir HMI'ın arka planı bu timeout'tan etkilenebilir. `requestedSessionTimeout: 3600000` (1 saat) ile session bakımı için yeterli süre tanındı.
+
+**Not 4 — RevisedPublishingInterval ≠ Requested**  
+`requestedPublishingInterval: 500` ile subscription kuruldu ama sunucu `revisedPublishingInterval: 1000` döndürdü; sunucunun min PublishingInterval limiti 1000ms idi. Frontend "veri geç geliyor" diye şikayet etti. Çözüm: subscription kurulduktan sonra `subscription.publishingInterval` (revised değer) loglanmaya başlandı. Sunucunun revize ettiği değerler (publishingInterval, maxKeepAliveCount, lifetimeCount) requested değerden farklı olabilir — her zaman revised değeri esas al.
+
+**Not 5 — Bağlantı Yeniden Kurulunca MonitoredItem'lar Kayboldu**  
+node-opcua `connection_reestablished` olayında session otomatik yeniden kuruluyordu ama bazı CODESYS sürümlerinde sunucu eski subscription'ı düşürdü; `item.on("changed")` bir daha hiç ateşlenmedi (sessiz başarısızlık). Çözüm: `subscription.on("terminated")` ve `keepalive` sayacı izlendi; belirli süre keepalive gelmezse subscription manuel `recreateSubscriptionAndMonitoredItem()` ile yeniden kuruldu. node-opcua 2.x'te `subscription.recreateSubscriptionAndMonitoredItem()` mevcut; eski sürümlerde manuel re-monitor gerekiyordu.
+
+**Not 6 — DataType Mismatch ile Sessiz Write Reddi**  
+`writeSingleNode(nodeId, { dataType: "Double", value: 65 })` çağrısı `Bad_TypeMismatch` döndürdü çünkü PLC değişkeni `REAL` (Float, 32-bit) idi, Double değil. node-opcua otomatik dönüşüm yapmaz. Çözüm: yazma öncesi node'un `DataType` attribute'u bir kez okunup cache'lendi (`Float` → `dataType: "Float"`). LREAL ise Double, REAL ise Float kullan — karıştırma `Bad_TypeMismatch` üretir.
+
+**Not 7 — Çok Hızlı samplingInterval ile Sunucu Reddi**  
+Bir tag için `samplingInterval: 10` (10ms) istendi; sunucu `revisedSamplingInterval: 250` döndürdü (sunucunun donanım okuma çevrimi 250ms). 10ms beklentisiyle yazılan throttle mantığı boşa çıktı. Kural: samplingInterval, PLC'nin fiziksel I/O okuma çevriminden (task interval) daha hızlı olamaz; revised değeri kontrol et, donanımın altına inme.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Web HMI backend'i olarak node-opcua kullanırken karşılaşılan sınırlar genelde **sunucu (PLC) tarafı limitlerinden** kaynaklanır; istemci kütüphanesi nadiren darboğazdır.
+
+| Edge Case | Tetikleyen | Belirti | Çözüm / Limit |
+|---|---|---|---|
+| MaxMonitoredItems aşımı | Tek subscription'a yüzlerce item | `monitor()` `Bad_TooManyMonitoredItems` | Sunucu config'i artır veya çok subscription'a böl (hızlı/orta/yavaş) |
+| MaxSubscriptions aşımı | Her tag'e ayrı subscription | `createSubscription2` reddedilir | Tag'leri sampling hızına göre 2-3 subscription'da grupla |
+| RevisedPublishingInterval | Sunucu min limiti | Veri beklenenden yavaş | Revised değeri esas al (Not 4) |
+| Session timeout | Düşük `requestedSessionTimeout` + idle | `Bad_SessionIdInvalid` | 1 saat veya keepalive ile canlı tut |
+| SecureChannel timeout | NAT/firewall idle drop | Sessiz kopma, stale data | `connection_lost` dinle + keepalive (Not 1) |
+| Bad_TypeMismatch | REAL vs LREAL, Int vs UInt | Write sessizce reddedilir | DataType'ı oku ve cache'le (Not 6) |
+| maxNotificationsPerPublish | Tek publish'te çok değişim | Notifikasyonlar parçalanır, gecikme | Değeri yükselt; veya değişim hızını azalt |
+| BrowseNext / continuationPoint | Büyük adres uzayı browse | İlk browse kısmi sonuç döner | `continuationPoint` ile `browseNext` döngüsü kur |
+| Array/struct değer | ExtensionObject decode | `dv.value.value` ham buffer | DataTypeManager ile decode; bilinmeyen tip için `readNamespaceArray` |
+| Deadband filtresi yok | Analog tag sürekli minik değişim | Gereksiz `changed` event sağanağı | `DataChangeFilter` + `deadbandValue` ile mutlak/yüzde deadband |
+
+**Pratik sayısal sınırlar (CODESYS Control SoftPLC tipik):**
+- Eşzamanlı session: genelde 5–10 (config'e bağlı)
+- Subscription/session: ~10
+- MonitoredItem/server: birkaç bin (donanıma göre)
+- Min publishing interval: 50–1000ms (runtime ayarı)
+- Min sampling interval: PLC task interval'i (ör. 10–250ms)
+
+Önemli: bu limitler **PLC sunucusunun** limitleridir, node-opcua'nın değil. Yeni bir PLC'ye bağlanırken `GetEndpoints` ve sunucu diagnostics node'ları (`Server.ServerCapabilities`) üzerinden bu değerler okunmalı, varsayım yapılmamalıdır.
+
+## Optimizasyon
+
+Endüstriyel web HMI backend'inde optimizasyon önceliği **PLC'ye binen yükü azaltmak**tır; Node.js CPU'su nadiren darboğazdır.
+
+1. **Subscription kullan, polling değil.** OPC UA'nın en büyük kazancı budur: değer değişince sunucu sana iter. `session.read()` döngüsü kurmak, OPC UA'yı Modbus gibi kullanmaktır — anti-pattern.
+
+2. **samplingInterval'i tag sınıfına göre katmanla.** Hepsini 100ms yapmak sunucuyu boğar. Alarm 100ms, analog 500ms, sayaç/yavaş 5000ms. Düşük öncelikli tag'leri ayrı, düşük öncelikli subscription'a koy.
+
+3. **Deadband uygula (analog değerler için).** Gürültülü bir sıcaklık sensörü 500ms'de ±0.1°C oynuyorsa her örnekte `changed` ateşler. `DataChangeFilter` ile `deadbandType: Absolute, deadbandValue: 0.5` → yalnızca anlamlı değişim WebSocket'e gider.
+
+   ```typescript
+   import { DataChangeFilter, DataChangeTrigger, DeadbandType } from 'node-opcua';
+   const item = await subscription.monitor(
+       { nodeId, attributeId: AttributeIds.Value },
+       {
+           samplingInterval: 500, queueSize: 5, discardOldest: true,
+           filter: new DataChangeFilter({
+               trigger: DataChangeTrigger.StatusValue,
+               deadbandType: DeadbandType.Absolute,
+               deadbandValue: 0.5
+           })
+       },
+       TimestampsToReturn.Source
+   );
+   ```
+
+4. **queueSize'ı doğru ayarla.** `queueSize: 1` hızlı değişen tag'lerde ara değerleri düşürür (yalnızca son değer önemliyse iyi). Trend/audit için `queueSize: 10+` + `discardOldest: true`.
+
+5. **maxNotificationsPerPublish + publishingInterval dengesi.** Çok tag varsa publishingInterval'i düşürmek yerine maxNotificationsPerPublish'i yükselt — daha az ama daha dolu publish mesajı, daha az TCP overhead.
+
+6. **NodeId'leri önceden resolve et.** Her okumada string NodeId parse edilir. Sık erişilen node'lar için `session.getNode()` ile `ClientNode` cache'le; tekrar parse maliyeti ortadan kalkar.
+
+7. **Backend'de delta filtreleme + WebSocket batch.** OPC UA zaten delta gönderir ama bunu WebSocket'e iletmeden önce `BatchUpdateManager` ile 100ms'lik pencerede topla (bkz. `05_realtime_websocket.md`). Tek tag'in 100ms'de 3 kez değişmesi → tarayıcıya 1 değer.
+
+## Derin Teknik Detay
+
+**Subscription/MonitoredItem mimarisi neden böyle tasarlandı?** OPC UA'nın push modeli aslında saf push değildir; içeride sunucu tarafında **sampling** + istemci tarafından tetiklenen **publish** mekanizması vardır. Sunucu, MonitoredItem'ı `samplingInterval` ile yoklar (donanımdan okur), değişimleri bir **Notification kuyruğuna** (queueSize) biriktirir. İstemci ise arka planda sürekli `Publish` request gönderir; sunucu bu request'lere biriken notifikasyonlarla yanıt verir. node-opcua bu Publish döngüsünü senin yerine yönetir — `subscription.monitor()` çağrısı bu makinenin sadece görünen yüzüdür.
+
+Bu tasarımın nedeni **firewall/NAT dostu olmak**: sunucu istemciye kendiliğinden bağlantı açamaz (klasik push'un sorunu). Bunun yerine istemci açık tuttuğu kanaldan periyodik Publish gönderir, sunucu "ters yönde" yanıtla veri iter. Yani gerçekte istemci-başlatmalı bir "long-poll" üzerine kurulu pseudo-push'tur. Bu yüzden `maxKeepAliveCount` kritik: değişim yoksa bile sunucu, `publishingInterval × maxKeepAliveCount` süresinde bir boş KeepAlive yanıtı yollar; gelmezse istemci bağlantının öldüğünü anlar.
+
+**`lifetimeCount` neden `maxKeepAliveCount`'tan çok büyük olmalı?** Sunucu, `publishingInterval × lifetimeCount` boyunca istemciden hiç Publish request almazsa subscription'ı düşürür. node-opcua varsayılan olarak `lifetimeCount ≥ 3 × maxKeepAliveCount` ister; aksi halde subscription, istemci yavaşladığında erken ölür. Bu yüzden `requestedLifetimeCount: 120, requestedMaxKeepAliveCount: 20` gibi 6:1 oran güvenlidir.
+
+**node-opcua'nın yeniden bağlanma katmanı.** `connectionStrategy` (initialDelay/maxRetry/maxDelay) yalnızca **ilk bağlantı** için geçerlidir. Çalışma sırasında kopan bağlantı için kütüphane otomatik olarak SecureChannel'ı yeniden kurmaya çalışır, başarılı olursa session ve subscription'ları **transfer etmeyi** dener (`transferSubscriptions` servisi). Sunucu bu servisi desteklemiyorsa (bazı CODESYS sürümleri desteklemez) subscription'lar kaybolur — Not 5'in kök nedeni budur. Bu yüzden production'da `connection_reestablished` sonrası subscription sağlığını doğrulamak şarttır.
+
+**vs alternatifler:** node-opcua saf JS/TS implementasyondur (native binding yok), bu yüzden taşınabilir ama yüksek throughput'ta (>50k notification/s) Python `asyncua` veya .NET stack'inden yavaştır. Web HMI senaryosunda (yüzlerce tag, saniyede onlarca değişim) bu fark görünmez; avantajı aynı dilde (TS) backend + frontend tip paylaşımıdır. Alternatif `opcua-web` gibi tarayıcı-içi WebSocket-OPC UA köprüleri vardır ama bunlar yine bir gateway gerektirir — tarayıcı opc.tcp TCP soketi açamaz, bu mimari kısıt değişmez.
 
 ## İlgili Konular
 

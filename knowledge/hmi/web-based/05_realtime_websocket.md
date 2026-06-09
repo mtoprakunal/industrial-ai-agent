@@ -2,8 +2,8 @@
 KONU        : WebSocket ile Gerçek Zamanlı HMI Veri Akışı
 KATEGORİ    : hmi
 ALT_KATEGORI: web-based
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://oneuptime.com/blog/post/2026-01-15-websockets-react-real-time-applications/view"
     başlık: "OneUptime Blog — WebSockets in React for Real-Time Applications (2026)"
@@ -623,6 +623,77 @@ Bir fabrikada ağ switchinin güç kesilmesi WebSocket bağlantılarını kopard
 
 **Not 4 — WSS Olmadan Production Hatası**  
 HTTP üzerinden sunulan web HMI ws:// ile bağlandı. IT güvenlik denetimi: "Şifresiz WebSocket trafiği — tüm PLC komutları açık metin." Acil WSS (WebSocket Secure) geçişi: Nginx SSL termination + wss:// bağlantı. 2 saat çalışma.
+
+**Not 5 — Backpressure: Yavaş İstemci Tüm Sunucuyu Yavaşlattı**  
+Bir tablet, zayıf WiFi'da broadcast hızına yetişemedi; `ws.send()` çağrıları Node.js'in iç buffer'ında biriktirdi (`ws.bufferedAmount` MB'lara çıktı). Node.js belleği şişti, tüm istemciler etkilendi. Çözüm: her broadcast öncesi `if (ws.bufferedAmount > 1_000_000) { skip veya terminate }`. Yavaş istemciyi tüm sistemin hızına feda etme — ya atla ya düşür. Backpressure görmezden gelinince bir yavaş istemci tüm HMI'ı yavaşlatır.
+
+**Not 6 — Nginx Proxy Arkasında 60s'de Sessiz Kopma**  
+Nginx reverse proxy arkasındaki WebSocket'ler tam 60 saniyede koptu; `proxy_read_timeout` varsayılanı 60s ve idle WebSocket'i kapatıyordu. Heartbeat (ping/pong) zaten vardı ama Nginx ping'i "veri" saymadı çünkü ping frame'di. Çözüm: `proxy_read_timeout 3600s; proxy_send_timeout 3600s;` + `Upgrade`/`Connection` header'ları. Proxy katmanı WebSocket'in görünmez katilidir.
+
+**Not 7 — JSON Serileştirme Backend CPU Darboğazı**  
+80 tag × 20 istemci batch'te bile her istemciye `JSON.stringify` ayrı çağrıldı → 20× serileştirme. CPU profili %40'ı stringify'da gösterdi. Çözüm: mesajı **bir kez** stringify et, aynı string buffer'ı tüm istemcilere `send()` ile gönder. `broadcast` içinde stringify döngünün dışına alındı (mevcut kodda doğru yapılmış — gerçek projede yanlıştı). Tek serileştirme, N istemcide N× kazanç.
+
+**Not 8 — Sayfa Yenilemede Çift Bağlantı + Eski Soket Sızıntısı**  
+Operatör F5'e bastığında tarayıcı eski WebSocket'i hemen kapatmadı (TCP FIN gecikmesi); sunucu 30s ping timeout'una kadar eski bağlantıyı tuttu. Sayfa sık yenilenince hayalet bağlantılar birikti. Çözüm: `beforeunload` olayında `ws.close(1000)` ile temiz kapanış + sunucuda agresif (15s) ping. WebSocket'in temiz kapanışı tarayıcı tarafında garanti değildir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+WebSocket katmanı, PLC→tarayıcı zincirinin en kırılgan halkasıdır: ağ, proxy, tarayıcı ve OS limitleri burada çakışır.
+
+| Edge Case | Tetikleyen | Belirti | Çözüm / Limit |
+|---|---|---|---|
+| Backpressure | Yavaş istemci, hızlı broadcast (Not 5) | Sunucu belleği şişer | `bufferedAmount` kontrolü + drop |
+| Proxy idle timeout | Nginx/HAProxy 60s (Not 6) | 60s'de sessiz kopma | `proxy_read_timeout` + heartbeat |
+| Hayalet bağlantı | Ağ koptu, FIN gelmedi (Not 2,8) | Sunucu "açık" sanır | Ping/pong + terminate |
+| Tarayıcı bağlantı limiti | Aynı host'a çok WS | 6+ bağlantı kuyruğa girer | Singleton WS (1 bağlantı) |
+| Mesaj boyutu | Devasa FULL_UPDATE | Fragmentation, gecikme | `maxPayload` ayarı, delta'ya geç |
+| Reconnect fırtınası | Sunucu çökünce N istemci aynı anda | Sunucu açılınca anında ezilir | Jitter + exponential backoff |
+| Tab arka planı | Tarayıcı timer'ı throttle eder | Geri dönünce stale | `visibilitychange` → REQUEST_FULL_UPDATE |
+| close code anlamı | 1006 vs 1000 vs 1011 | Yanlış reconnect kararı | 1000 = temiz (reconnect etme), diğerleri reconnect |
+| TLS handshake maliyeti | WSS reconnect fırtınası | CPU spike | Backoff + session resumption |
+| OS dosya tanıtıcı (fd) | Binlerce eşzamanlı bağlantı | `EMFILE` | `ulimit -n` artır, bağlantı başına 1 fd |
+
+**Pratik sınırlar (tek Node.js süreci):**
+- Eşzamanlı WS bağlantısı: birkaç bin – on bin (bellek ve fd'ye bağlı)
+- Tarayıcının aynı origin'e WS limiti: pratikte yüksek ama singleton kullan
+- Mesaj/saniye sürdürülebilir: batch ile on binler; batch'siz birkaç bin
+- WebSocket frame max (ws paketi varsayılan `maxPayload`): 100MB — HMI için çok düşür (ör. 1MB)
+
+**Close code'ları kritik:** `1000` normal kapanış (reconnect **etme**), `1001` going away, `1006` anormal (ağ koptu — reconnect et), `1011` sunucu hatası (backoff ile reconnect). `manualClose` bayrağı yalnızca 1000 için anlamlıdır; ağ kaynaklı kopmalarda mutlaka reconnect tetiklenmeli.
+
+## Optimizasyon
+
+WebSocket katmanında hedef: **mesaj sayısını ve serileştirme maliyetini düşürürken gecikmeyi düşük tutmak.**
+
+1. **Batch + delta (en yüksek etki).** Bağlantıda bir FULL_UPDATE, sonra yalnızca değişen tag'ler. 100ms pencerede topla (mevcut `BatchUpdateManager`). 1600 mesaj/s → 20 mesaj/s (Not 3, CPU %45→%6).
+
+2. **Tek serileştirme, çok gönderim.** `broadcast`'te `JSON.stringify`'ı döngü **dışında** bir kez çağır, aynı string'i tüm istemcilere `send()` (Not 7). N istemcide N× kazanç.
+
+3. **Backpressure yönetimi.** `ws.bufferedAmount` eşik aşarsa o istemciyi atla/düşür (Not 5). Bir yavaş istemci tüm sistemi yavaşlatmamalı.
+
+4. **Yüksek hızlı tag'leri throttle et (server-side).** Saniyede 50 değişen bir analog tag için tarayıcıya 50 değer göndermek anlamsız; sunucuda son değeri 100-200ms'ye sabitle. Kritik alarm tag'lerini throttle'dan muaf tut.
+
+5. **Mesaj formatını küçült.** Verbose JSON yerine kısa anahtar veya pozisyonel dizi: `{t:"a",v:45.8}` ya da binary (MessagePack/CBOR) yüksek throughput'ta bandwidth'i yarıya indirir. HMI'da çoğu zaman JSON yeterli; yüzbinlerce mesaj/s'de binary düşün.
+
+6. **permessage-deflate dikkatli.** ws paketi sıkıştırma destekler ama küçük/sık mesajlarda CPU maliyeti kazançtan büyük olabilir. Büyük FULL_UPDATE için aç, küçük TAG_UPDATE için kapat.
+
+7. **Reconnect'e jitter ekle.** Saf exponential backoff, sunucu çökünce tüm istemcileri aynı anda reconnect ettirir (thundering herd). `delay = base * 2^n + random(0, 1000)` ile dağıt.
+
+8. **Abone filtresi (ileri).** İstemci yalnızca izlediği hat/sayfa tag'lerine abone olsun; sunucu o istemciye yalnızca ilgili tag'leri yollar. Çok hatlı tesiste broadcast'i hedefli unicast'e indirir.
+
+**Optimizasyon sırası:** batch+delta → tek serileştirme → backpressure → server throttle → (gerekirse) binary/sıkıştırma → abone filtresi. İlk üç madde tipik HMI yükünün tamamını çözer.
+
+## Derin Teknik Detay
+
+**WebSocket protokolü içeride nasıl çalışır?** WebSocket, HTTP `Upgrade: websocket` el sıkışmasıyla başlar (101 Switching Protocols); bu noktadan sonra TCP bağlantısı HTTP'yi bırakıp WebSocket *frame* protokolüne geçer. Her frame küçük bir header (opcode + payload length + mask) taşır — HTTP'nin her istekte yeni header + handshake yükü olmaz. Tarayıcı→sunucu frame'leri güvenlik gereği **maskelenir** (XOR), sunucu→tarayıcı maskelenmez. Bu düşük overhead (frame başına 2-14 byte), saniyede binlerce küçük tag güncellemesini HTTP polling'in mümkün kılamayacağı verimlilikte taşır — web HMI'ın "push" mimarisini ekonomik kılan budur.
+
+**Neden tarayıcı doğrudan OPC UA/Modbus konuşamaz — mimari kök neden.** OPC UA `opc.tcp://` ham TCP soketi, Modbus TCP port 502 ham TCP soketi gerektirir. Tarayıcının JavaScript ortamı **rastgele TCP soketi açamaz** — yalnızca HTTP(S), WebSocket ve WebRTC verir (güvenlik sandbox'ı). Dolayısıyla tarayıcı endüstriyel protokolleri *doğrudan* konuşamaz; aralarına bir **gateway/bridge** koymak mimari bir zorunluluktur, tercih değil. Bu köprü: tarayıcı tarafında WebSocket konuşur, PLC tarafında OPC UA/Modbus konuşur, ikisini çevirir. node-opcua veya jsmodbus tam olarak bu çeviriciyi (Node.js'te) sağlar. `opcua-web` gibi "tarayıcı OPC UA" kütüphaneleri bile arkada bir WebSocket-to-opc.tcp gateway gerektirir; kısıt aşılamaz.
+
+**Ping/pong'un iki katmanı.** İki ayrı heartbeat vardır ve karıştırılır: (1) **Protokol-seviyesi** ping/pong — WebSocket frame opcode 0x9/0xA, `ws.ping()` ile gönderilir, tarayıcı otomatik pong döner, uygulama kodu görmez. (2) **Uygulama-seviyesi** PING/PONG — JSON mesajı, uygulama yönetir. Protokol-seviyesi proxy/tarayıcı tarafından bazen yutulur (Not 6); bu yüzden bazı production sistemleri uygulama-seviyesi heartbeat'i tercih eder (kesin uçtan uca). İdeali: protokol ping ile fd-level canlılık + son mesaj zaman damgasıyla uygulama-level stale tespiti birlikte.
+
+**TCP head-of-line blocking ve sıralama garantisi.** WebSocket tek TCP bağlantısı üzerindedir; TCP, byte sırasını garanti eder, dolayısıyla mesajlar **gönderim sırasında** ulaşır (sıra karışmaz). Avantaj: tag güncellemeleri sırayla işlenir. Dezavantaj: bir büyük mesaj (devasa FULL_UPDATE) arkasındaki küçük kritik TAG_UPDATE'i bekletir (head-of-line). Bu yüzden FULL_UPDATE'i küçük tutmak (delta'ya geçmek) yalnızca bandwidth değil, gecikme meselesidir. HTTP/3 (QUIC) bunu çözer ama WebSocket TCP'ye bağlıdır.
+
+**vs alternatifler:** **SSE** tek yönlüdür (sunucu→tarayıcı), HMI'ın yazma komutu için yetersiz ama saf dashboard'da daha basit ve HTTP/2 multiplexing'den faydalanır. **Socket.io** otomatik reconnect/room/fallback sağlar ama kendi protokol katmanını ekler (overhead + ham wscat ile test edilemez); endüstriyel HMI'ın kontrollü ağında ham `ws` paketi yeterli ve şeffaftır. **WebRTC DataChannel** ultra düşük gecikme (UDP) verir ama kurulum karmaşıklığı (ICE/STUN/TURN) HMI için aşırıdır. Web HMI'ın "düşük-orta frekans, güvenilir sıralı, çift yönlü, kontrollü ağ" profili için ham WebSocket optimal dengedir.
 
 ## İlgili Konular
 

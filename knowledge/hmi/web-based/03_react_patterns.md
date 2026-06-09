@@ -2,8 +2,8 @@
 KONU        : React ile Endüstriyel HMI Geliştirme
 KATEGORİ    : hmi
 ALT_KATEGORI: web-based
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://oneuptime.com/blog/post/2026-01-15-websockets-react-real-time-applications/view"
     başlık: "OneUptime Blog — WebSockets in React for Real-Time Applications (2026)"
@@ -628,6 +628,80 @@ store'u: devtools()(create(...)) şeklinde sar.
 Redux DevTools Extension ile state geçmişini izle.
 Hangi bileşen ne zaman ne değiştirdi? Net görünür.
 ```
+
+**Not 4 — useEffect Cleanup Unutulunca Zombi WebSocket Listener**  
+`useEffect` içinde `ws.onmessage` atandı ama cleanup'ta kaldırılmadı. Hot-reload (Vite HMR) ve React 18 StrictMode'da bileşen iki kez mount oldu → iki listener birikti → her mesaj iki kez işlendi, alarm sayacı iki katına çıktı. Çözüm: singleton WS + listener'ları cleanup'ta sökme. StrictMode'un çift-mount davranışı geliştirme aşamasında bu sınıf hataları erken ortaya çıkarır — kapatma değil, düzeltme doğru yaklaşımdır.
+
+**Not 5 — React 18 Otomatik Batching Beklenmedik Davranış**  
+React 18'de `setState` çağrıları event handler dışında da (Promise, setTimeout, WebSocket onmessage) otomatik batch'lenir. Tek WS mesajında 10 tag güncellense bile tek render olur — bu iyi. Ancak `flushSync` kullanan bir trend grafiği ara değerleri kaçırdı çünkü batching ile sadece son state'i gördü. Yüksek frekanslı veride render'ı senkron zorlamak (`flushSync`) performansı yok eder; batching'e güven, ara değer gerekiyorsa store'da history array tut.
+
+**Not 6 — Zustand Selector Referans Eşitliği Tuzağı**  
+`useHMIStore((s) => ({ value: s.tags[tag]?.value, q: s.tags[tag]?.quality }))` her render'da **yeni nesne** döndürdü → Zustand `Object.is` ile eşitlik göremedi → bileşen her store değişiminde (başka tag dahil) render oldu. Çözüm: ya iki ayrı atomik selector, ya `useShallow` (Zustand v4.4+) ile sığ karşılaştırma. Nesne/dizi döndüren selector'lar gizli re-render kaynağıdır.
+
+**Not 7 — Tarih Nesnesinin JSON Serileştirme Kaybı**  
+Backend `timestamp` Date olarak gönderdi ama JSON.stringify → string'e çevirdi; frontend `new Date(msg.timestamp)` yapmayı unutunca `isStale` hesabındaki `.getTime()` patladı (`timestamp.getTime is not a function`). WebSocket üzerinden Date asla taşınmaz — number (epoch ms) gönder, frontend'de `new Date()` ile geri kur. Tip katmanında bunu zorlamak (timestamp: number) hatayı derleme zamanına çeker.
+
+## Edge Case'ler ve Sistem Limitleri
+
+React, "ne değişti" yönetimini geliştiriciye bırakır; endüstriyel HMI'ın yüksek frekanslı veri akışında limitler **render maliyeti** ve **reconciliation** etrafında toplanır.
+
+| Edge Case | Tetikleyen | Belirti | Çözüm |
+|---|---|---|---|
+| StrictMode çift mount | Geliştirmede effect 2× çalışır | Çift listener, çift abonelik | Cleanup fonksiyonu + singleton (Not 4) |
+| Selector yeni nesne | Nesne döndüren selector (Not 6) | Gereksiz render | Atomik selector veya `useShallow` |
+| Stale closure | `useEffect` deps eksik | Eski değerle çalışan callback | Doğru deps veya `useRef` |
+| Yüksek frekans render | >30 güncelleme/s aynı bileşene | Frame drop, UI takılır | Throttle/RAF coalescing |
+| Çok node DOM | 500+ tag aynı ekranda | Reconciliation yavaş | Sanallaştırma (react-window), sayfalama |
+| Date serileştirme | WS üzerinden Date (Not 7) | `getTime is not a function` | Epoch number gönder |
+| Kontrolsüz input + WS | Setpoint input'a WS değeri yazar | Operatör yazarken değer zıplar | Yerel state, WS'i input'a bağlama |
+| Memory leak | Listener/timer temizlenmez | Sekme zamanla yavaşlar | Cleanup'ta `clearInterval`/`removeEventListener` |
+| Tab arka planda | `setInterval` throttle olur | Geri dönünce veri "donmuş" görünür | `visibilitychange` ile FULL_UPDATE iste |
+
+**Pratik render bütçesi:** 60 FPS için kare başına ~16ms vardır. 200 bileşenli bir HMI'da granüler selector ile yalnızca değişen 5-10 bileşen render olur (~2-4ms) — sorunsuz. Tüm ağacı render etmek (kötü selector) 30-50ms alır → gözle görülür takılma. Kritik eşik: saniyede toplam render süresi × güncelleme frekansı < %50 CPU.
+
+## Optimizasyon
+
+React'ta optimizasyonun özü tek cümledir: **state değişiminden etkilenen bileşen sayısını minimize et.**
+
+1. **Granüler selector (en yüksek etki).** Her bileşen yalnızca kendi tag'ini seçsin: `useHMIStore((s) => s.tags[tag]?.value)`. Tüm `tags` objesini almak tek bir tag değişiminde tüm ağacı render eder (Not 1, %95 fark).
+
+2. **Selector primitif döndürsün.** Nesne/dizi döndüren selector referans eşitliğini bozar (Not 6). Primitif (number/string/boolean) döndür ya da `useShallow` kullan.
+
+3. **React.memo + stabil proplar.** `React.memo`'yu kullan ama nesne/fonksiyon proplarını `useMemo`/`useCallback` ile stabilize et — yoksa memo işe yaramaz (mevcut Not 2).
+
+4. **Yüksek frekanslı tag'leri RAF ile coalesce et.** Saniyede 50 değişen bir tag için her değişimde render gereksiz (insan gözü ~10-15 FPS üstünü ayırt edemez). `requestAnimationFrame` ile son değeri kareye sabitle:
+
+   ```typescript
+   function useRafTagValue(tag: string) {
+       const raw = useHMIStore((s) => s.tags[tag]?.value);
+       const [display, setDisplay] = useState(raw);
+       const frame = useRef<number>();
+       useEffect(() => {
+           cancelAnimationFrame(frame.current!);
+           frame.current = requestAnimationFrame(() => setDisplay(raw));
+           return () => cancelAnimationFrame(frame.current!);
+       }, [raw]);
+       return display;
+   }
+   ```
+
+5. **Store seviyesinde throttle/batch.** Backend zaten batch yapmıyorsa, `updateTag`'i store'da 100ms throttle'la (mevcut `useThrottledTagValue`). Render kaynağını azaltmak, render'ı optimize etmekten önce gelir.
+
+6. **Büyük listeleri sanallaştır.** Alarm geçmişi, 500 satır tag tablosu → `react-window`/`react-virtual`. Yalnızca görünen satırlar DOM'da olur.
+
+7. **State şeklini düzleştir.** İç içe nesne yerine `tags: Record<string, TagValue>` düz yapı; tek tag güncellemesi yalnızca o anahtarı değiştirir, derin spread maliyeti olmaz.
+
+**Optimizasyon sırası (önce yüksek etki):** granüler selector → primitif selector → render kaynağını azalt (throttle/RAF) → React.memo → sanallaştırma. Genelde ilk iki madde sorunların %90'ını çözer; profiler olmadan `useMemo` serpiştirmek erken optimizasyondur.
+
+## Derin Teknik Detay
+
+**Zustand neden Redux'tan hızlı ve neden HMI'a uygun?** Zustand, React Context kullanmaz; harici bir store (closure içinde tutulan mutable referans) + `useSyncExternalStore` (React 18 API) üzerine kuruludur. Context'in temel sorunu: Context value değişince **tüm tüketiciler** yeniden render olur, selector ile daraltma yapılamaz. Zustand'da her `useHMIStore(selector)` çağrısı kendi selector'ını store'a abone eder; store değişince Zustand tüm abonelerin selector'ını çalıştırır, sonucu `Object.is` ile eski sonuçla karşılaştırır, **yalnızca değişen** selector'ın bileşenini render'a sokar. Bu, 200 tag'li HMI'da neden granüler selector'ın kritik olduğunu açıklar — abonelik granülaritesi selector granülaritesidir.
+
+**`useSyncExternalStore` ve tearing.** React 18'in concurrent rendering'i, bir render sırasında harici store değişirse "tearing" (ekranın bir kısmı eski, bir kısmı yeni değer gösterir) yaratabilir. `useSyncExternalStore` bu sorunu çözmek için tasarlandı: render sırasında store snapshot'ının tutarlılığını garanti eder. Zustand bunu kullandığı için yüksek frekanslı WebSocket güncellemelerinde concurrent mode'da bile tutarlı görüntü verir — manuel state (useState + WS) bu garantiyi sunmaz.
+
+**React'ın reconciliation maliyeti neden HMI'da kritik?** React her render'da yeni Virtual DOM ağacı üretir ve eskisiyle diff'ler (reconciliation). Bu O(n) ama n = render edilen bileşen sayısıdır. Tüm ağacı her WS mesajında render etmek (kötü selector) reconciliation'ı her saniye onlarca kez O(200) çalıştırır. Granüler selector ile n=5-10'a iner. React.memo, diff'i bileşen seviyesinde "kes" der: proplar referans-eşitse alt ağaç diff'lenmez. Ama memo'nun karşılaştırması da maliyetlidir — yüzlerce memo bileşeninde shallow compare bile birikir; bu yüzden render'ı *tetiklememek* (selector), tetikleyip *kesmekten* (memo) daha verimlidir.
+
+**vs alternatifler:** Redux Toolkit + `useSelector` benzer granülarite sunar ama boilerplate ağırdır; HMI'ın basit "tag → değer" modeline overkill. Jotai/Recoil "atom" modeli (her tag bir atom) teorik olarak en granüler çözümdür ve 1000+ bağımsız tag senaryosunda Zustand'dan üstün olabilir, ama ekosistem ve öğrenme maliyeti yüksektir. Saf Context + useReducer endüstriyel HMI için yetersizdir (tearing + tüm-tüketici render). Web HMI'ın "çok sayıda bağımsız, sık güncellenen skaler değer" profili için Zustand pratikte en iyi denge: minimal boilerplate + selector-bazlı granülarite + `useSyncExternalStore` güvencesi.
 
 ## İlgili Konular
 

@@ -2,7 +2,7 @@
 KONU        : Beijer iX Developer — CODESYS PLC Bağlantısı
 KATEGORİ    : hmi
 ALT_KATEGORI: ix-developer
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.beijerelectronics.com/docs/drivers/CODESYS-ARTI/Latest/iX/en/settings.html"
@@ -651,6 +651,75 @@ OPC UA'da kalıcı çözüm: Communication Manager ile custom namespace (runtime
 
 **Not 6 — Bağlantı Testi için UaExpert Zorunlu**
 OPC UA bağlantısı sorunlarında iX Developer'dan önce UaExpert ile doğrulama yapmak saatler kazandırır. UaExpert bağlanabiliyorsa sorun iX ayarlarındadır; bağlanamıyorsa CODESYS OPC UA Server'da bir sorun var demektir. Bu ayrımı yapmadan saatlerce iX ayarlarıyla vakit geçirildiği oldu.
+
+**Not 7 — ARTI Sembol Dosyası ile PLC Programı Senkronizasyonu Kayması**
+Bir sahada PLC programı güncellendi (yeni değişken eklendi, GVL yeniden sıralandı) ama iX projesindeki sembol import güncellenmedi. ARTI driver, değişkenleri sembol indeksine göre değil ada göre çözer; ancak indekse dayalı bazı eski yapılandırmalarda yeniden sıralama sonrası taglar yanlış değer gösterdi. Pratik kural: PLC'de Symbol Configuration değiştiğinde iX'te `Rebuild Symbol` / yeniden import yapılmalı; "Download Symbol File" seçeneği aktifse bağlantıda otomatik senkronize olur ama proje içindeki tag adres metni hâlâ eski şemaya işaret edebilir.
+
+**Not 8 — ARTI Update Rate Aşırı Düşürülünce PLC Tarayıcısı Etkilendi**
+ARTI driver Update Rate'i 200 ms varsayılandan 25 ms'ye çekilen bir projede, CODESYS runtime'ın ana task döngü süresi (jitter) gözle görülür arttı — çünkü ARTI servisi her okuma talebinde PLC'nin sembol erişim katmanını meşgul eder. Düşük task periyotlu (1–2 ms) hareket kontrol uygulamalarında bu kabul edilemez. Çözüm: HMI okuma frekansı ile PLC task periyodu birlikte değerlendirilmeli; HMI 100–200 ms'de okumak çoğu görsel için yeterlidir.
+
+**Not 9 — OPC UA Sertifika Reddi Tek Yönlü Değil Çift Yönlü**
+Bir BadSecurityChecksFailed sorununda yalnızca iX sertifikasını CODESYS'in trusted klasörüne taşımak yetmedi; CODESYS sunucu sertifikasının da iX istemci tarafında güvenilir olarak işaretlenmesi gerekti. OPC UA karşılıklı kimlik doğrulama (mutual authentication) yapar — her iki taraf da diğerinin sertifikasını kabul etmelidir. None/güvensiz modda bu sorun çıkmaz ama üretimde güvensiz mod kullanılmamalıdır.
+
+**Not 10 — X2 Control'de localhost vs Cihaz IP'si Tercihi**
+X2 Control entegre cihazda HMI↔CODESYS dahili bağlantısı için `127.0.0.1` kullanmak en düşük gecikmeyi verir (ağ yığınını minimum kullanır). Ancak bir projede cihazın kendi LAN IP'si kullanıldığında, ağ arayüzü yeniden yapılandırıldığında bağlantı koptu. Dahili bağlantıda her zaman `127.0.0.1` tercih edilmeli; bu, fiziksel ağ değişikliklerinden bağımsızdır ve switch/router üzerinden gereksiz trafik üretmez.
+
+## Edge Case'ler ve Sistem Limitleri
+
+iX'in CODESYS bağlantısında ARTI ve OPC UA yöntemleri farklı sınır davranışları sergiler. Aşağıdaki tablo iki yöntemi kritik sınır noktalarında karşılaştırır.
+
+| Özellik / Sınır | CODESYS ARTI | OPC UA Client |
+|---|---|---|
+| Array (dizi) tag | 1 boyutlu desteklenir | Desteklenmez |
+| 64-bit tipler (LREAL, LINT, LWORD) | Desteklenmez | Sunucu açarsa desteklenir |
+| BYTE / SINT / USINT | Desteklenmez (tip dönüşümü gerekir) | Sunucu modeline bağlı |
+| STRING | Maks. 80 karakter | Sunucu tanımına bağlı |
+| NodeId tipi | İlgisiz (sembol adı) | Numeric, String (Guid/Opaque atlanır) |
+| Runtime adı bağımlılığı | Yok | NodeId'nin parçası (kırılgan) |
+| Sertifika/güvenlik | Kullanıcı/şifre | Mutual cert + policy |
+| Bağlantı portu | 11740 | 4840 (varsayılan) |
+
+**Bit yazma — read-modify-write tuzağı:** ARTI'de `Application.PLC_PRG.nStatus.3` gibi bir bit'e yazmak, iX'in tüm word'ü okuyup ilgili biti değiştirip geri yazmasını gerektirir. İki kaynak (HMI ve PLC mantığı) aynı word'ün farklı bitlerine eş zamanlı yazarsa race condition oluşur ve bir bit kaybolabilir. Kritik durum bitleri için PLC tarafında ayrı BOOL değişkenler kullanılmalı, paketlenmiş word bitleri değil.
+
+**OPC UA'da yapısal (structured) tag:** CODESYS struct/FB instance'ları OPC UA'da hiyerarşik node olarak görünür; iX bunları düz tag olarak import eder ama iç içe array içeren struct'lar kısmen veya hiç import edilemez. Structured tag desteği iX tarafında `Project > Settings > Advanced` altında ayrıca etkinleştirilmelidir.
+
+**İstasyon devre dışı bırakma ve tag durumu:** Çoklu istasyonda `1:ACTIVE=0` ile bir istasyon devre dışı bırakıldığında, o istasyona bağlı tagların değeri donar (son okunan değer kalır), null/hata olmaz. Bu yüzden istasyon kopması mutlaka `[istasyon]:ERROR` veya communication status system tag'i ile görsel olarak işaretlenmelidir; aksi halde operatör eski veriyi canlı sanır.
+
+**Sürücü v4.15 → sonrası kimlik bilgisi sıfırlanması:** ARTI v4.15'ten sonraki sürüme geçişte şifreleme formatı değiştiğinden, mevcut kullanıcı adı/şifre çalışmaz hale gelir ve manuel yeniden girilmelidir (bkz. Hata 7). Bu, sessiz bir bağlantı kopması olarak görünür — yükseltme sonrası ilk işlem credential doğrulamasıdır.
+
+## Optimizasyon
+
+**1. Yöntem seçimi performansın temelidir**
+ARTI, Beijer-CODESYS için optimize edilmiş ikili bir protokoldür ve düşük gecikmeli, basit kurulumlu HMI bağlantısı için OPC UA'dan daha hafiftir. OPC UA ise subscription (değişim bazlı yayın) modeli sayesinde çok sayıda yavaş değişen tag'de toplam iletişim yükünü azaltır. Pratik kural: hızlı, sık değişen birkaç yüz tag → ARTI; çok sayıda (binlerce) çoğu zaman sabit tag → OPC UA subscription.
+
+**2. Sadece kullanılacak tag'leri import et**
+Beijer'in resmi "import only what you need" kuralı performans kuralıdır: import edilen her tag, kullanılmasa bile cross-reference taramasını ve bazı durumlarda poll yükünü artırır. Symbol Configuration'da yalnızca HMI'ın gerçekten okuyacağı değişkenler işaretlenmeli; tüm GVL'i toptan açmaktan kaçınılmalıdır.
+
+**3. PLC tarafında ardışık GVL bloğu**
+HMI'ın okuduğu değişkenleri PLC'de tek bir GVL içinde ardışık tanımlamak, ARTI ve birçok sürücünün telegram birleştirmesinden yararlanmasını sağlar. Dağınık POU-yerel değişkenler her biri için ayrı erişim üretir.
+
+**4. OPC UA publishing/sampling dengesi**
+Sampling interval (sunucunun değeri ne sıklıkla örneklediği) ile publishing interval (sunucunun istemciye ne sıklıkla yayınladığı) doğru ayarlanmalı. Publishing < sampling ise sunucuda boş yayın döngüleri oluşur; publishing çok büyükse güncelleme gecikir. Genel kural: publishing interval ≈ sampling interval veya hafif büyük.
+
+**5. Update Rate'i PLC task periyoduyla uyumlama**
+ARTI Update Rate'i PLC'nin görsel veri üreten task'inden hızlı olması anlamsızdır — PLC veriyi henüz güncellememişken tekrar okumak boş telegram demektir. Update Rate ≥ ilgili PLC task periyodu olmalı; tipik 100–200 ms görsel için yeterli.
+
+**6. Gateway/timeout ayarı kararlı kopma toleransı**
+Kablosuz veya gateway üzerinden bağlantılarda Timeout (varsayılan 2000 ms) ve Offline Retry (5 sn) değerleri yükseltilerek geçici kesintilerde gereksiz "offline" alarmları önlenir; çok düşük timeout, kararsız hatlarda sürekli reconnect döngüsüne yol açar.
+
+## Derin Teknik Detay
+
+**ARTI nedir ve neden Beijer için ayrı bir driver var?**
+ARTI (Automation Runtime Interface), 3S/CODESYS'in runtime'a doğrudan sembolik erişim sağlayan yerel protokolüdür — CODESYS programlama ortamının PLC ile konuştuğu kanalla aynı ailedendir. Beijer'in ayrı bir "CODESYS ARTI" sürücüsü sunmasının nedeni, OPC UA'nın getirdiği soyutlama ve serileştirme katmanını atlamaktır: ARTI, değişkenlere CODESYS sembol tablosu üzerinden doğrudan eriştiği için OPC UA'nın node-browsing, type-resolution ve güvenlik el sıkışması maliyetini taşımaz. Bu yüzden ARTI kurulumu daha basit ve çalışma zamanı yükü daha düşüktür; bedeli ise vendor-bağımlılık (yalnızca CODESYS runtime) ve standart interoperabilite eksikliğidir.
+
+**NodeId'nin runtime adına bağlanması — neden kırılgan?**
+CODESYS OPC UA Server, varsayılan adres uzayında bir değişkenin NodeId'sini `ns=4;s=|var|<RuntimeAdı>.<Uygulama>.<GVL>.<Değişken>` biçiminde üretir. RuntimeAdı (ör. "CODESYS Control Linux ARM64 SL") tasarımın bir parçası değil, çalışan platformun adıdır. Bunun nedeni CODESYS'in cihaz ağacındaki birden fazla runtime'ı ayırt etme ihtiyacıdır — ancak yan etkisi, donanım/runtime değişiminde tüm NodeId'lerin geçersiz olmasıdır. Bu mimari kırılganlığın çözümü Communication Manager / Information Model ile runtime adından bağımsız özel namespace tanımlamaktır; bu yüzden olgun OPC UA projeleri varsayılan namespace yerine özel bir sunucu arabirimi tanımlar (detay: protocols/opc-ua/05_codesys_server_config.md). ARTI bu sorundan muaftır çünkü sembol adı çözümlemesi runtime adını içermez.
+
+**OPC UA'da array desteğinin olmaması — istemci tasarımı sınırı mı?**
+iX OPC UA istemcisi tek değerli (scalar) node'lara odaklanmıştır; array (DataValue içinde dizi) ve Guid/Opaque NodeId tiplerini atlar. Bu, gömülü panelde istemci tarafının hafif tutulması için bilinçli bir basitleştirmedir — array deserializasyonu ve dinamik tip yönetimi gömülü kaynakta maliyetlidir. ARTI ise CODESYS'in kendi sembol formatında 1 boyutlu array'i doğrudan okuyabildiği için bu kısıt orada yoktur. Bu, "neden array için ARTI" sorusunun mimari cevabıdır.
+
+**ARTI'nin 64-bit tip desteklememesi — protokol versiyon mirası**
+ARTI sürücüsünün LWORD/LINT/LREAL desteklememesi, sürücünün ve sembol formatının daha eski CODESYS V2/erken V3 veri modeli üzerine kurulu olmasından kaynaklanır; 64-bit tamsayı/çift duyarlık o dönemde gömülü PLC'lerde yaygın değildi. CODESYS dilinde bir LREAL değeri HMI'a aktarılacaksa, PLC tarafında REAL'e (32-bit) downcast edilmeli veya OPC UA'ya geçilmelidir — bu, çözünürlük kaybı pahasına ARTI'nin basit kalmasını sağlayan bir uyumluluk tercihidir.
 
 ## İlgili Konular
 

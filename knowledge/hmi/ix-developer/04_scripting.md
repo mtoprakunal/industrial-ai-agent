@@ -2,7 +2,7 @@
 KONU        : Beijer iX Developer — C# Scripting
 KATEGORİ    : hmi
 ALT_KATEGORI: ix-developer
-SEVİYE      : İleri
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.beijerelectronics.com/docs/iX/3.0/User-Guide/en/scripts.html"
@@ -622,6 +622,77 @@ Visual Studio'da geliştirme, otomatik tamamlama, refactoring ve unit test deste
 
 **Not 6 — Actions Önceliği Tuzağı**
 Aynı nesneye hem Action hem Script tanımlandığında Action önce çalışır. Bu, script'in hiç çalışmadığı izlenimi yaratabilir ve tespit edilmesi zaman alan bir hatadır. Bir nesne için tek mekanizma seçilmeli; önce varolan Action tanımları kontrol edilmelidir.
+
+**Not 7 — Timer Thread'i UI Thread'i Değil — Cross-Thread Erişim Tuzağı**
+`System.Timers.Timer` Elapsed olayı UI thread'inde değil, bir thread pool thread'inde çalışır. Bir projede Elapsed handler'ı içinden doğrudan bir ekran nesnesinin `.Text`'i değiştirildiğinde PC hedefinde sporadik çökme yaşandı (WPF nesnelerine yalnızca sahip oldukları thread'den erişilebilir). Tag yazma (`Globals.Tags.X.Value`) thread-safe'tir ve sorun çıkarmaz; ancak doğrudan UI nesne erişimi gerektiğinde değer bir tag'e yazılıp nesne o tag'e bind edilmeli. Kural: timer içinden tag yaz, nesneye dokunma.
+
+**Not 8 — Globals.Tags Cross-Reference'a Görünür, String İndeksleme Görünmez**
+`Globals.Tags.MotorHiz` doğrudan referansı iX'in cross-reference sistemine görünür ve "Remove Unused Tags" bunu korur. Ancak bazı kodlarda tag'e dinamik/string tabanlı erişim denenince (yansıma benzeri) cross-reference tag'i "kullanılmıyor" sayıp silebildi; sonraki derlemede runtime hatası çıktı. Her zaman güçlü-tipli `Globals.Tags.X` sözdizimi kullanılmalı; dinamik tag adı gerekiyorsa IScriptTag parametresiyle geçirilmeli.
+
+**Not 9 — Build Hatası "Eski İsim" — Layout'ta Yeniden Adlandırma Sonrası**
+Script'te referanslanan bir nesne Layout modda yeniden adlandırıldığında iX referansları otomatik güncellemez; build "CS0103: 'Button1' does not exist" verir. Büyük bir ekranı yeniden düzenleyen bir ekipte bu, derlemeyi saatlerce bloke etti çünkü hatanın script'te değil rename'de olduğu fark edilmedi. Nesne yeniden adlandırma öncesi script referansları aranmalı; mümkünse adlandırma baştan kesinleştirilmeli.
+
+**Not 10 — Async/await ve LINQ Sadece iX3/.NET 8 ve IPC'de Güvenli**
+Bir geliştirme PC'sinde (tam .NET Framework) sorunsuz derlenen LINQ ve async/await içeren kod, Windows CE panel hedefinde (.NET CF 3.5) derleme veya runtime hatası verdi — IntelliSense bu metodları gösterdiği için yanıltıcıydı. Modern dil/kütüphane özellikleri yalnızca iX3 (.NET 8) veya IPC tam framework hedefinde güvenle kullanılabilir. Hedef platform kütüphane seçiminden önce kesinleştirilmelidir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Scripting katmanında sınırlar çoğunlukla çalışma zamanı modeli (tek UI thread, derlenmiş kod, platform .NET sürümü) ile ilgilidir.
+
+| Alan | Sınır / Davranış | Sonuç |
+|---|---|---|
+| Cross-screen erişim | Desteklenmez | Başka ekranın nesnesine erişim derlenmez; tag ile köprü kurulur |
+| Blocking çağrı | Desteklenmez | Thread.Sleep / MessageBox / ReadLine → UI donar |
+| ValueOn / ValueOff | Yalnızca controller tag | Internal tag'de runtime'da hiç tetiklenmez (sessiz) |
+| Static alan | Önerilmez | Global durum kirliliği + sızıntı |
+| Timer Elapsed | Thread pool thread | UI nesne erişimi cross-thread hatası |
+| AdaptedObject | Platform kilitler | IPC→CE geçişinde build hatası |
+| .NET sürümü | CE: CF 3.5 / IPC: full / iX3: .NET 8 | Hedefe göre özellik seti değişir |
+
+**Olay aboneliği yaşam döngüsü:** `+=` ile kurulan her abonelik (timer, AlarmServer, ValueChanged) ekran kapanışında `-=` ile sökülmezse, AlarmServer/timer ekran nesnesine referans tutmaya devam eder; ekran garbage collect edilemez ve haftalarca çalışan panelde birikimli bellek sızıntısı uygulamayı çökertir. Bu, scriptingdeki en kritik edge case'tir — `Opened`'daki her `+=` için `Closed`'da karşılık gelen `-=` zorunludur.
+
+**Action vs Script önceliği:** Aynı nesneye hem Action hem Script atanırsa Action öncelik alır ve script hiç çalışmamış gibi görünür — hata mesajı yoktur. Tek mekanizma kuralı geçerlidir.
+
+**Explicit cast zorunluluğu:** `Globals.Tags.X.Value` aşırı yüklü tip dönüşümleri içerdiğinden, aritmetik veya atamada explicit cast (`(double)`, `(int)`) olmadan build hatası verir. Bu, runtime sürprizi yerine derleme zamanı yakalanan bir kısıttır.
+
+**Internal tag persistency:** Script'ten internal tag'e yazılan değer, tag non-volatile değilse panel yeniden başladığında kaybolur; non-volatile olsa bile ani güç kesintisinde son değişim flash'a yazılmamış olabilir (bkz. 01 belgesi). Kritik sayaçlar PLC retain değişkende tutulmalı.
+
+## Optimizasyon
+
+**1. Script yerine binding/expression tercih et**
+Her görsel davranış için script yazmak hem bakım yükü hem performans maliyetidir. Basit tag→nesne ilişkileri Dynamics/Expression ile çözülmeli; script yalnızca standart mekanizmanın yetmediği karmaşık mantık için kullanılmalıdır. Aşırı script kullanımı render ve bakım maliyetini artırır.
+
+**2. ValueChanged'i polling timer'a tercih et**
+Bir değerin değişimine tepki vermek için her saniye çalışan bir timer ile tag okumak yerine, `ValueChanged` olayına abone olmak hem CPU hem iletişim açısından verimlidir — kod yalnızca gerçekten değişiklik olduğunda çalışır. Timer yalnızca gerçekten periyodik (zamana bağlı) görevler için kullanılmalı.
+
+**3. IScriptTag ile yeniden kullanılabilir modüller**
+Sabit `Globals.Tags.BelirliAd` referansları kodu tek bir tag yapısına bağlar. `IScriptTag` parametreli Global Script Modülleri, aynı hesabı farklı hat/makine tag setlerine uygulamayı sağlar — kod tekrarını ve bakım yükünü azaltır.
+
+**4. Timer'da hafif işlem, ağır işi tag'e devret**
+Timer Elapsed handler'ı kısa tutulmalı; uzun hesaplar UI tepkiselliğini değil ama thread havuzunu meşgul eder ve abonelik temizliğini zorlaştırır. Mümkünse hesap PLC tarafına alınmalı, HMI yalnızca sonucu göstermeli.
+
+**5. Dosya I/O'yu seyrek ve WriteThrough ile yap**
+Her tag değişiminde dosyaya yazmak disk I/O baskısı yaratır. Rapor/CSV yazımı periyodik (vardiya sonu, buton tetikli) yapılmalı ve `FileOptions.WriteThrough` ile güç kesintisine dayanıklı hale getirilmeli — sürekli yazma hem performans hem flash ömrü açısından zararlıdır.
+
+**6. Gereksiz abonelikten kaçın**
+Yalnızca aktif ekranda gereken olaylara abone olunmalı; tüm AlarmServer olaylarına global abonelik, her alarm değişiminde script tetikler ve gereksiz yük üretir. Olay aboneliği ekran yaşam döngüsüyle (Opened/Closed) sınırlandırılmalıdır.
+
+## Derin Teknik Detay
+
+**Script neden yorumlanmaz, derlenir?**
+iX, C# script'leri runtime'da yorumlamaz; Build aşamasında bunları ekran sınıflarının `partial class` üyeleri olarak gerçek .NET assembly'lerine derler. Bunun nedeni performans ve tip güvenliğidir: yorumlanan bir motor, her olay tetiklenişinde ayrıştırma ve tip çözümleme maliyeti doğururdu — gömülü panelin sınırlı CPU'sunda bu kabul edilemez. Derlenmiş model, scriptin native .NET hızında çalışmasını ve hataların derleme zamanı yakalanmasını sağlar. Bedeli, canlı düzenleme olmaması ve her değişikliğin yeniden derleme + transfer gerektirmesidir. Bu yüzden iX scripting, tarayıcıda anında çalışan web HMI script'lerinden temelde farklı bir yaşam döngüsüne sahiptir.
+
+**Neden cross-screen scripting yasak?**
+Her ekran kendi `partial class`'ı olarak derlenir ve nesneleri o sınıfın private üyeleridir. Bir ekranın nesneleri yalnızca o ekran runtime'da yüklüyken bellekte var olur — kapalı bir ekranın nesneleri instantiate edilmemiştir. Başka ekranın nesnesine doğrudan erişim, var olmayan bir nesneye referans anlamına gelirdi. iX bu durumu derleme zamanı kuralıyla (cross-screen desteklenmez) engeller; ekranlar arası veri paylaşımı, ekran yaşam döngüsünden bağımsız var olan tag'ler veya Global Script Modülleri (proje boyu tek instance) üzerinden yapılır. Bu, "ekran = geçici görünüm, tag = kalıcı durum" mimari ayrımının doğrudan sonucudur.
+
+**Globals nesnesi ve singleton model**
+`Globals`, runtime'ın tag motoru, alarm sunucusu ve ortam servislerine tek erişim noktasıdır — etkin bir service locator / singleton'dır. Ekran script'lerinin doğrudan instance alanları yerine `Globals` üzerinden erişmesinin nedeni, bu servislerin uygulama boyu tek bir örnek olarak yaşamasıdır: tag motoru tüm ekranlar için aynıdır. Bu yüzden bir ekranda `Globals.AlarmServer.AlarmActive += handler` yapmak, ekran kapansa bile AlarmServer'ın handler'a (ve dolayısıyla ekrana) referans tutmasına yol açar — singleton uzun ömürlüdür, ekran kısa ömürlü. Bellek sızıntısı tuzağının kök nedeni bu ömür uyumsuzluğudur.
+
+**.NET CF 3.5 vs .NET 8 — neden platform kütüphane setini belirler?**
+Windows CE panellerde çalışan iX2 runtime'ı .NET Compact Framework 3.5 üzerine kuruludur; CF, tam .NET Framework'ün gömülü cihazlar için budanmış bir alt kümesidir (LINQ kısıtlı, async/await yok, birçok BCL sınıfı eksik). iX Developer'ın editörü geliştirme PC'sinin tam framework'ünün IntelliSense'ini gösterdiği için, CE'de var olmayan API'leri de önerir — bu "derlenir ama panelde çalışmaz" tuzağının nedenidir. iX3, .NET 8'e (cross-platform, modern runtime) geçerek bu ikiliği ortadan kaldırır ve NuGet ekosistemini açar. Hedef platformun .NET sürümü, kullanılabilecek dil ve kütüphane özelliklerini doğrudan belirler; bu yüzden platform kararı kod yazmadan önce verilmelidir.
+
+**WriteThrough neden endüstriyel zorunluluk?**
+Standart `File.WriteAllText` veya tamponlu `FileStream`, veriyi önce işletim sistemi yazma önbelleğine koyar; fiziksel diske/flash'a yazım gecikmeli ve toplu yapılır. Bir endüstriyel panelde güç kesintisi her an mümkündür ve önbellekteki yazılmamış veri kaybolur — dahası, dosya yarım yazılmış (corrupt) kalabilir. `FileOptions.WriteThrough`, OS önbelleğini atlayıp her yazımı doğrudan kalıcı depolamaya zorlar; bu, performanstan ödün vererek tutarlılık/dayanıklılık kazanır. Beijer'in bunu resmi olarak önermesinin nedeni, HMI'ın denetimsiz güç ortamında çalışmasıdır — bu, masaüstü yazılımından farklı bir güvenilirlik gereksinimidir.
 
 ## İlgili Konular
 

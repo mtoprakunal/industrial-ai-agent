@@ -2,7 +2,7 @@
 KONU        : iX Developer — Ekran Tasarımı
 KATEGORİ    : hmi
 ALT_KATEGORI: ix-developer
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.beijerelectronics.com/docs/iX-251-Reference/en/objects.html"
@@ -772,6 +772,72 @@ Sonuç: 20 ekran yerine 1 ekran, bakım 20 kat daha kolay. Bu yaklaşım Alias't
 
 **Not 5 — Performans İçin Tag Sıralama**
 Controller'da M0.0 ile M11.7 arasındaki bit'ler art arda kullanılıyordu. iX Developer tek telegram ile tümünü okuyabildi. Farklı adreslere dağılmış bit'ler kullanıldığında her biri için ayrı okuma paketi oluştu; iletişim %300 arttı. Tag'leri ardışık adreslerde tanımlamak büyük performans farkı yaratır.
+
+**Not 6 — Multi Picture Nesnesi ve Görsel Bellek Tüketimi**
+Bir projede her makine durumu için yüksek çözünürlüklü PNG'ler kullanan 30+ Multi Picture nesnesi vardı. Ekran açılışı belirgin gecikti çünkü her görsel ekran yüklenirken belleğe alınıyordu. Çözüm: durum göstergeleri için vektör tabanlı basit şekiller + renk dinamiği kullanıldı; sadece gerçekten gerekli yerlerde raster görsel bırakıldı. Gömülü panelde görsel bellek sınırlıdır; büyük PNG/JPEG'ler hem yükleme hem RAM açısından pahalıdır. Görselleri hedef boyutta önceden ölçeklemek (runtime'da değil) gerekir.
+
+**Not 7 — Modal Popup'ın Arka Plan Pollingi Durdurmadığı Yanılgısı**
+Modal bir popup açıldığında operatör etkileşimi arka ekranda engellenir; ancak arka ekrandaki nesnelerin tag polling'i durmaz — değerler arka planda güncellenmeye devam eder. Bir ekipte "popup açıkken iletişim yükü düşer" varsayımıyla çok sayıda tag'i ana ekranda bırakıp popup'larla maskeleme yapıldı; iletişim yükü hiç düşmedi. Polling yükünü gerçekten azaltmak için tag'ler ayrı ekranlara taşınmalı, modal popup ile gizlenmemelidir.
+
+**Not 8 — Çözünürlük Değişiminde Font ve Konum Kayması**
+PC hedefli bir proje 1280×800'den 1920×1080'e taşındığında iX otomatik yeniden boyutlandırma yaptı ama font boyutları orantısız büyüdü ve bazı sabit-konumlu Analog Numeric nesneleri komşu nesnelerle çakıştı. Otomatik ölçekleme bir başlangıç noktasıdır, son değil: çözünürlük değişiminden sonra her ekran görsel olarak gözden geçirilmeli, özellikle metin taşması ve hizalama kontrol edilmelidir. Mümkünse hedef çözünürlük baştan kesinleştirilmelidir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Ekran tasarımı katmanında limitler çoğunlukla render performansı ve nesne davranışıyla ilgilidir; aşağıdaki tablo pratik eşikleri özetler.
+
+| Alan | Pratik Limit / Eşik | Aşıldığında / Sınır Davranışı |
+|---|---|---|
+| Ekran başına nesne | ~400 (öneri) | Ekran geçiş gecikmesi, render donması |
+| Alarm Viewer satır | ~200 (öneri) | Yükleme yavaşlığı, ekran geçişi takılması |
+| Toplam alarm öğesi | ~500 (pratik) | Alarm motoru değerlendirme gecikmesi |
+| Aktif Data Logger | ~25 (öneri) | İletişim + disk I/O baskısı |
+| Trend Viewer eğri | Mümkün olduğunca az | Kısa örneklemeli çok eğri → iletişim doygunluğu |
+| PC çözünürlük seçenekleri | 1920×1080 / 1280×800 / 800×600 / 640×480 | Diğer değerler doğrudan seçilemez |
+
+**Alias edge case'leri:** Alias kullanan ekran background/foreground olamaz, array tag/expression/TrendViewer ile birlikte çalışmaz. Bu kısıtlar tasarım zamanında engellenir ama Component Library'den inject edilen öğelerde fark edilmeyebilir — alias'lı bir ekrana TrendViewer eklemek sessiz başarısızlık yerine bağlanmamış bir eğriyle sonuçlanır.
+
+**Dynamics ve Script aynı özellikte:** Bir özelliğe hem Dynamics hem script uygulanırsa script kazanır, Dynamics sessizce devre dışı kalır — hata mesajı yoktur. Bu, "Dynamics neden çalışmıyor" hatasının en yaygın gizli nedenidir. Özellik başına tek mekanizma kuralı zorunludur.
+
+**Index Register sınırı:** Index Register ile aynı nesne farklı istasyon/adres gösterebilir, ancak index değeri her değiştiğinde ilgili tüm nesneler yeni adresi yeniden okur — index hızlı değişirse (ör. her saniye makine değiştirme) iletişimde ani yük dalgaları oluşur. Index değişimi operatör tetiklemeli olmalı, otomatik döngü değil.
+
+**Görünmez nesne hâlâ poll eder:** Visible dinamiği ile gizlenmiş bir nesne ekrandadır ve bağlı tag'i poll edilmeye devam eder. Performans için "gizlemek" yeterli değildir; yük azaltmak için nesne tamamen ayrı bir ekrana/popup'a taşınmalıdır.
+
+**Expression tek satır sınırı:** Tag expression'ları tek satırlık C# ifadeleridir; çok adımlı mantık (if/else blokları, döngü) içermez. Karmaşık dönüşüm gerekiyorsa script modülüne veya bir ara internal tag'e geçilmelidir.
+
+## Optimizasyon
+
+**1. Background ekran ile statik yükü ayırma**
+Tüm ekranlarda tekrar eden statik öğeleri (logo, çerçeve, navigasyon barı) background ekrana taşımak, ön plan ekranların nesne sayısını ve dolayısıyla render süresini düşürür. Ayrıca tek noktadan bakım sağlar — bir projede 45 ekrana kopyalanmış navigasyon barı yerine tek background ekran 3+ saat tasarruf sağladı (bkz. Not 1).
+
+**2. Alias ile şablon ekran çoğaltma**
+Aynı tip ekipmanın N adedi için ayrı ayrı ekran çizmek yerine tek bir Alias'lı şablon ekran kullanmak, hem geliştirme hem bakım maliyetini N kat azaltır. Tek bir değişiklik tüm instance'lara yansır. Sınırı: alias background olamaz; ortak öğeler Component Library ile inject edilmelidir.
+
+**3. Index Register ile makine seçici deseni**
+Onlarca benzer makine için Alias'a alternatif olarak Index Register kullanmak (operatör makine no seçer → tek ekran ilgili adresleri okur) ekran sayısını 1'e indirir. Array olmayan ardışık adresli veride çok etkilidir (bkz. Not 4).
+
+**4. Ekranların tag yükünü poll grubuyla hizalama**
+Bir ekranda gösterilen tag'lerin poll grubu seçimi ekran tepkiselliğini doğrudan etkiler. Detay ekranındaki kritik göstergeler hızlı gruba, arka plandaki özet sayaçlar yavaş gruba atanmalı (poll grubu detayı: 01 belgesi Optimizasyon).
+
+**5. Trend/Data Logger yükünü ekran bazında sınırlama**
+Her ekrana çok eğrili trend koymak yerine, tarihsel analizi ayrı bir "Trend" ekranında toplamak ve detay ekranlarında yalnızca son birkaç dakikalık gerçek zamanlı küçük trend göstermek iletişim bütçesini korur.
+
+**6. Görsel varlık optimizasyonu**
+Raster görseller (PNG/JPEG) hedef boyutunda önceden ölçeklenmeli; runtime ölçeklemesi hem CPU hem bellek tüketir. Durum göstergeleri için raster yerine renk dinamikli vektör şekiller tercih edilmeli (bkz. Not 6).
+
+## Derin Teknik Detay
+
+**Nesne modeli neden dependency property tabanlı?**
+iX2'nin WPF temeli, her nesne özelliğini (Fill, Visible, Left, Top) bir dependency property olarak modeller. Bu, bir tag değerinin doğrudan bir görsel özelliğe bağlanmasını (binding) çerçeve düzeyinde mümkün kılar: tag değiştiğinde WPF'in property değişim bildirim mekanizması nesneyi otomatik yeniden çizer. Dynamics sekmesi aslında bu binding altyapısının görsel bir editörüdür. Bu yüzden bir özellik aynı anda hem binding (Dynamics) hem imperatif script ataması alamaz — WPF'te bir dependency property'nin tek bir "değer kaynağı önceliği" vardır ve imperatif atama (script) binding'i geçersiz kılar. "Dynamics neden çalışmadı" hatasının altında yatan mekanizma budur.
+
+**Background/foreground ekran kompozisyonu — neden Alias dışlanır?**
+Background ekran, ön plan ekranla aynı görsel ağaca (visual tree) birleştirilerek render edilir. Alias ise ekrana parametre geçmek için ekran açılışında bir tag-çözümleme bağlamı (context) kurar. Bir ekran hem background olarak başka bir ekrana gömülecek hem de kendi alias bağlamını koruyacaksa, hangi alias bağlamının geçerli olduğu belirsizleşir — aynı background ekranı farklı alias'larla birden çok ön plan ekran kullanabilir. iX bu belirsizliği tasarım kuralıyla (alias ekran background olamaz) baştan engeller. Bu, çalışma zamanı belirsizliği yerine tasarım zamanı kısıtı tercih eden bir mühendislik kararıdır.
+
+**Trend Viewer'ın iki veri yolu — RAM cache vs Data Logger**
+Trend Viewer doğrudan bir tag'e bağlandığında, değerleri sınırlı bir RAM ring buffer'dan okur (yalnızca birkaç dakikalık geçmiş). Data Logger'a (Log Item) bağlandığında ise veriyi proje veritabanından (SQLite tabanlı) çeker. Bu ikilik, gömülü panelde belleğin pahalı, diskin yavaş olmasından kaynaklanır: her tag'i sürekli diske loglamak I/O baskısı yaratır, bu yüzden gerçek zamanlı izleme RAM'den, tarihsel analiz diskten yapılır. "Son 4 saati gör" isteğinin Data Logger olmadan çalışmamasının nedeni budur (bkz. Not 3) — RAM buffer o derinliği tutmaz.
+
+**Telegram birleştirme — sürücü neden ardışık adresi sever?**
+Endüstriyel sürücüler PLC'den veri okurken her tag için ayrı istek yerine adres aralığını tek bir blok okuma telegramında toplar (block read / optimized read). Ardışık adresli (ör. M0–M11) taglar tek telegrama sığar; dağınık adresler her biri ayrı telegram gerektirir. Bunun nedeni protokol seviyesinde her telegram için sabit bir overhead (header, round-trip gecikmesi) olmasıdır — 10 tag'i tek telegramda okumak, 10 ayrı telegramdan kat kat ucuzdur. Bu yüzden PLC tarafında HMI değişkenlerini ardışık bir bellek bloğunda toplamak (bkz. Not 5) protokol seviyesinde optimizasyondur, sadece kozmetik düzen değil.
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : Web Tabanlı HMI Geliştirme — Sentez
 KATEGORİ    : hmi
 ALT_KATEGORI: web-based
-SEVİYE      : Orta–İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/hmi/web-based/01_opcua_clients_js.md"
     başlık: "JavaScript ile OPC UA İstemci Geliştirme"
@@ -53,7 +53,23 @@ BAĞLANTILAR :
 
 Bu sentez, "Bir PLC'deki veriyi tarayıcıya nasıl gerçek zamanlı taşırım?" sorusunun tam yanıtıdır. Beş belge birbirinin halkasıdır: OPC UA ve Modbus istemcileri PLC'ye bağlanır; WebSocket sunucusu bu veriyi tarayıcıya iter; React veya Vue frontend veriyi görsel bileşenlere dönüştürür. Tüm bu halkalar birlikte kurulduğunda, klasik SCADA yazılımlarının yerini alabilecek, tarayıcıdan erişilebilen, sıfır kurulum gerektiren bir web HMI ortaya çıkar.
 
-Temel kavramsal geçiş: "Polling değil, push." PLC'yi saniyede N kez sorgulamak yerine PLC verisi değişince sunucu tarayıcıya iter. Bu fark, hem ağ yükünü hem de PLC CPU yükünü dramatik biçimde azaltır; gözlemlenen oran 50 istemci × polling'e karşı tek OPC UA subscription + WebSocket broadcast.
+### Birleştirici İlke: Tarayıcı Endüstriyel Protokol Konuşamaz
+
+Tüm web HMI mimarisini tek bir kısıt belirler: **tarayıcı OPC UA (`opc.tcp://`) veya Modbus TCP (port 502) konuşamaz.** Tarayıcının JavaScript ortamı yalnızca HTTP(S), WebSocket ve WebRTC açabilir; rastgele ham TCP soketi açmasına güvenlik sandbox'ı izin vermez. Bu yüzden tarayıcı ile PLC arasına bir **gateway/bridge** koymak tercih değil, mimari zorunluluktur:
+
+```
+PLC  ──(OPC UA sub / Modbus poll)──►  GATEWAY (Node.js)  ──(WebSocket)──►  REACTİF UI (React/Vue)
+        endüstriyel protokol               köprü/çevirici          tarayıcı dostu kanal      reaktivite framework
+                                       node-opcua / jsmodbus              ws://, wss://         Zustand / Pinia
+```
+
+Bu zincir dört değişmez prensip üretir:
+1. **Köprü kaçınılmazdır.** node-opcua ve jsmodbus yalnızca Node.js'te çalışır (`net` modülü); tarayıcıya bundle edilemez. "Tarayıcı-içi OPC UA" kütüphaneleri (opcua-web) bile arkada bir WebSocket-to-opc.tcp gateway gerektirir — kısıt aşılamaz.
+2. **WebSocket çift yönlüdür, çünkü HMI yazma yapar.** Salt izleme SSE ile çözülebilirdi; ama operatör setpoint/komut gönderdiği için iki yönlü kanal (WebSocket) zorunludur.
+3. **Reaktivite framework'ü canlı durumu yönetir.** PLC'den gelen sürekli değişen değerler bir reaktif store'da (Zustand/Pinia) tutulur; UI bu store'a abone olarak yalnızca değişeni yeniden çizer.
+4. **Gerçek zamanlı zincir uçtan uca:** PLC → gateway → WebSocket → reaktif UI. Zincirin her halkası kendi kopma/yeniden-bağlanma, stale-tespit ve geri-basınç (backpressure) mekanizmasını taşımalıdır; tek bir halkanın eksiği tüm zinciri sessizce bozar.
+
+Temel kavramsal geçiş: "Polling değil, push." PLC'yi saniyede N kez sorgulamak yerine PLC verisi değişince sunucu tarayıcıya iter. Bu fark, hem ağ yükünü hem de PLC CPU yükünü dramatik biçimde azaltır; gözlemlenen oran 50 istemci × polling'e karşı tek OPC UA subscription + WebSocket broadcast. (OPC UA'da push gerçektir; Modbus subscription'a sahip olmadığı için polling kaçınılmazdır — gateway, Modbus'ın polling'ini tarayıcıya push'a *çevirir*.)
 
 ## Nasıl Çalışır
 
@@ -243,6 +259,28 @@ Temel kavramsal geçiş: "Polling değil, push." PLC'yi saniyede N kez sorgulama
 | Yazma komutu gerekiyor | WebSocket zorunlu | İki yönlü iletişim |
 | Belirli tag grubunu izleme | İstemci abone filtresi | Gereksiz mesajları engeller |
 | Üretim ortamı | WSS (WebSocket Secure over TLS) | Açık metin komut riski |
+
+### Tablo 7: Konsolide Edge-Case Haritası (Zincir Katmanına Göre)
+
+Her edge-case, gerçek zamanlı zincirin hangi halkasında ortaya çıktığıyla anlam kazanır. Ayrıntı için ilgili alt-dokümana bak.
+
+| Katman | Edge Case | Belirti | Çözüm | Detay |
+|---|---|---|---|---|
+| PLC→Gateway (OPC UA) | RevisedPublishingInterval | Veri beklenenden yavaş | Revised değeri esas al | `01` |
+| PLC→Gateway (OPC UA) | Reconnect'te subscription kaybı | `changed` susar | transferSubscriptions doğrula / yeniden kur | `01` |
+| PLC→Gateway (OPC UA) | Bad_TypeMismatch (REAL vs LREAL) | Write sessiz reddedilir | DataType oku+cache | `01` |
+| PLC→Gateway (Modbus) | Word/byte order | Saçma float/int32 | Doğru endian/swap | `02` |
+| PLC→Gateway (Modbus) | Max 125 reg / Illegal Address | Exception 0x02/0x03 | Blok böl, deliği atla | `02` |
+| PLC→Gateway (Modbus) | Poll re-entrancy | Poll'lar üst üste yığılır | `isPolling` guard + timeout | `02` |
+| Gateway→WS | Backpressure | Sunucu belleği şişer | `bufferedAmount` + drop | `05` |
+| Gateway→WS | Proxy idle timeout (60s) | Sessiz kopma | `proxy_read_timeout` + heartbeat | `05` |
+| Gateway→WS | Hayalet bağlantı | Sunucu "açık" sanır | Ping/pong + terminate | `05` |
+| WS→UI (React) | Selector yeni nesne | Gereksiz render | Atomik selector / `useShallow` | `03` |
+| WS→UI (React) | StrictMode çift mount | Çift listener | Cleanup + singleton | `03` |
+| WS→UI (Vue) | Reaktivite kaybı | Değer güncellenmez | `storeToRefs`(state)+store(action) | `04` |
+| WS→UI (Vue) | `deep: true` maliyeti | Yüksek CPU | Primitif computed izle | `04` |
+| Uçtan uca | Date serileştirme | `getTime is not a function` | Epoch number gönder | `03`,`04` |
+| Uçtan uca | Stale data | Eski değer güncel sanılır | Son-mesaj zaman damgası + isStale | tümü |
 
 ## Pratikte Nasıl Kullanılır
 
@@ -520,6 +558,39 @@ SSE (Server-Sent Events):
   ✗ Yazma komutu yoksa veya REST API ile ayrı ele alınıyorsa
 ```
 
+## Uzman Optimizasyon Sıralaması (Uçtan Uca)
+
+Optimizasyonu zincir halkasına göre **doğru sırayla** yap; yanlış katmandan başlamak (ör. frontend `useMemo` serpiştirmek) gerçek darboğazı gizler. Genel kural: **kaynağa en yakın halkadan başla, mesaj sayısını azalt, en son render'ı optimize et.**
+
+```
+ÖNCELİK SIRASI (en yüksek etki → en düşük):
+
+1. KAYNAK: Gereksiz veriyi hiç üretme
+   • OPC UA: subscription + deadband + samplingInterval katmanlama (01)
+   • Modbus: bitişik blok okuma + multi-rate polling + delta yayını (02)
+   → PLC'ye binen yükü ve değişim sıklığını burada keser.
+
+2. KÖPRÜ: Mesaj sayısını ve serileştirmeyi azalt
+   • Batch + delta (100ms pencere) → mesaj/s düşer (05)
+   • Tek JSON.stringify, çok send() → N× CPU kazancı (05)
+   • Backpressure: yavaş istemciyi drop et (05)
+
+3. KANAL: Gecikme ve kopmayı yönet
+   • Server-side throttle (yüksek frekanslı tag) (05)
+   • Heartbeat + proxy timeout ayarı + jitter'lı backoff (05)
+
+4. STATE: Render kaynağını azalt
+   • React: granüler+primitif selector → render tetiklenmesin (03)
+   • Vue: reaktivite doğruluğu + anahtar-bazlı computed (04)
+
+5. RENDER: Tetiklenen render'ı ucuzlat (en son)
+   • React: React.memo + stabil prop, RAF coalescing
+   • Vue: v-memo/v-once, shallowRef (büyük set)
+   • İkisi: büyük listeleri sanallaştır
+```
+
+**Neden bu sıra?** Frontend'de saniyede 1600 render'ı optimize etmeye çalışmak yerine, kaynakta (batch) 1600 mesajı 20'ye indirmek 80× kazanç verir ve frontend optimizasyonunu büyük ölçüde gereksiz kılar. Profiler olmadan render katmanından başlamak klasik erken optimizasyon hatasıdır. Pratikte madde 1–2 tipik HMI yükünün %90'ını çözer.
+
 ## Gerçek Proje Notları
 
 **Not 1 — 50 Teknisyen, 1 OPC UA Bağlantısı**
@@ -545,6 +616,15 @@ Bir legacy PLC'de `Promise.all` ile eş zamanlı dört Modbus isteği gönderild
 
 **Not 8 — WSS Olmadan IT Denetimi**
 HTTP üzerinden sunulan web HMI, `ws://` (şifresiz) WebSocket kullandı. IT güvenlik denetimi: "Tüm PLC komutları açık metin." Acil geçiş: Nginx SSL termination + `wss://` bağlantı. 2 saat çalışma süresi. Üretim ortamı planlamasında WSS baştan dahil edilmeli.
+
+**Not 9 — Zincirin En Zayıf Halkası "Stale" Tespitini Belirler**
+Bir tesiste WebSocket bağlıydı, frontend "CONNECTED" gösteriyordu — ama PLC→gateway OPC UA bağlantısı sessizce kopmuştu (NAT timeout). Operatör 4 dakika eski değerlere bakarak karar verdi. Ders: bağlantı durumu **uçtan uca** raporlanmalı. Gateway, PLC bağlantısı kopunca `CONNECTION_STATUS: DISCONNECTED` yayınlamalı; frontend bunu WebSocket'in kendi durumundan **ayrı** göstermeli. Her tag'in `timestamp`'ı + `maxAge` ile bağımsız stale tespiti son savunma hattıdır (`01` quality + `03`/`04` isStale). "WebSocket açık" ≠ "veri taze".
+
+**Not 10 — Date Serileştirme Sınıfı Bütün Zinciri İlgilendirir**
+Aynı hata (`timestamp.getTime is not a function`) hem React hem Vue tarafında çıktı: backend `Date` gönderdi, JSON onu string'e çevirdi, frontend `new Date()` ile geri kurmadı. Standart karar: **WebSocket üzerinde Date asla taşınmaz; epoch number (`Date.now()`) gönderilir, frontend `new Date(ms)` ile kurar.** Mesaj protokolünde `timestamp: number` tipi bunu derleme zamanına çeker. Tüm zincir aynı tip sözleşmesini paylaşmalı (TS tipini backend+frontend ortak kullan).
+
+**Not 11 — Backpressure Modbus Polling Hızına Geri Yansır (Zincir Etkisi)**
+Yavaş bir istemci WebSocket backpressure yarattı; bu, `broadcast`'i yavaşlatınca gateway'in event loop'u doldu ve Modbus poll interval'leri kaydı. Tek bir yavaş tablet, dolaylı olarak PLC okuma ritmini bozdu. Zincir halkaları izoledir sanılır ama Node.js tek event loop'ta birleşirler. Çözüm: backpressure drop (Not 5) + poll'u ayrı timer'da re-entrancy guard ile koru (`02`). Bir halkadaki yavaşlama tüm zincire yayılabilir.
 
 ## İlgili Konular
 

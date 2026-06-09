@@ -1,20 +1,30 @@
 ---
-KONU        : HMI Domaini — Üst Sentez
+KONU        : HMI Domaini — Üst Sentez (Uzman)
 KATEGORİ    : hmi
 ALT_KATEGORI: hmi
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/hmi/architecture/_synthesis.md"
-    başlık: "HMI Mimari — Sentez"
+    başlık: "HMI Mimari — Sentez (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/hmi/web-based/_synthesis.md"
-    başlık: "Web Tabanlı HMI Geliştirme — Sentez"
+    başlık: "Web Tabanlı HMI Geliştirme — Sentez (Uzman)"
+    güvenilirlik: deneyimsel
+  - url: "knowledge/hmi/desktop/"
+    başlık: "Masaüstü HMI (Python/.NET OPC UA, PyQt) — Uzman"
+    güvenilirlik: deneyimsel
+  - url: "knowledge/hmi/ix-developer/"
+    başlık: "Beijer iX Developer Panel HMI — Uzman"
     güvenilirlik: deneyimsel
 BAĞLANTILAR :
   - konu: "knowledge/hmi/architecture/_synthesis.md"
     ilişki: detaylandırır
   - konu: "knowledge/hmi/web-based/_synthesis.md"
+    ilişki: detaylandırır
+  - konu: "knowledge/hmi/desktop/01_opcua_clients_python.md"
+    ilişki: detaylandırır
+  - konu: "knowledge/hmi/ix-developer/01_architecture.md"
     ilişki: detaylandırır
   - konu: "knowledge/protocols/opc-ua/01_architecture.md"
     ilişki: kullanır
@@ -50,6 +60,24 @@ HMI domaini iki soru etrafında döner:
 İki katman birbirini önkoşul olarak gerektirir: Web stack veriyi taşır, mimari katman o veriye ne anlam yükleneceğini ve kimin ne yapabileceğini belirler. Birini diğersiz uygulamak eksik kalır.
 
 Temel ayrım tek cümlede: Bir e-ticaret sitesinde yanlış düğme tıklandığında "Geri Al" vardır; bir motor kontrol HMI'ında yanlış komut fabrika durmasına veya yaralanmaya yol açabilir. Bu kritiklik her katmanı — tasarımdan protokol seçimine, alarm önceliğinden audit log saklama süresine — doğrudan etkiler.
+
+Domain artık dört teknoloji ailesini kapsıyor: **web tabanlı** (React/Vue + WebSocket), **masaüstü** (Python asyncua / .NET / PyQt), **panel-HMI** (Beijer iX Developer) ve hepsinin üzerine oturan **mimari katman** (ISA-101/18.2/RBAC). Teknoloji değişir; mimari ilkeler değişmez.
+
+## Birleştirici İlke: HMI = Operatörün Penceresi
+
+Tüm HMI teknolojileri (web, masaüstü, panel) tek bir felsefenin uygulamalarıdır: **HMI operatörün pencereisidir — hızlı, dürüst ve güvenli olmalı.** Üç değişmez ilke her teknolojide tekrar eder:
+
+1. **Sunum ≠ kontrol durumu (ayrışma).** HMI gösterir ve komut iletir; kontrol mantığı PLC'dedir. Web'de MVVM/store, masaüstünde MVVM/dispatcher, panelde tag-engine — hepsi aynı ayrımı kurar. **Güvenlik mantığı (interlock) ASLA HMI'da değil, PLC'de.**
+2. **Dürüst pencere (stale-data dürüstlüğü).** Bağlantı koptuğunda HMI eski değeri canlıymış gibi göstermemeli — gri/italik overlay + yazma kilidi. "20 dakika önce 68°C, gerçekte 92°C" felaketi (web-based Not) her teknolojide geçerlidir: subscription kopması, OPC UA session kaybı, panel poll timeout.
+3. **En az ayrıcalık + iz (RBAC + audit).** Kim neyi yapabilir (rol) ve ne yaptı (audit). Frontend gizleme yetmez; yazma yetkisi her zaman backend/PLC tarafında da doğrulanmalı. Bu, IEC 62443 ve FDA 21 CFR Part 11'in HMI'daki yüzüdür.
+
+| İlke | Web (React/Vue) | Masaüstü (PyQt/.NET) | Panel (iX Developer) |
+|---|---|---|---|
+| Sunum≠kontrol | store + WebSocket | MVVM + dispatcher | tag engine + script |
+| Dürüst pencere | stale overlay + kilit | StatusCode + reconnect | comm-status tag + poll timeout |
+| RBAC + audit | usePermission + backend | rol + cert + audit | iX security groups + audit |
+
+**Uzman içgörüsü:** Yeni bir HMI teknolojisinde (web/masaüstü/panel) önce "bu üç ilke nasıl uygulanıyor?" diye sor. Teknoloji-özel API ezberi değil, ilke transferi. Bir saha sorununda (yanlış komut, kaçırılan alarm, eski veri) ihlal edilen ilkeyi bul.
 
 ## Nasıl Çalışır
 
@@ -412,6 +440,47 @@ Ekleme:
   ✗ Gecikme toleranssız kritik alarmlar → o tag'ler için anlık TAG_UPDATE
 ```
 
+## Uzman Edge Case Konsolidasyonu
+
+Dört teknoloji ailesini ve mimari katmanı kesen, alt belgelerin Derin Teknik Detay/Edge Case bölümlerinden süzülen kritik tuzaklar:
+
+```
+KATMAN/TEKNOLOJİ  EDGE CASE                       BELİRTİ                  KORUMA
+──────────────────────────────────────────────────────────────────────────────
+Mimari (ISA-101)  renk bolluğu                    "hangi kırmızı alarm?"   normal=gri, renk=anomali
+Mimari (18.2)     alarm chattering/flood          alarm körlüğü            histerezis+debounce, <10/10dk
+Mimari (18.2)     ack = çözüldü sanmak            aktif alarm kaybolur     koşul aktifken listede kalır
+Mimari (RBAC)     sadece frontend yetki           API doğrudan çağrılır    backend requirePermission
+Web               bileşen başına bağlantı         backend CPU %80+         singleton WS + OPC UA
+Web               reconnect sadece delta          değerler kaybolur        FULL_UPDATE
+Web               ws:// üretimde                  açık metin komut         wss:// (Nginx SSL)
+Web               NodeId ns hardcode              versiyon kayması         getNamespaceIndex dinamik
+Web               WS backpressure                 mesaj birikir            batch+delta, throttle
+Masaüstü          subscription UI thread'de       GUI donar                signal/slot, qasync
+Masaüstü          .NET cert/ApplicationUri        bağlantı reddi           cert eşleştir, RTC/NTP
+Masaüstü          asyncio event loop bloke        UI freeze                run_in_executor
+Panel(iX)         poll group hepsi tek hızda      PLC task jitter          poll group segmentasyon
+Panel(iX)         modal popup poll'u durdurmaz    görünmez ama poll'lanan  ekran kapsamı/scoping
+Tüm              stale data overlay yok          eski değer canlı sanılır comm-status + kilit
+```
+
+## Sentez Notları (Uzman)
+
+**Sentez Notu 1 — Üç İlke, Dört Teknoloji**
+Web, masaüstü ve panel HMI'lar farklı API'lar kullanır ama aynı üç ilkeyi uygular: sunum≠kontrol, dürüst pencere, RBAC+audit. Uzman yeni bir teknolojide bu üçün nasıl karşılandığını sorar (web'de store/WebSocket, masaüstünde MVVM/dispatcher, panelde tag-engine/security-groups). Teknoloji ezberi değil, ilke transferi. Bir saha tuhaflığında ihlal edilen ilke kök nedendir.
+
+**Sentez Notu 2 — Güvenlik Mantığı Asla HMI'da Değil**
+En tehlikeli HMI anti-pattern'i: interlock/güvenlik mantığını HMI'a koymak. HMI çöker, donar, bağlantı kopar — güvenlik onunla birlikte çöker. Güvenlik mantığı PLC'de (tercihen ayrı Task_Safety), HMI yalnızca gösterir ve komut iletir. "Sunum≠kontrol" ilkesi bir konfor değil, güvenlik gereğidir. RBAC yazma yetkisi de PLC/backend tarafında doğrulanmalı — frontend gizleme sadece UX'tir.
+
+**Sentez Notu 3 — Dürüst Pencere: Stale Data En Sinsi Hata**
+HMI'ın en sinsi hatası "eski değeri canlıymış gibi göstermek"tir — çünkü hata üretmez, ekran normal görünür. Bağlantı koptuğunda (OPC UA session, WebSocket, panel poll) HMI bunu görünür kılmalı: gri/italik overlay + yazma kilidi. Bu, protocols/_synthesis'teki "raporlama ≠ kontrol" ve debugging'deki "çalışıyor ≠ doğru" ilkelerinin HMI'daki yüzüdür. Operatör neye baktığını bilmeli.
+
+**Sentez Notu 4 — Subscription/Push Her Katmanda Polling'i Yener**
+OPC UA subscription (push) polling'den hem CPU hem ağ açısından üstündür ve bu web/masaüstü/panel hepsinde geçerlidir. Polling yalnızca OPC UA sunucusu olmayan legacy Modbus cihazlarda kaçınılmazdır. Bu, protokol katmanındaki (protocols/_synthesis) "push > poll" ekseninin HMI'a yansımasıdır. Sampling/publishing interval mutlaka kaynak task cycle'ıyla hizalanmalı (daha hızlı örnekleme aynı değeri tekrar verir).
+
+**Sentez Notu 5 — Teknoloji Seçimi: Bağlam, Ekip, Ölçek**
+Web HMI (sıfır lisans, platform-bağımsız, ama alarm/historian'ı kendin yazarsın), SCADA platform (Ignition/WinCC — dahili alarm/historian ama lisans+vendor bağımlılığı), masaüstü (yerel kurulum, Python/.NET ekibi), panel-HMI (makine başı, dayanıklı, sınırlı esneklik). Doğru seçim teknolojinin "iyi/kötü"sü değil; ekibin bildiği + ölçek + lisans + erişim gereksinimidir. Mimari ilkeler (üç ilke) seçilen teknolojiden bağımsız uygulanır.
+
 ## İlgili Konular
 
 ```
@@ -433,11 +502,16 @@ knowledge/hmi/                        ← Şu an buradasınız (üst sentez)
 │   ├── 05_realtime_websocket.md      → WebSocket sunucu/istemci tam implementasyon
 │   └── _synthesis.md                 → Web stack beş belgesinin sentezi
 │
-├── desktop/                          ← HENÜZ DOLDURULMADI (gelecekte eklenecek)
-│   └── (stub)                        → Masaüstü HMI uygulamaları, WPF/Qt, yerel kurulum
+├── desktop/                          ← TAMAMLANDI (Uzman)
+│   ├── 01_opcua_clients_python.md    → asyncua, subscription threading, reconnect
+│   ├── 02_opcua_clients_dotnet.md    → OPC Foundation UA .NET, Session/Subscription, dispatcher
+│   └── 03_pyqt_patterns.md           → signal/slot cross-thread, qasync, GUI thread kilitleme
 │
-└── ix-developer/                     ← HENÜZ DOLDURULMADI (gelecekte eklenecek)
-    └── (stub)                        → ABB IX Developer, panel HMI programlama
+└── ix-developer/                     ← TAMAMLANDI (Uzman)
+    ├── 01_architecture.md            → Beijer iX runtime, tag engine, poll groups
+    ├── 02_codesys_connection.md      → ARTI vs OPC UA, NodeId, tag mapping
+    ├── 03_screen_design.md           → nesne/alias/index register, performans
+    └── 04_scripting.md               → C# iX script engine, tag erişimi, tetikleyiciler
 
 Protokol katmanı:
 knowledge/protocols/

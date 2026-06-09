@@ -2,7 +2,7 @@
 KONU        : Masaüstü HMI için OPC UA Python İstemcileri (asyncua)
 KATEGORİ    : hmi
 ALT_KATEGORI: desktop
-SEVİYE      : İleri
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://github.com/FreeOpcUa/opcua-asyncio"
@@ -1056,6 +1056,72 @@ qasync, PyQt5/6 ve PySide2/6'yı destekler; topluluk tarafından aktif tutulur. 
 
 **Not 7 — Production Veri Kaybı**
 asyncua subscription handler'ın `datachange_notification` callback'i, sunucudan gelen her publish yanıtında asyncio event loop thread'inde çağrılır. Bu callback'te herhangi bir blocking işlem yapılırsa sonraki notification'lar kuyrukta birikir. 200 MonitoredItem, 500ms interval → saniyede ~400 callback çağrısı. Thread-safe `queue.Queue(maxsize=10_000)` ile 6 aylık production ortamında veri kaybı yaşanmamıştır.
+
+**Not 8 — `read_values` vs `read_value` ve "Bad_TooManyOperations"**
+Tek tek `await node.read_value()` çağrısı, N tag için N adet ayrı ReadRequest/round-trip üretir; 50 tag için 50 RTT ≈ 50 × ağ gecikmesi. `client.read_values(nodes)` ise hepsini tek Read servisine paketler. Ancak dikkat: CODESYS sunucusu tek istekteki node sayısını `MaxNodesPerRead` (varsayılan tipik 1000-10000 arası, ama bazı SL lisanslarında daha düşük) ile sınırlar. Limiti aşan toplu okuma `Bad_TooManyOperations` döner — istek tamamen reddedilir, kısmî sonuç gelmez. Çözüm: tag listesini 500'lük chunk'lara bölerek `read_values` çağırın. Gerçek vakada 1800 tag tek istekte gönderilince sunucu sessizce bağlantıyı düşürdü; 256'lık chunk'lara bölünce stabil hale geldi.
+
+**Not 9 — `auto_reconnect` Session Yeniden Aktive Eder, MonitoredItem'leri Değil**
+asyncua'da `connect(auto_reconnect=True)` transport koptuğunda secure channel + session'ı yeniden açar. Ancak sunucu session'ı `SessionTimeout` süresi boyunca tutmadıysa (örneğin kablo 90sn kopuk kaldı, timeout 60sn idi), eski session sunucuda silinir; yeniden aktive `Bad_SessionIdInvalid` ile başarısız olur ve asyncua YENİ session açar. Yeni session'da eski subscription'lar YOKTUR — `TransferSubscriptions` asyncua'nın auto_reconnect'inde otomatik denenir ama CODESYS bunu her zaman desteklemez. Sonuç: bağlantı "geri geldi" görünür ama hiçbir `datachange_notification` gelmez. Güvenli pattern: `status_change_notification` içinde `Bad_*` görünce subscription'ı tamamen silip yeniden kur (belgedeki reconnect dış-döngü pattern'i bu yüzden tercih edilir).
+
+**Not 10 — `ua.uatypes.datetime_to_string` ve Timezone Tuzağı**
+asyncua, `SourceTimestamp`/`ServerTimestamp` değerlerini timezone-naive UTC `datetime` olarak döndürür (v2.0'da `datetime.now(timezone.utc)` değil, tzinfo=None). `datetime.now()` ile karşılaştırıp "stale data" hesabı yapan kod, sistem yerel saati UTC+3 ise 3 saat sapma üretir ve her değeri "bayat" sanır. Çözüm: karşılaştırmaları daima `datetime.now(timezone.utc).replace(tzinfo=None)` ile yapın veya asyncua timestamp'ine `tzinfo=timezone.utc` atayın. Bu, sahada en sık görülen ve fark edilmesi en zor hatalardan biridir çünkü değerler "doğru ama eski" görünür.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Aşağıdaki sınırlar asyncua + CODESYS OPC UA sunucusu kombinasyonunda sahada gözlemlenmiş gerçek davranışları yansıtır. Çoğu, sunucu tarafı revizyonu (server revise) veya Python tarafı kaynak limiti kaynaklıdır.
+
+| Sınır / Edge Case | Davranış | Pratik Etki |
+|---|---|---|
+| `create_subscription(period=10)` | CODESYS minimum `PublishingInterval`'ı revize eder (tipik 50-100ms) | Ayarladığınız değil, `sub.subscription.RevisedPublishingInterval` geçerlidir; loglayın |
+| `SamplingInterval=0` | "En hızlı sunucu örnekleme" anlamına gelir, 0ms değil | CODESYS task çevrim süresine (örn. 10ms) sabitlenir |
+| `QueueSize=1` + `DiscardOldest=True` | İki publish arası birden çok değişim olursa ARA değerler kaybolur | Sayaç/edge-triggered sinyal kaçırılır; sayaç için `QueueSize` büyük tutun |
+| MaxSessions doldu (varsayılan 10) | `Bad_TooManySessions`; bağlantı reddedilir | Ghost session temizlenene veya runtime restart edilene kadar bağlanılamaz |
+| MaxSubscriptions / MaxMonitoredItems | CODESYS lisansa göre sınırlar (SL'de düşük) | Aşımda `Bad_TooManyMonitoredItems`; yeni item eklenmez |
+| String tag adı çok uzun | `MaxStringLength` (TransportQuotas) aşılırsa `Bad_EncodingLimitsExceeded` | Çok derin GVL hiyerarşilerinde NodeId string'i 1KB'yi aşabilir |
+| Çok büyük array okuma | `MaxArrayLength`/`MaxMessageSize` aşılırsa istek reddedilir | 65535 elemanlı array varsayılan limiti zorlar; quota'ları artırın |
+| asyncio event loop tek thread | GIL nedeniyle CPU-bound işlem TÜM I/O'yu durdurur | Handler'da `numpy`/parse yapmayın; ayrı `ThreadPoolExecutor`'a atın |
+| `client.disconnect()` çağrılmadan process kill | Sunucuda session SessionTimeout dolana kadar yaşar | 10 session + 60sn timeout → 10 dk boyunca yeni bağlantı reddi mümkün |
+
+**GIL ve event loop bloklanması:** asyncua tek bir asyncio event loop'unda çalışır. Bu loop aynı zamanda Python GIL'i tutar. `datachange_notification` veya bir task içinde 50ms süren senkron bir CPU işlemi (büyük JSON parse, pandas işlemi, regex) yaparsanız, o 50ms boyunca HİÇBİR publish işlenmez, KeepAlive yanıtı gönderilemez ve yeterince uzun sürerse sunucu session'ı timeout'a düşürür. CPU-bound işi `loop.run_in_executor(None, fn)` ile thread havuzuna devredin; saf hesaplama için `ProcessPoolExecutor` gerekir.
+
+**Reconnect sırasında "yarı-bağlı" durum:** Transport koptuğunda asyncua'nın watchdog'u (`watchdog_intervall`, varsayılan 1sn) bunu fark edene kadar `read_value()` çağrıları `asyncio.TimeoutError` veya `ConnectionError` yerine ASILI kalabilir (`timeout` parametresi kadar, varsayılan 4sn). Bu pencerede yapılan yazma komutları belirsiz durumdadır — komutun PLC'ye ulaşıp ulaşmadığı bilinmez. Kritik komutlar (motor start/stop) için idempotent tasarım ve okuma-doğrulama (write sonrası read-back) zorunludur.
+
+## Optimizasyon
+
+**1. Polling yerine Subscription — temel kural.** 1000 tag'i 100ms'de bir `read_values` ile çekmek saniyede 10 tam Read servisi ve 10.000 değer transferi demektir — değerlerin çoğu değişmese bile. Subscription'da yalnızca DEĞİŞEN değerler publish edilir; durağan bir proseste trafik %70-90 azalır (`protocols/opc-ua/04_subscriptions`). HMI'da varsayılan tercih daima subscription olmalıdır; polling yalnızca tek seferlik okuma veya çok düşük frekanslı arşiv için.
+
+**2. Tek subscription, çok MonitoredItem.** Her node için ayrı subscription açmayın. Tek bir `create_subscription(period)` altında yüzlerce MonitoredItem toplanır; sunucu hepsini tek publish mesajında gönderir. 200 ayrı subscription = 200 ayrı publish döngüsü = ağır overhead.
+
+**3. `Deadband` ile gereksiz publish'i kes.** Analog değerler (sıcaklık, basınç) sürekli mikro-dalgalanır. `DataChangeFilter` ile `DeadbandType.Absolute` veya `Percent` ayarlayarak yalnızca anlamlı değişimi bildirin:
+```python
+from asyncua import ua
+mfilter = ua.DataChangeFilter()
+mfilter.Trigger = ua.DataChangeTrigger.StatusValue
+mfilter.DeadbandType = ua.DeadbandType.Absolute
+mfilter.DeadbandValue = 0.5   # 0.5°C altı değişimi bildirme
+# subscribe_data_change(node, attr=ua.AttributeIds.Value, ...) ile filtre uygula
+```
+Bir trend ekranında deadband=0.2 bar uygulamak publish hızını 8x düşürmüştür.
+
+**4. NodeId çözümlemesini önbelleğe al.** `get_node()` ağ çağrısı yapmaz ama her döngüde string parse eder. Node nesnelerini ve `get_namespace_index` sonucunu oturum başında bir kez oluşturup dict'te saklayın. Subscription handler içinde asla `get_namespace_index` veya yeni `get_node` çağırmayın.
+
+**5. UI güncellemesini batch'le, her notification'da boyama yapma.** Saniyede 400 notification gelirken her birinde `label.setText()` çağırmak Qt'yi boğar. Handler yalnızca `queue.Queue`'ya yazsın; bir `QTimer` (100ms) queue'yu boşaltıp SON değeri tek seferde UI'ye yazsın (coalescing). Bu, belgedeki Qt entegrasyon örneğinde uygulanmıştır.
+
+**6. `MaxNotificationsPerPublish` ve `PublishingInterval` dengesi.** Çok düşük publishing interval (50ms) + çok sayıda item → sunucu CPU'su ve ağ doyar. HMI insan gözü için 250-1000ms yeterlidir; yalnızca alarm/interlock node'larını ayrı, düşük-interval'lı subscription'a koyun. Veri tipine göre iki subscription: "hızlı" (alarmlar, 100ms) ve "yavaş" (trend/gösterge, 1000ms).
+
+**7. `read_values` chunk boyutu ayarı.** Toplu okumada chunk boyutunu sunucu `MaxNodesPerRead`'in altında tutun (256-512 güvenli). Çok küçük chunk RTT'yi artırır, çok büyük chunk reddedilir — 256-512 genelde optimum noktadır.
+
+## Derin Teknik Detay
+
+**asyncua neden tek event loop + tek thread tasarlandı?** OPC UA binary protokolü (UA-TCP), tek bir secure channel üzerinden request/response korelasyonunu `RequestHandle` ile yapar. asyncua, gelen TCP byte stream'ini tek bir `asyncio` okuma task'ında (`_uasocket` protokolü) parse eder ve her response'u, bekleyen `Future`'a `RequestHandle` üzerinden eşler. Tek loop tasarımı, bu korelasyonu kilit (lock) olmadan, race condition riski olmadan yapmayı sağlar — tüm okuma/yazma aynı thread'de sıralı gerçekleşir. Multi-thread bir tasarım, her socket erişimine mutex koymayı gerektirirdi ki bu hem yavaş hem hata-açıktır. Bedeli: CPU-bound iş loop'u bloke eder (yukarıdaki GIL notu).
+
+**Publish mekanizması neden "client polls for notifications" şeklinde çalışır?** OPC UA'da sunucu istemciye proaktif mesaj göndermez; bunun yerine istemci, sunucuya önceden bir havuz dolusu `PublishRequest` gönderir (asyncua bunu otomatik yapar, varsayılan birkaç adet). Sunucunun bildirecek verisi olduğunda bu bekleyen request'lerden birine `PublishResponse` ile yanıt verir. Bu "ters polling" tasarımının nedeni: OPC UA firewall/NAT dostu olmak ister — bağlantı daima istemciden açılır, sunucu hiç connect-back yapmaz. asyncua, havuzdaki PublishRequest sayısı azalınca otomatik yenisini gönderir; eğer istemci (event loop bloke olduğu için) yeni PublishRequest gönderemezse, sunucu bildirecek veriyi tutar ama gönderemez — bu yüzden event loop'u canlı tutmak kritiktir.
+
+**`SubHandler.datachange_notification` hangi thread'de, neden senkron?** asyncua, PublishResponse'u parse ettikten sonra handler metodunu DOĞRUDAN event loop thread'inde, senkron olarak çağırır (await etmez — handler `async def` olabilir de olmayabilir de; senkron tercih edilir). Bu bilinçli bir tasarımdır: handler'ın hızlı ve non-blocking olması beklenir, böylece publish-parse-dispatch döngüsü kesintisiz akar. Handler `async` yapılırsa asyncua onu schedule eder ama sıralama garantisi zayıflar. Qt entegrasyonunda handler senkron tutulup yalnızca thread-safe `queue.Queue.put_nowait` yapılır; gerçek işleme Qt tarafına (farklı bir thread'deki event loop) bırakılır.
+
+**python-opcua (sync) vs asyncua — neden geçiş yapıldı?** Eski `python-opcua` paketi, her servis çağrısı için kendi içinde thread + concurrent.futures kullanan senkron bir API sunuyordu. Bu, subscription handler'ın ayrı bir thread'de çalışması (Qt ile doğrudan uyumsuz, sinyal gerekir) ve thread güvenliği için karmaşık kilitleme anlamına geliyordu. asyncio'nun olgunlaşmasıyla (Python 3.5+ `async`/`await`), FreeOpcUa ekibi tüm I/O'yu tek loop'a taşıyarak thread karmaşıklığını yok etti; sonuç daha az kod, daha öngörülebilir sıralama oldu. `asyncua.sync` modülü, async API'yi bir arka plan `ThreadLoop` üzerinde sarmalayıp senkron çağrı görüntüsü verir — yani sync API artık async motorun üzerine kurulu bir cephedir, tersi değil. Bu yüzden `asyncua.sync` kullanırken bile altta tek bir asyncio loop döner ve `ThreadLoop` zorunludur.
+
+**Secure channel vs Session ayrımı — neden iki katman?** UA-TCP'de güvenlik (imzalama/şifreleme) "secure channel" katmanında, kimlik/oturum durumu ise "session" katmanında tutulur. Bir secure channel kopsa bile (geçici ağ sorunu) session sunucuda yaşamaya devam edebilir ve yeni bir channel'a "aktive" edilebilir — `ActivateSession`. asyncua'nın `auto_reconnect`'i tam olarak bunu dener: önce yeni secure channel açar, sonra eski session'ı ona aktive eder. Başarılı olursa subscription'lar korunur. Bu iki-katmanlı tasarım, kısa ağ kesintilerinde tam yeniden bağlanma (yeni session + yeni subscription) maliyetinden kaçınmak için OPC UA'nın getirdiği temel dayanıklılık mekanizmasıdır.
 
 ## İlgili Konular
 

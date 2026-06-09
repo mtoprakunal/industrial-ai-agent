@@ -2,8 +2,8 @@
 KONU        : HMI Kullanıcı Yetkilendirme ve Erişim Kontrolü
 KATEGORİ    : hmi
 ALT_KATEGORI: architecture
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://plcprogramming.io/blog/hmi-design-best-practices-complete-guide"
     başlık: "PLCProgramming.io — HMI Design Best Practices 2026"
@@ -558,6 +558,118 @@ Bir tesiste session timeout 5 dakikaydı. Operatör rapor oluştururken oturum k
 
 **Not 4 — Mühendis Onayı Mekanizmasının FDA Denetimini Geçmesi**  
 Bir ilaç üretim tesisinde FDA 21 CFR Part 11 denetimi yapıldı. "Kritik parametreler kim tarafından değiştiriliyor?" sorusuna mühendis onaylı yazma mekanizması + immutable audit log ile yanıt verildi. Denetçi: "Bu çok iyi uygulanmış." Mekanizma, FDA denetimini geçmenin kritik bir unsuru oldu.
+
+**Not 5 — Acil Durumda Kilitli Hesap Felaketi (Erişilebilirlik vs Güvenlik)**  
+Bir tesiste "5 başarısız giriş → hesap kilitlenir" politikası vardı. Gece vardiyasında bir operatör panik içinde (gerçek bir proses anomalisi sırasında) şifresini yanlış girdi, hesap kilitlendi. Admin ulaşılamıyordu. Operatör müdahale ekranına giremedi, kritik dakikalar kayboldu. IEC 62443 güvenliği savunurken **availability** (erişilebilirlik) OT'de IT'den daha öncelikli olabilir — kilit, güvenlik adına emniyeti tehlikeye atmamalı. Çözüm: kritik kontrol ekranları için ayrı bir "acil erişim" yolu (break-glass): fiziksel anahtar + yoğun loglama ile geçici tam erişim; ayrıca kilitlenen hesap için yerel ikincil admin. Ders: OT'de güvenlik politikası asla emniyetli müdahaleyi engellememeli; CIA üçlüsü OT'de genelde AIC sırasındadır.
+
+**Not 6 — JWT'nin Sunucuda İptal Edilememesi ve İşten Çıkarılan Çalışan**  
+Bir teknisyenin işine son verildi. IT hesabını "devre dışı" yaptı (veritabanında `active=false`). Ama o kişinin elindeki geçerli JWT token'ın süresi (8 saat) henüz dolmamıştı; HMI backend her istekte yalnızca imzayı doğruluyor, veritabanını kontrol etmiyordu. Teknisyen 6 saat boyunca hâlâ komut gönderebildi. Sorun: stateless JWT sunucu-tarafı iptali (revocation) doğal olarak desteklemez. Çözümler: (1) kısa ömürlü access token (5-15 dk) + refresh token (refresh sırasında DB `active` kontrolü), (2) sunucu-tarafı oturum/token kara listesi (Redis), (3) kritik yazmalarda her istekte `active` kontrolü. Ders: "JWT pratik" doğru ama iptal senaryosu tasarlanmazsa devre dışı bırakılan kullanıcı token süresi kadar yaşar.
+
+**Not 7 — IEC 62443 Zone/Conduit ve HMI'ın Yanlış Bölgede Olması**  
+Bir denetimde HMI Panel PC'lerinin hem kontrol ağına (OT) hem de ofis ağına (IT, internet erişimli) bağlı olduğu görüldü — operatörler aynı panelde e-posta açıyordu. IEC 62443 **zone & conduit** modeli farklı güven seviyelerini ayrı bölgelere koyar; bölgeler arası trafik yalnızca denetimli "conduit" (güvenlik duvarı/DMZ) üzerinden geçer. HMI ile PLC aynı OT bölgesinde, IT ile arada DMZ olmalıydı. Mimari yeniden segmentlendi: HMI yalnızca OT bölgesinde, raporlama verisi tek yönlü DMZ üzerinden IT'ye akıyor. Ders: kullanıcı yetkilendirme tek başına yetmez; ağ segmentasyonu (62443) saldırı yüzeyini katman olarak daraltır — auth uygulama katmanı, segmentasyon ağ katmanı savunmasıdır.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Yetkilendirme tasarımı "mutlu yol"da basittir; gerçek zorluk istisna durumlardadır — kilitli hesap, kopuk bağlantı, işten çıkarma, acil müdahale. Aşağıdaki tablo bu sınır koşulları toplar.
+
+| Edge Case | Tetikleyen Koşul | Risk | Doğru Davranış |
+|---|---|---|---|
+| Acil erişim kilidi | Hesap kilitli + admin yok + kriz anı | Emniyet müdahalesi engellenir | Break-glass yolu (fiziksel anahtar + yoğun log) |
+| JWT iptal edilemez | Kullanıcı devre dışı ama token geçerli | Eski çalışan komut gönderir | Kısa access + refresh'te DB kontrol / token kara liste |
+| Bağlantı kopukken yetki | OPC UA down, oturum aktif | Yazma nereye gider belirsiz | Yetki ✓ olsa bile bağlantı yoksa yazma kilitli (bkz. 02) |
+| Paylaşılan istasyon | Operatör çıkış yapmadan ayrıldı | Bir sonraki kişi onun yetkisiyle iş yapar | Inactivity timeout + RFID "kart çekince çıkış" |
+| Yetki yükseltme yarışı | Mühendis onayı sırasında oturum biter | Yarım kalan kritik yazma | Onay işlemi atomik; timeout onayı iptal eder |
+| Saat bazlı yetki by-pass | İstemci saatiyle vardiya kontrolü | İstemci saati değişip kısıt aşılır | Vardiya/zaman kontrolü sunucu saatiyle |
+| Frontend-only kontrol | UI gizleme var, API açık | F12 → doğrudan API çağrısı | Backend middleware her endpoint'te |
+| Audit log sonradan eklenir | Güvenlik "sonraya bırakıldı" | Geçmiş yazmalar anonim | İlk günden audit; immutable, append-only |
+
+**Sayısal eşikler ve politika limitleri:**
+```
+Inactivity timeout (operatör)  : 15 dk (vardiya akışı); ofis/admin 5-10 dk
+Access token ömrü (JWT)        : 5-15 dk (kısa) + refresh token (saatler/gün)
+Vardiya oturumu (max)          : ~8-12 saat (vardiya sonu zorunlu yeniden giriş)
+Başarısız giriş kilidi         : 5 deneme (ama OT'de break-glass şart)
+Şifre min uzunluk              : ≥8, karma karakter; aşırı karmaşıklık = post-it riski
+Audit log saklama              : ≥1 yıl; FDA 21 CFR Part 11: ≥3 yıl, immutable
+RFID + PIN giriş süresi        : 5-8 sn (eldivenli operatör için pratik tavan)
+```
+
+## Optimizasyon
+
+Yetkilendirmede "optimizasyon" hız değil **risk-azaltma ve kullanılabilirlik dengesidir**: en az ayrıcalık (least privilege) ile operatörü engellememe arasındaki dengeyi doğru kurmak.
+
+**Optimizasyon önceliği (güvenlik mimarisinden kullanıcı deneyimine):**
+```
+1. EN AZ AYRICALIK (least privilege) — Doğru rol-izin haritası (en yüksek etki)
+   → Her rol yalnızca işini yapacak izinlere sahip; "her ihtimale karşı geniş
+     yetki" anti-deseni. Operatör güvenlik limiti değiştiremez.
+   → Privilege creep'i denetle: zamanla biriken gereksiz izinleri periyodik temizle.
+
+2. DERİNLİK SAVUNMASI (defense in depth) — Tek katmana güvenme
+   → Ağ (62443 zone/conduit) + uygulama (backend middleware) + PLC (değer clamp)
+   → Frontend gizleme yalnızca UX; güvenlik backend'de.
+
+3. KİMLİK AKIŞI — Giriş hızını UX'i bozmadan güvende tut
+   → RFID + PIN (fabrika zemini), kart çekince oto-çıkış
+   → Kurumsal SSO/LDAP entegrasyonu: tek kimlik, merkezi devre dışı bırakma
+
+4. OTURUM YÖNETİMİ — Token ömrü + iptal
+   → Kısa access + refresh; refresh'te `active` kontrolü → anında devre dışı
+   → Inactivity timeout, çıkış öncesi uyarı
+
+5. DENETLENEBİLİRLİK — Audit'i performanslı tut (en son)
+   → Append-only, indeksli; yazma yolu üzerinde asenkron logla (yazmayı bloklama)
+   → Yoğun yazmada audit'i batch'le ama ASLA atla
+```
+
+**Least privilege'in pratik testi:**
+```
+Her rol için sor: "Bu izin olmadan kullanıcı işini yapamaz mı?"
+  Yapabilir   → izin gereksiz, kaldır (least privilege)
+  Yapamaz     → izin gerekli, tut
+Operatör reçete düzenleyebilmeli mi? → Hayır, sadece seçmeli → izni kaldır.
+Privilege creep örneği: Devreye alma için mühendise verilen geçici ADMIN,
+  proje bitince geri alınmaz → 2 yıl sonra hâlâ ADMIN. Periyodik erişim gözden
+  geçirme (access review) bunu yakalar.
+```
+
+## Derin Teknik Detay
+
+**RBAC neden kullanıcı-izin doğrudan eşlemesinden üstün — dolaylama (indirection) katmanı:**
+RBAC'ın özü `Kullanıcı → Rol → İzin` şeklindeki **çift dolaylamadır**. Kullanıcıya doğrudan izin atansaydı, 50 kullanıcı × 30 izin = 1500 ilişki yönetilirdi ve bir izni değiştirmek için tüm kullanıcıların taranması gerekirdi. Rol katmanı bunu `(50 kullanıcı → 5 rol) + (5 rol → 30 izin)` = ~80 ilişkiye indirir. Daha önemlisi: politika (rol-izin) ile atama (kullanıcı-rol) **ayrışır**. Güvenlik mühendisi "Operatör neler yapabilir" politikasını tek yerde tanımlar; İK "Ali bir Operatördür" atamasını ayrı yapar. Bu, *separation of duties* (görevlerin ayrılığı) ilkesinin teknik karşılığıdır. ABAC (attribute-based) bir adım öteye gider — kararı çalışma-zamanı niteliklerine (vardiya, lokasyon, ekipman durumu) bağlar — ama her erişim kararı bir politika değerlendirmesi gerektirdiğinden karmaşıktır; endüstriyel HMI'da RBAC + birkaç ABAC kuralı (ör. vardiya kısıtı) pragmatik orta yoldur.
+
+**Stateless JWT vs stateful session — iptal sorununun kökü:**
+```
+Stateful session (sunucu hafızasında):
+  İstemci → session_id (çerez) → sunucu her istekte DB/store'dan oturumu okur
+  İptal: oturumu store'dan sil → anında geçersiz. ✓
+  Maliyet: her istekte store okuma; ölçeklenmede yapışkan oturum.
+
+Stateless JWT (kendinden-doğrulanan):
+  Token kullanıcı+rol+expiry taşır, imzalıdır; sunucu yalnızca imzayı doğrular
+  İptal: doğal olarak YOK — token süresi dolana kadar geçerli. ✗ (Not 6)
+  Maliyet: yok (DB'siz doğrulama); avantaj ölçeklenme.
+```
+Mühendislik tercihi: HMI'da kullanıcı sayısı az ve iptal kritik olduğundan, saf stateless JWT genelde yanlış seçimdir. Doğru desen **hibrit**: kısa ömürlü (5-15 dk) stateless access token + uzun ömürlü stateful refresh token. Erişim hızlıdır (DB'siz), ama iptal en geç bir refresh döngüsünde (≤15 dk) etkili olur; kritik yazmalarda ek olarak her istekte `active` bayrağı kontrol edilebilir.
+
+**Defense in depth — HMI'ın üç savunma katmanı neden ayrı:**
+```
+Katman 1 — Ağ (IEC 62443 zone/conduit):
+  HMI ve PLC aynı OT zone; IT ile arada DMZ/firewall (conduit).
+  Saldırgan HMI'a ağ üzerinden ulaşamaz. → Çevresel savunma.
+
+Katman 2 — Uygulama (backend authZ middleware):
+  Her API isteğinde requirePermission(). UI gizleme yalnızca UX.
+  F12 / Postman ile API çağrılsa bile yetki kontrol edilir. → Mantıksal savunma.
+
+Katman 3 — PLC (değer doğrulama / clamp):
+  HMI'dan gelen yazma değeri PLC'de aralık/güvenlik mantığıyla sınırlanır.
+  Yetkili kullanıcı bile fiziksel olarak tehlikeli değer yazamaz. → Fiziksel savunma.
+```
+Bu üç katman bağımsızdır: birinin atlanması (ör. yanlış yapılandırılmış firewall) diğerlerinin devrede olmasıyla telafi edilir. Tek katmana güvenmek (yalnızca frontend gizleme — Hata 2) tek nokta arızası yaratır. Güvenlik mantığının asla *yalnızca* HMI'da olmaması ilkesi de buradan gelir: HMI çökse bile PLC clamp'i fiziksel sınırı korur.
+
+**Audit trail'in immutability'si neden append-only olmalı:**
+Audit log'un değeri **değiştirilemezliğinden** gelir; değiştirilebilen bir log delil değildir. Pratikte bu append-only tasarımla sağlanır: kayıtlar yalnızca eklenir, hiç güncellenmez/silinmez (UPDATE/DELETE izni log tablosunda yok). FDA 21 CFR Part 11 ve adli izlenebilirlik için ileri seviyede hash-zincirleme (her kayıt önceki kaydın hash'ini içerir — blockchain-benzeri) kullanılır; bir kayıt değiştirilirse zincir kırılır, tahrifat tespit edilir. Performans için yazma yolu üzerinde audit **asenkron** yapılır (yazma işlemini bloklama) ama asla atlanmaz — kuyruk dolarsa bile kayıp olmamalı (dayanıklı kuyruk).
 
 ## İlgili Konular
 

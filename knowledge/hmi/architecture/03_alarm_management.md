@@ -2,8 +2,8 @@
 KONU        : HMI Alarm Yönetimi
 KATEGORİ    : hmi
 ALT_KATEGORI: architecture
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://instrumentationtools.com/isa-18-2-alarm-management-in-process-plants/"
     başlık: "InstrumentationTools — ISA 18.2 Alarm Management"
@@ -417,6 +417,120 @@ Bir tesiste günde 800+ alarm aktive oluyordu. Operatörler "bunları görmezden
 
 **Not 3 — Alarm Onaylama Sonrası Kapanma Beklentisi**  
 Bir operatör "Onayladım ama alarm hâlâ listede. Bu normal mi?" diye sordu. Onayla = gördüm; koşul aktif kalabilir. Bu fark HMI eğitimde işlenmemişti. Alarm listesinde görsel ayrım iyileştirildi: Onaylanmış+Aktif = turuncu (sabit), Onaylanmamış+Aktif = kırmızı (yanıp söner).
+
+**Not 4 — Chattering Alarm: Bir Sensör, Bir Günde 4000 Olay**  
+Bir basınç switch'i tam alarm eşiğinin (4.0 bar) sınırında salınıyordu: 4.01 → alarm aktif, 4.00 → alarm normal, saniyede birkaç kez. Tek bir tag bir günde 4000+ alarm-aktif/normal olayı üretti, alarm geçmişi log'unu doldurdu ve gerçek alarmları gömdü. Bu klasik **chattering** (gevezelik). Çözüm iki katmanlı: (1) PLC tarafında **hysteresis (deadband)** — alarm 4.0'da aktif olur ama yalnızca 3.8'in altına düşünce normale döner; (2) **on-delay / off-delay debounce** — koşul en az 2 saniye sürmeden alarm tetiklenmez. Olay sayısı 4000 → 12'ye indi. Ders: chattering'in çözümü HMI'da filtreleme değil, alarm koşulunun kaynağında hysteresis + zaman gecikmesidir.
+
+**Not 5 — Shelving Süresinin Olmaması: Unutulan Alarm**  
+Bir teknisyen bakım sırasında gürültü yapan bir alarmı "shelve" etti (geçici sustur). Ama HMI'da shelving'in zaman aşımı yoktu — alarm süresiz bastırılmış kaldı. 3 hafta sonra aynı ekipmanda gerçek bir arıza oluştu; alarm hâlâ shelved olduğu için operatöre hiç görünmedi. ISA-18.2 shelving'in **maksimum süreli** ve **otomatik geri-dönüşlü** olmasını şart koşar. Çözüm: Her shelve işlemine zorunlu süre (max 8 saat = vardiya) + süre dolunca otomatik un-shelve + "shelved alarmlar" özel ekranı (kaç tane, kim, ne zamana kadar). Ders: shelving güçlü ama denetimsiz bırakılırsa alarmı kalıcı olarak kör eder; süre limiti ve görünürlük zorunlu.
+
+**Not 6 — Alarm Önceliğinin "Risk" Yerine "Mühendisin Hissi" ile Atanması**  
+Bir projede önceliklendirme rasyonalizasyon (alarm rationalization) yapılmadan, mühendislerin sezgisiyle atanmıştı. Sonuç: alarmların %40'ı "Kritik" işaretliydi (ISA-18.2 tavanı %5). Her şey kırmızı olunca hiçbir şey kritik değildi. ISA-18.2 önceliği **sonuç şiddeti × müdahaleye kalan süre** matrisiyle (risk-tabanlı) belirler. Rasyonalizasyon çalıştayı yapıldı: her alarm için "müdahale edilmezse ne olur, ne kadar sürede olur" soruldu. Kritik oran %40 → %4'e indi. Ders: öncelik subjektif atanamaz; risk matrisi ile rasyonalize edilmeli, aksi halde öncelik anlamını yitirir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Alarm sistemi en çok "anormal anın anormal anı"nda — yani aynı anda çok şey ters gittiğinde — sınanır. Aşağıdaki tablo bu sınır koşulları toplar.
+
+| Edge Case | Tetikleyen Koşul | Belirti | Doğru Davranış |
+|---|---|---|---|
+| Chattering | Değer alarm eşiğinde salınıyor | Tek tag binlerce olay/gün, log şişer | Hysteresis (deadband) + on/off-delay (kaynakta) |
+| Alarm flood | Tek kök arıza → onlarca bağımlı alarm | Operatör birincili bulamaz | Kök-neden suppression / first-out mantığı |
+| Süresiz shelving | Shelve'e zaman limiti yok | Gerçek alarm kalıcı bastırılır | Max süre + otomatik un-shelve + shelved ekranı |
+| Stale alarm state | OPC UA kopuk, alarm durumu donmuş | "Aktif" alarm aslında belirsiz | Bağlantı kopunca alarm durumu "BELİRSİZ" işaretle |
+| Öncelik enflasyonu | Risk-tabanlı rasyonalizasyon yok | Kritik oranı %5'i aşar, anlam kaybı | Risk matrisi ile rasyonalizasyon çalıştayı |
+| Ack yarış durumu | İki operatör aynı alarmı aynı anda onaylar | Çift kayıt / tutarsız ackBy | Sunucu-tarafı atomik durum geçişi (idempotent) |
+| Siren mantık hatası | Siren koşula bağlı, ack'e değil | Ack sonrası siren susmaz | Siren = onaylanmamış alarm var; ack → sus |
+| Zaman damgası kaynağı | HMI ack zamanını kendi saatiyle yazar | SoE sırası bozulur | PLC/server timestamp'i kaynak al (SoE) |
+
+**Sayısal limitler ve ISA-18.2 metrikleri:**
+```
+Hedef alarm oranı (kararlı)  : ~1 alarm / 10 dakika / operatör (çok iyi)
+Kabul edilebilir tavan       : <10 alarm / 10 dakika / operatör
+Flood eşiği (ISA-18.2)       : >10 alarm / 10 dakika = "alarm flood" durumu
+Kritik öncelik oranı         : Toplam alarmların ≤%5
+Yüksek öncelik oranı         : Toplam alarmların ≤%15
+Öncelik seviye sayısı        : 3-4 (fazlası operatörü zorlar)
+Shelving max süre            : Tipik 1 vardiya (≤8 saat), sonra oto un-shelve
+Hysteresis (deadband)        : Ölçüm aralığının ~%1-5'i (sürece bağlı)
+Debounce (on-delay)          : Gürültülü ayrık sinyal için 1-5 saniye
+```
+
+## Optimizasyon
+
+Alarm sisteminde "optimizasyon" performanstan önce **bilişsel optimizasyondur**: amaç operatörün doğru anda doğru alarmı görmesidir. Teknik optimizasyon (log, render) ikincildir.
+
+**Optimizasyon önceliği (operatör bilişinden teknik katmana):**
+```
+1. RASYONALİZASYON — Alarm sayısını ve önceliğini doğru belirle (en yüksek etki)
+   → "Worst actor" analizi: en sık tetikleyen 20 alarm tüm vakaların ~%60'ı
+   → Gereksiz alarmları event'e çevir; limitleri düzelt
+   → Risk-tabanlı önceliklendirme: kritik ≤%5
+
+2. KAYNAKTA FİLTRELEME — Gürültüyü alarm olmadan önce kes
+   → Hysteresis (deadband) + on/off-delay → chattering biter
+   → İlişkili alarmları gruplama (group alarm)
+
+3. FLOOD YÖNETİMİ — Çok-alarm anını sadeleştir
+   → Kök-neden suppression: birincil arıza → bağımlıları bastır
+   → "First-out" : ilk tetikleneni vurgula
+   → Dinamik alarm bastırma (proses durumuna göre — ör. "ünite durmuşken
+     o üniteye ait alarmları gösterme")
+
+4. SUNUM — Operatörün taramasını hızlandır
+   → Önceliğe göre sıralama + renk + şekil + konum
+   → Alarm banner her ekranda (modal üstü)
+
+5. TEKNİK — Log/render verimliliği (en son)
+   → Alarm geçmişini indeksli/zaman-serili DB'de tut, sayfalama
+   → Aktif liste için delta güncelleme; tüm listeyi her olayda yeniden çizme
+```
+
+**Dinamik (state-based) suppression — neden statik kuraldan üstün:**
+```
+Statik suppression: "Konveyör motoru arızalıysa sensör alarmlarını bastır"
+  → Sabit kural, her durumda aynı.
+
+Dinamik suppression: Proses moduna göre alarm seti değişir.
+  Ünite "Bakımda"      → o ünitenin tüm proses alarmları beklenir, bastır
+  Ünite "Başlatılıyor" → düşük-sıcaklık alarmı normal, bastır
+  Ünite "Çalışıyor"    → tüm alarmlar aktif
+  → ISA-18.2 "state-based alarming". Flood'u kaynağında %70+ azaltabilir.
+```
+
+## Derin Teknik Detay
+
+**Alarm durum makinesinin iç ayrışımı — neden iki bağımsız boyut:**
+Bir alarmın HMI durumu tek bir değişken değil, **iki ortogonal boyutun** çarpımıdır:
+```
+Boyut 1 — Koşul durumu (process condition):  ACTIVE | NORMAL  (PLC'den gelir)
+Boyut 2 — Onay durumu (acknowledgement):     UNACK  | ACK     (operatörden gelir)
+
+Çarpım → 4 anlamlı durum:
+  ACTIVE + UNACK  : koşul var, görülmedi   → kırmızı, yanıp söner, siren
+  ACTIVE + ACK    : koşul var, görüldü     → turuncu sabit, siren susar
+  NORMAL + UNACK  : koşul gitti, görülmedi → sarı sabit (RTN-unack), kayda değer
+  NORMAL + ACK    : koşul gitti, görüldü   → listeden çıkar (NORMAL)
+```
+Bu ortogonallik neden kritik? Çünkü iki boyut **iki farklı aktör** tarafından, **bağımsızca** değiştirilir: koşulu PLC değiştirir (fiziksel gerçeklik), onayı operatör değiştirir (insan eylemi). Tek değişkene indirgemek (ör. "onaylandı = silindi") Hata 2'nin tam kaynağıdır: operatör onayı koşulu *değiştirmez*, sadece "gördüm" der. Siren mantığı da bu ayrımdan türer: siren Boyut 2'ye (UNACK var mı) bağlıdır, Boyut 1'e (ACTIVE) değil — bu yüzden ack siren'i susturur ama alarmı listeden silmez. RTN-unack durumu özellikle önemlidir: koşul geçici belirip kaybolduysa (transient) operatör bunu *kaçırmamalı* — bu yüzden kaybolmuş ama onaylanmamış alarm yine de listede tutulur.
+
+**Hysteresis ve debounce'un matematiksel gerekçesi:**
+```
+Tek eşik (sadece limit):           Hysteresis (iki eşik):
+  alarm = (x > 4.0)                  IF x > 4.0 THEN alarm := TRUE
+  x = 4.0 ± gürültü → titrer         IF x < 3.8 THEN alarm := FALSE
+                                     (3.8-4.0 ölü banttır, durum korunur)
+
+Debounce (zaman boyutu):
+  alarm yalnızca koşul T süre KESİNTİSİZ sürerse tetiklenir.
+  Ayrık (digital) gürültülü sinyallerde hysteresis anlamsız (0/1) → debounce şart.
+```
+Hysteresis genliği gürültü genliğinden büyük olmalıdır; aksi halde işe yaramaz. Pratikte hysteresis (analog değerler için) ve debounce (ayrık sinyaller için) birlikte kullanılır. Bu mantık **PLC'de** olmalıdır, HMI'da değil: HMI sadece alarm *durumunu* görselleştirir, alarm *koşulunu* üretmez. HMI'da filtreleme yapmak demek, başka bir HMI istemcisinin filtrelenmemiş alarmı görmesi ve tutarsızlık demektir.
+
+**Sequence of Events (SoE) ve timestamp kaynağı — flood'da first-out neden HMI saatiyle yapılamaz:**
+Alarm flood'da "hangi alarm önce tetiklendi" (first-out) sorusu kök-neden analizinin temelidir. Ama 45 alarm 30 saniyede gelirse ve sıralama HMI'ın *alarmı aldığı* zamana göre yapılırsa, ağ gecikmesi/işleme sırası gerçek sırayı bozar. Bu yüzden ciddi sistemlerde alarm timestamp'i **olayın kaynakta (PLC'de) oluştuğu an** ile damgalanır (OPC UA Alarms & Conditions'da `Time` alanı, PLC'de SoE buffer). HMI bu kaynak-timestamp'e göre sıralar. Milisaniye-doğruluğunda first-out gereken yerlerde (elektrik şalt, koruma rölesi) PTP/IEEE-1588 saat senkronu ve PLC SoE modülleri kullanılır — HMI yalnızca sunucudur.
+
+**Ack işleminin idempotent ve atomik olması:**
+İki operatör (iki istasyon) aynı alarmı aynı anda onaylarsa, ikisi de aynı `ACTIVE_UNACK → ACTIVE_ACK` geçişini tetikler. `acknowledgeAlarm` fonksiyonu (bkz. örnek kod) bu yüzden sunucu tarafında **atomik durum kontrolü** yapmalıdır: "zaten ACK ise tekrar ACK yazma, ilk onaylayanı koru". Aksi halde `acknowledgedBy` ikinci operatöre overwrite olur, audit trail yanlış kişiyi gösterir. Doğru desen: durum geçişini koşullu güncelleme (compare-and-set) ile yap; ikinci istek "zaten onaylanmış" yanıtı alsın, sessizce başarılı olsun (idempotent).
 
 ## İlgili Konular
 

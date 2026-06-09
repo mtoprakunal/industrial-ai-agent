@@ -2,8 +2,8 @@
 KONU        : HMI Mimari Kalıpları
 KATEGORİ    : hmi
 ALT_KATEGORI: architecture
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.isa.org/standards-and-publications/isa-standards/isa-101-standards"
     başlık: "ISA — ISA-101 Series of Standards"
@@ -445,6 +445,119 @@ Bir web HMI projesinde navigasyon hiyerarşisi 5 seviyeydi. Operatörler sık ku
 
 **Not 3 — Bileşen Kütüphanesinin Getirdiği Hız**  
 İlk HMI projemizde her motor için sıfırdan widget tasarladık. 12 motor = 12 kez aynı iş. İkinci projede Motor_Status_Widget oluşturduk. Aynı 12 motor: Parametre geçirerek 12 instance. Geliştirme süresi %70 azaldı; tutarsızlık sıfıra indi.
+
+**Not 4 — Panel PC'de Tarayıcı Tabanlı HMI'ın Bellek Sızıntısı**  
+Web HMI 24/7 çalışan bir endüstriyel Panel PC'de (4 GB RAM, Chromium kiosk modu) deploy edildi. İlk gün sorun yok. Üçüncü günün sonunda tarayıcı 2.8 GB RAM kullanıyordu, ekran kasıyordu. Sebep: Her saniye eklenen DOM trend noktaları hiç temizlenmiyordu (`<svg>` içinde 250.000 `<path>` segmenti birikmişti). React DevTools profiler ile bulundu. Çözüm: Trend için canvas-tabanlı render (uPlot) + sabit pencere (ör. son 3600 nokta, FIFO). Bellek 2.8 GB → 320 MB sabitlendi. Ders: Endüstriyel HMI ofis uygulaması değildir; "günde bir kez yeniden başlat" lüksü yoktur, leak'ler haftalar boyunca birikir.
+
+**Not 5 — WinCC ScreenItem Limiti ve "Sayfa Açılmıyor" Sorunu**  
+Siemens WinCC (TIA Portal) ile yapılan bir detay sayfasında ~450 ScreenItem (gösterge, metin, I/O field) vardı. Sayfa runtime'da açılırken 6-8 saniye donuyordu. Operatör "HMI bozuldu" diye düşünüp paneli resetliyordu. Sebep: WinCC tek bir ekranda çok sayıda dinamik nesneyi tek tek tag bağlama ile günceller; her tag ayrı bir okuma döngüsüne giriyordu. Çözüm: Faceplate (tip örneği) kullanımı + tag'leri tek bir struct UDT'de gruplayıp area pointer ile okuma. Açılış süresi 1 saniyenin altına indi. Ders: Platform yerleşik HMI'larda ekran başına nesne/tag sayısı somut bir performans limitidir, web HMI'da olduğu gibi "render edilince bedava" değildir.
+
+**Not 6 — Dokunmatik Hedef Boyutu ve Eldivenli Yanlış Dokunma**  
+Bir saha projesinde web HMI butonları 32×32 px tasarlanmıştı (masaüstü mockup'ta güzel görünüyordu). Fabrika zemininde eldivenli operatörler sürekli komşu butona basıyordu; bir keresinde "Durdur" yerine yandaki "Reset" tetiklendi. ISA-101 ve dokunmatik kılavuzlar minimum 15-20 mm (yaklaşık 60-75 px @ tipik panel DPI) dokunma hedefi ve 8 mm aralık önerir. Tüm kritik butonlar büyütüldü, kritik/yıkıcı butonlar (acil durdur) fiziksel olarak ayrı bölgeye taşındı. Eldivenli yanlış dokunma vakaları sıfıra indi.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Mimari kararların pratikte çarptığı sınırlar genellikle "kağıt üzerinde çalışan" tasarımı bozar. Aşağıdaki tablo sahada en sık çarpılan limitleri ve davranışları özetler.
+
+| Edge Case | Tetikleyen Koşul | Tipik Belirti | Doğru Davranış |
+|---|---|---|---|
+| Ekran nesne patlaması | Detay ekranında 300+ dinamik nesne | Sayfa açılışı saniyelerce donar (WinCC/FactoryTalk) | Faceplate + UDT gruplama; bilgi yoğunluğunu ISA-101 seviyesine indir |
+| Çözünürlük varyasyonu | Aynı HMI 1280×800 panel + 1920×1080 mühendis istasyonu | Taşma, kırpılma, sabit-piksel layout bozulması | Grid/relatif layout; "design resolution" + ölçekleme; kritik öğeler asla taşmaz |
+| Çok dilli metin genişlemesi | Almanca/Türkçe çeviri İngilizceden %30-40 uzun | Buton metni taşar, durum etiketi kesilir | Esnek genişlik, metin kısaltma yerine ikon+tooltip, uzun metinde wrap |
+| Renk körü + monokrom panel | %8-12 erkek renk körü; bazı eski mono paneller | Kritik/normal ayırt edilemez | Renk + şekil + konum + metin; asla yalnızca renk |
+| 3 tıklama kuralı ihlali | 5+ seviyeli navigasyon hiyerarşisi | Operatör kritik ekrana ulaşamaz, kestirme arar | Hiyerarşi yeniden tasarımı + "favoriler"; geçici çözümle yetinme |
+| Yıkıcı eylem yanlış tetikleme | Küçük/bitişik dokunma hedefi, eldiven | Yanlış "Durdur/Reset/E-Stop" | Min 15-20 mm hedef, yıkıcı butonu ayır, onay dialogu |
+| Modal dialog kilitlenmesi | Onay modalı açıkken yeni kritik alarm gelir | Alarm modal arkasında görünmez | Alarm banner her zaman en üstte (modal üstü z-index) |
+| Faceplate instance senkronu | Aynı UDT'den 50 instance, biri stale | Bir motor güncel, biri donmuş | Instance bazlı kalite/timestamp; toplu "bağlantı sağlığı" göstergesi |
+
+**Sert sistemsel limitler (deneyimsel eşikler):**
+```
+Tek ekranda dinamik nesne   : Platform HMI'da pratik tavan ~200-300 (üstü = açılış gecikmesi)
+Bilgi yoğunluğu (Level 3)   : İnsan kısa-süreli belleği ~7±2 öğe — bir bakışta izlenecek
+                              kritik değer sayısı 10'u geçmemeli
+Navigasyon derinliği        : ≤3 tıklama (kritik ekran), ≤4 (diagnostik)
+Animasyon kare hızı         : Endüstriyel panelde GPU sınırlı; >30 fps animasyon CPU yer
+Trend görünür nokta         : Canvas ile ~10.000, DOM/SVG ile ~1.000 (üstü leak/lag)
+```
+
+## Optimizasyon
+
+HMI mimarisinde optimizasyon önce **doğru mimari karar**, sonra **render verimliliği**, en son **mikro-iyileştirme** sırasıyla yapılır. Yanlış sırada başlamak (önce mikro-optimize etmek) en yaygın zaman kaybıdır.
+
+**Optimizasyon önceliği (etki sırasına göre):**
+```
+1. MİMARİ — Bilgi mimarisi ve ekran hiyerarşisi (en yüksek etki)
+   → Doğru ekran sayısı, doğru bilgi dağılımı. Bir Level-1 overview
+     ekranı, operatörün 10 detay ekranını gezmesini önler.
+   → ISA-101 seviye ayrımı: Her veri en uygun seviyede gösterilir.
+
+2. RENDER — Çizim/güncelleme maliyetini düşür
+   → Yalnızca DEĞİŞEN nesneyi güncelle (dirty-checking / reactive binding).
+   → Görünmeyen ekran/sekme güncellemesini durdur (visibility-aware).
+   → Trend/grafik canvas-tabanlı; DOM/SVG'de binlerce nokta tutma.
+
+3. BİLEŞEN — Yeniden kullanılabilir faceplate/widget
+   → Tek widget tanımı, N instance. Hem hız hem tutarlılık.
+   → Web'de React.memo / Vue v-once ile gereksiz re-render önleme.
+
+4. MİKRO — Font/asset/CSS optimizasyonu (en düşük etki, en son)
+   → Mono font sayı hizası, asset preload, GPU-accelerated transform.
+```
+
+**Somut teknikler:**
+```
+Reaktif binding > polling-render:
+  Her tag değişiminde tüm ekranı yeniden çizmek yerine, yalnızca o tag'e
+  bağlı nesneyi güncelle. WinCC'de "trigger on change", web'de fine-grained
+  reactivity (signals / observable). 1000 tag'lik ekranda CPU %70 → %8.
+
+Görünürlük-farkında güncelleme:
+  Arka plandaki sekme/ekrana ait widget'ların subscription'ı askıya alınır
+  (Page Visibility API / IntersectionObserver). Çok sekmeli HMI'da kritik.
+
+Layout sabitleme:
+  "Design resolution" belirle (ör. 1920×1080), her şeyi relatif/grid yerleştir,
+  CSS transform: scale() veya viewport birimi ile ölçekle. Mutlak piksel ASLA.
+
+Sayfa ön-yükleme (preload):
+  Sık geçilen Level-2/3 ekranları arka planda hazırla; geçiş 0 gecikme hissi.
+  Platform HMI'da "background screen caching" seçeneği.
+```
+
+## Derin Teknik Detay
+
+**Sunum (presentation) ile kontrol durumunun (control state) ayrılması — neden?**
+HMI mimarisinin en temel iç prensibi, *ekranda gördüğün şey kontrol gerçeğinin bir kopyasıdır, kendisi değildir*. PLC kontrol mantığını yürütür; HMI yalnızca o durumun bir görselleştirmesidir. Bu ayrım MVVM (Model-View-ViewModel) deseninde formelleşir:
+```
+Model      : PLC/OPC UA tag değerleri (tek doğruluk kaynağı — source of truth)
+ViewModel  : Tag'leri ekran semantiğine çeviren ara katman
+             (ör. rTemp=88 + limit=85 → durum="ALARM", renk="kırmızı")
+View       : Salt görsel — kendi başına karar vermez, ViewModel'i yansıtır
+```
+Neden bu ayrım kritik? Çünkü View'da iş mantığı (örn. "sıcaklık 85'i geçerse motoru durdur") tutulursa, iki tehlikeli sonuç doğar: (1) HMI çökerse veya bağlantı koparsa o mantık çalışmaz — güvenlik mantığı asla HMI'da olmamalı, PLC'de olmalı; (2) iki farklı HMI istemcisi aynı tag'i farklı yorumlarsa tutarsızlık doğar. ViewModel katmanı ayrıca test edilebilirlik sağlar: Görsel olmadan "bu tag kombinasyonu hangi durumu üretir" birim testi yazılabilir.
+
+**Neden ISA-101 gri/nötr palet — algısal temel:**
+Bu estetik bir tercih değil, insan görsel sisteminin çalışma biçiminden türer. İnsan periferik (çevresel) görüşü harekete ve yüksek kontrasta duyarlıdır, renge değil. Normal durum düşük-kontrastlı/nötr olduğunda, ani bir yüksek-kontrastlı kırmızı (alarm) periferik görüşte anında "pop-out" yapar — operatör doğrudan bakmıyor olsa bile fark eder. Ekran zaten renk doluysa, yeni renk ortalama kontrastı artırmaz, pop-out etkisi kaybolur (görsel arama "konjonktif arama"ya döner: yavaş ve sıralı). Yani "sıkıcı gri ekran" aslında *bilinçli olarak sinyal-gürültü oranını maksimize eden* bir tasarım kararıdır.
+
+**SCADA platform HMI vs Web HMI — iç mimari farkı:**
+```
+SCADA platform (WinCC, FactoryTalk, Ignition Vision):
+  Tag motoru ekran nesnelerine sıkı bağlıdır (tightly coupled).
+  Her nesne bir tag'e doğrudan abone; runtime motoru güncelleme döngüsünü yönetir.
+  → Hızlı geliştirme, ama ekran-tag bağı esnek değil; nesne sayısı = yük.
+
+Web HMI (React/Vue + WebSocket):
+  Veri katmanı (store) ile görünüm katmanı tamamen ayrı.
+  Tek WebSocket → merkezi store → bileşenler store'dan türetir (selector).
+  → Esnek, test edilebilir, ama alarm/historian/tag-binding kendin yazarsın.
+
+Ignition Perspective (hibrit):
+  Web teknolojisi (HTML render) + SCADA tag motoru. İki dünyanın ortası.
+```
+Temel mühendislik tercihi şudur: SCADA platformu **bağ-zamanı (binding-time) verimliliği** sunar (hızlı kur, çalış), web HMI **çalışma-zamanı (runtime) esnekliği** sunar (her render kararını sen verirsin). Büyük, standart proseslerde birincisi; özel/çok istemcili/mobil senaryolarda ikincisi kazanır.
+
+**Yazma yolu (write path) neden okuma yolundan farklı tasarlanır:**
+Okuma yüksek-frekanslı, idempotent ve geri-alınabilir bir akıştır; bir okuma kaçsa bir sonraki günceller. Yazma ise düşük-frekanslı, *yan etkili* ve çoğu zaman geri-alınamazdır. Bu yüzden yazma yolu tasarımı her zaman: (1) yetki kontrolü (bkz. 04), (2) bağlantı sağlığı kontrolü — kopuksa yazma kilitli (bkz. 02), (3) kritikse onay/çift-onay, (4) audit log, (5) PLC tarafında değer aralığı doğrulaması (HMI doğrulaması atlanabilir, PLC clamp her zaman çalışır) içerir. HMI'da "tek bir buton" gibi görünen şey, arkada bu beş aşamalı bir boru hattıdır.
 
 ## İlgili Konular
 

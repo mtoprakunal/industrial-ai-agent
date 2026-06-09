@@ -2,8 +2,8 @@
 KONU        : Vue.js ile Endüstriyel HMI Geliştirme
 KATEGORİ    : hmi
 ALT_KATEGORI: web-based
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://cloudinary.com/guides/vs/react-js-vs-vue-js"
     başlık: "Cloudinary — React JS vs Vue JS Practical Guide for 2025"
@@ -619,6 +619,76 @@ Vue 2 Options API bilen bir operatör ekibi önce Options API seçti. 200 satır
 
 **Not 3 — Pinia ile Time-Travel Debugging**  
 Bir anomali: Belirli bir işlemden sonra setpoint değeri rastgele sıfırlanıyordu. Pinia DevTools'un state geçmişine bakılınca sorun bulundu: Bağlantı yeniden kurulduğunda `setFullUpdate` çağrısı tüm tag'leri eski değerlere getiriyordu. `setFullUpdate` yalnızca değer varsa güncellemeye çevrildi.
+
+**Not 4 — `tags.value[tag] = {...}` ile Reaktivite Çalıştı ama Yeni Anahtar Sorun Değildi**  
+Vue 2'de `Vue.set` gerekirdi; Vue 3 Proxy reaktivitesinde `tags.value[newTag] = {...}` ile yeni anahtar eklemek **çalışır** (Proxy yeni property'yi yakalar). Ancak tüm tag'leri tek `ref({})` içinde tutmak, herhangi bir tag değişince bu ref'e bağlı her `computed`'in yeniden değerlendirilmesine yol açtı. Çözüm: `useTagValue` içinde `computed(() => tags.value[tag])` — Vue'nun bağımlılık takibi sayesinde yalnızca o anahtarı okuyan computed, o anahtar değişince tetiklenir. Yine de büyük HMI'da `shallowRef` + manuel `triggerRef` daha öngörülebilir performans verdi.
+
+**Not 5 — `watch` ile Date Karşılaştırması ve Derin İzleme Maliyeti**  
+Trend grafiğinde `watch(value, ...)` yerine yanlışlıkla `watch(tagData, ..., { deep: true })` kullanıldı; her tag güncellemesinde tüm tagData objesi derin karşılaştırıldı, 100+ tag'de CPU fırladı. `deep: true` yüksek frekanslı veride pahalıdır. Çözüm: yalnızca ihtiyaç duyulan primitif `computed`'i izle (`watch(value, ...)`); derin izlemeden kaçın.
+
+**Not 6 — `storeToRefs` Action'ları Bozar**  
+`const { tags, updateTag } = storeToRefs(store)` yazıldı; `updateTag` artık `ref` sarmalı oldu ve `updateTag(...)` çağrısı "is not a function" verdi. `storeToRefs` yalnızca state ve getter'lar için; action'lar doğrudan store'dan alınmalı: `const { tags } = storeToRefs(store); const { updateTag } = store;`. Bu, Pinia'nın en sık karıştırılan noktasıdır.
+
+**Not 7 — `<script setup>` Composable'da Lifecycle Hook'u Yanlış Yerde**  
+WebSocket composable'ı bir `setTimeout` içinde çağrıldığında `onMounted` kaydı sessizce çalışmadı; Vue lifecycle hook'ları yalnızca `setup` senkron yürütülürken (aktif bileşen instance'ı varken) kaydedilebilir. Çözüm: composable'ı doğrudan `<script setup>` üst seviyesinde çağır, async/timeout içinde değil. "active instance" uyarısı bu hatanın işaretidir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Vue'nun Proxy tabanlı reaktivitesi çoğu render optimizasyonunu otomatik yapar; limitler **reaktivite kapsamının kaybı** ve **derin izleme maliyeti** etrafında toplanır.
+
+| Edge Case | Tetikleyen | Belirti | Çözüm |
+|---|---|---|---|
+| Reaktivite kaybı | State destructure (Not 6, Hata 1) | Değer asla güncellenmez | `storeToRefs` (state) + store (action) |
+| `deep: true` maliyeti | Büyük obje derin izleme (Not 5) | Yüksek CPU | Primitif computed izle |
+| Lifecycle hook scope | Hook async/timeout içinde (Not 7) | "no active instance" uyarısı | setup üst seviyede çağır |
+| `reactive` destructure | `const { x } = reactive(obj)` | Reaktivite kopar | `toRefs` veya doğrudan erişim |
+| Tek büyük ref | Tüm tag'ler tek `ref({})` | Geniş computed yeniden değerlendirme | `computed` ile anahtar bazlı erişim, `shallowRef` |
+| Proxy eşitlik | `===` ile Proxy vs raw obje | Beklenmedik false | `toRaw()` ile karşılaştır |
+| Date serileştirme | WS üzerinden Date | `getTime is not a function` | Epoch number gönder |
+| `v-model` + store | Input store'u doğrudan yazar (Hata 2) | İzin/validasyon atlanır, döngü | Yerel ref + action |
+| Çok node DOM | 500+ tag, derin şablon | Patch yavaşlar | Sanallaştırma, `v-once` statik kısımlar |
+
+**`shallowRef` ne zaman?** Vue varsayılan `ref`/`reactive` derin reaktiftir — iç içe her property Proxy'lenir. Yüzlerce tag'li büyük bir obje için bu kurulum maliyeti ve izleme yükü oluşturur. `shallowRef(tagsObject)` ile yalnızca üst seviye referans izlenir; tag güncellemesinde `triggerRef()` ile manuel tetikleme yapılır. Bu, "Vue otomatik halleder" rahatlığını performans karşılığı bilinçli olarak bırakmaktır ve 200+ tag'de fark yaratır.
+
+## Optimizasyon
+
+Vue'da optimizasyon, React'tan farklı olarak "render'ı engelleme" değil, **reaktivite grafiğini sığ ve doğru tutma** üzerinedir.
+
+1. **Reaktivite kapsamını koru (en temel).** `storeToRefs` ile state'i, doğrudan store'dan action'ı al (Not 6). Reaktivite kaybı "optimizasyon" değil çalışmama sorunudur ama en sık hatadır.
+
+2. **`computed` ile anahtar-bazlı erişim.** `useTagValue` içinde `computed(() => tags.value[tag])` — Vue yalnızca o computed'in okuduğu anahtar değişince tetikler. Bu, Vue'nun "ücretsiz granülaritesi"nin kaynağıdır; şablonda doğrudan `tags[tag]` okumaktan daha öngörülebilir.
+
+3. **`deep: true`'dan kaçın.** Yüksek frekanslı veride derin izleme pahalıdır (Not 5). Hep primitif `computed` izle.
+
+4. **Büyük tag setinde `shallowRef` + `triggerRef`.** 200+ tag'de derin reaktivite yükünü düşürür:
+
+   ```typescript
+   const tags = shallowRef<Record<string, TagValue>>({});
+   function updateTag(tag, value, quality, ts) {
+       tags.value[tag] = { value, quality, timestamp: ts };
+       triggerRef(tags);  // manuel tetikleme — sığ ref derin değişimi görmez
+   }
+   ```
+
+5. **Statik DOM'u `v-once` / `v-memo` ile dondur.** Değişmeyen etiketler, ölçek çizgileri `v-once`. Vue 3.2+ `v-memo` ile koşullu render atlama: `v-memo="[value]"` yalnızca value değişince patch'ler.
+
+6. **Yüksek frekanslı tag'i throttle'la.** `computed` ucuzdur ama DOM patch değil. Saniyede 50 değişen tag için `useThrottle` (VueUse) ile görüntülenen değeri 100-200ms'ye sınırla.
+
+7. **Listeleri sanallaştır.** Büyük alarm/tag listeleri için `vue-virtual-scroller`. `v-for` ile 500 satır DOM'a basmak patch'i yavaşlatır.
+
+**Optimizasyon sırası:** reaktivite doğruluğu → anahtar-bazlı computed → derin izlemeden kaçınma → (büyük set ise) shallowRef → v-memo/v-once → sanallaştırma. Vue'da ilk üç madde genelde yeterlidir; React'a kıyasla manuel optimizasyon ihtiyacı belirgin biçimde azdır.
+
+## Derin Teknik Detay
+
+**Vue 3 reaktivitesi neden "otomatik granüler"?** Vue 3, `Proxy` ile her reaktif objenin okuma (`get`) ve yazma (`set`) işlemlerini yakalar. Bir `computed` veya şablon render edilirken hangi reaktif property'lere **eriştiği** (`get` tetiklenir) Vue tarafından kaydedilir — buna *dependency tracking* denir. O property `set` ile değişince, Vue yalnızca **o property'ye bağımlı** effect'leri (computed, watcher, render fonksiyonu) yeniden çalıştırır. React'ta geliştirici "ne değişti"yi selector ile manuel bildirirken, Vue bunu erişim anında otomatik çıkarır. Bu yüzden `useTagValue('speed')` içindeki computed yalnızca `tags.value['speed']` okur ve yalnızca o anahtar değişince tetiklenir — manuel selector'a gerek kalmaz.
+
+**`ref` vs `reactive` iç fark.** `reactive(obj)` objeyi doğrudan Proxy'ler; ama primitifleri saramaz (`reactive(5)` çalışmaz) ve destructure edilince reaktivite kopar (Proxy referansı kaybolur). `ref(value)` ise `{ value }` sarmalı bir nesne oluşturur ve `.value` erişimini Proxy/getter-setter ile izler; primitifleri de sarabilir, taşınabilir. Bu yüzden composable'larda `ref` tercih edilir — `return { value }` ile dışarı verilince reaktivite korunur. `storeToRefs`, Pinia state'inin her property'sini ayrı `ref`'e çevirerek destructure sonrası reaktiviteyi korur (Not 6'nın çözümü); action'lar fonksiyon olduğundan ref'lenmemeleri gerekir.
+
+**Render mekanizması: Virtual DOM + compiler ipuçları.** Vue 3 hâlâ Virtual DOM kullanır ama React'tan farklı olarak şablon **compiler'ı** statik/dinamik kısımları derleme zamanında ayırır (PatchFlags, hoisting). Statik node'lar bir kez oluşturulup hoist edilir, render'da atlanır; yalnızca dinamik bağlama (`{{ value }}`, `:class`) işaretli node'lar diff'lenir. Bu "compiler-informed VDOM", React'ın tüm ağacı runtime'da diff'lemesinden daha az iş yapar — Vue'nun "ücretsiz performans" izleniminin ikinci kaynağı budur (birincisi granüler reaktivite, render'ı *tetiklememe*; ikincisi compiler, render'ı *ucuzlaştırma*).
+
+**Pinia neden Vuex'in yerini aldı?** Vuex mutation/action ayrımı + string tipli commit + modül namespace boilerplate'i taşıyordu. Pinia bunu kaldırdı: store doğrudan Composition API (`ref`/`computed`/fonksiyon) ile yazılır, mutation kavramı yoktur (state doğrudan action içinde değiştirilir), TypeScript çıkarımı otomatiktir. Pinia store'lar Vue'nun reaktivite sistemini *aynen* kullanır — ayrı bir state mekanizması değil, reaktif primitif'lerin organize edilmiş hali. Bu yüzden `storeToRefs` Vue'nun `toRefs`'iyle aynı mantıkta çalışır.
+
+**vs React/Zustand:** Web HMI bağlamında temel mimari aynıdır (Singleton WS → store → reaktif bileşen). Fark, optimizasyon yükünün nereye düştüğüdür: React'ta granüler selector + memo geliştiricinin sorumluluğu; Vue'da granülarite compiler + Proxy tarafından otomatik sağlanır. Pratik sonuç (mevcut Not 1): aynı 200-tag/50-güncelleme yükünde Vue ekstra optimizasyon olmadan React'ın memo'lu haline yakın CPU verir. Vue'nun dezavantajı çok büyük (100K+ satır) kod tabanında ekosistem ve esneklik; web HMI'ın orta ölçeği için bu nadiren bağlayıcıdır.
 
 ## İlgili Konular
 

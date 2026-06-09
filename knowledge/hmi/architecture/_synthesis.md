@@ -2,8 +2,8 @@
 KONU        : HMI Mimari — Sentez
 KATEGORİ    : hmi
 ALT_KATEGORI: architecture
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/hmi/architecture/01_hmi_patterns.md"
     başlık: "HMI Mimari Kalıpları"
@@ -53,6 +53,31 @@ BAĞLANTILAR :
 Bu sentez, "Modern bir endüstriyel HMI projesine başlayan biri dört temel belgeyi okuyunca ne anlamalı?" sorusuna yanıt verir. Dört belge birbirinin zorunlu katmanıdır: Mimari desenler tüm sistemin çerçevesini çizer; gerçek zamanlı veri o çerçevenin içine akan kanı sağlar; alarm yönetimi anormal durumu operatöre iletir; kullanıcı yetkilendirme ise kimin ne yapabileceğini ve ne yaptığını belirler. Bu dördü bir arada anlaşıldığında endüstriyel HMI'ın neden kurumsal web uygulamasından temelden farklı olduğu ve her mimari kararın fiziksel sonuçları olduğu netleşir.
 
 Temel ayrım tek cümlede şudur: Bir e-ticaret sitesinde yanlış düğme tıklandığında "Geri Al" vardır; bir motor kontrol HMI'ında yanlış düğme fabrika durmasına veya yaralanmaya yol açabilir. Bu kritiklik, HMI mimarisini baştan sona etkiler.
+
+### Birleştirici İlke: HMI Operatörün Penceresidir
+
+Dört belgenin tamamını tek bir mühendislik felsefesine indirgeyen ilke şudur: **HMI, operatörün prosese açılan penceresidir — ve bu pencere hızlı (responsive), dürüst (truthful) ve güvenli (safe) olmalıdır.** Bu üç sıfat dört belgenin her birinde somut bir tasarım kuralına dönüşür:
+
+```
+PENCERE NASIL OLMALI?        HANGİ BELGEDE SOMUTLAŞIR?           SOMUT KURAL
+──────────────────────────────────────────────────────────────────────────────────
+Hızlı (responsive)            02 — Gerçek zamanlı veri            <200ms gecikme; subscription;
+                                                                  görünmeyeni güncelleme
+Dürüst (truthful)             02 — Stale/quality + 03 — alarm     Eski veri "eski" görünür;
+                                                                  alarm = sinyal, gürültü değil
+Güvenli (safe)                04 — Yetki + 01 — yazma yolu        En az ayrıcalık; güvenlik
+                                                                  mantığı HMI'da DEĞİL, PLC'de
+```
+
+Bu pencereyi mümkün kılan dört çapraz-kesen (cross-cutting) ilke vardır:
+
+1. **Sunum, kontrol durumundan ayrılır (separation of presentation from control state).** PLC tek doğruluk kaynağıdır; HMI onu *yansıtır*, kendi karar vermez. Güvenlik mantığı asla HMI'da olmaz — HMI çökse de PLC fiziksel sınırı korur. (→ 01: MVVM/ViewModel, yazma yolu; 02: latest value cache)
+
+2. **Alarm = sinyal, event = gürültü.** Her alarm bir operatör müdahalesi gerektirir; gerektirmeyen her şey event log'a gider. Dürüst pencere, operatörü gürültüye boğmaz. (→ 03: ISA-18.2, <10 alarm/10 dk, hysteresis)
+
+3. **Yetki = en az ayrıcalık (least privilege) + hesap verilebilirlik.** Herkes işini yapacak kadar yetkiye sahiptir, fazlasına değil; ve her eylem kim/ne/ne zaman olarak loglanır. (→ 04: RBAC, audit trail, IEC 62443)
+
+4. **Doğruluk her zaman zaman damgası ve kaliteyle birlikte gelir.** Bir değerin kendisi yetmez; ne zaman ve hangi güvenilirlikte üretildiği de gösterilir — yoksa pencere yalan söyler. (→ 02: SourceTimestamp + StatusCode; 03: SoE/first-out)
 
 ## Nasıl Çalışır
 
@@ -220,6 +245,41 @@ Kilit sayısal sınır: **<10 alarm / 10 dakika** operatör başına (ISA-18.2).
 | DEGRADED | Sarı banner | Kısıtlı | Kısmi bağlantı |
 
 Reconnect sonrası: Her zaman FULL_UPDATE gönder — delta yetmez.
+
+### H. Konsolide Edge-Case Tablosu (Dört Belge)
+
+Sahada en sık çarpılan sınır koşullar, hangi belgede derinlemesine ele alındıklarıyla:
+
+| Edge Case | İlke İhlali | Doğru Davranış | Detay |
+|---|---|---|---|
+| Stale data canlı görünür | Dürüstlük | SourceTimestamp+StatusCode → gri/italik + overlay | 02 |
+| Subscription fırtınası | Hız | DataChangeFilter + AbsoluteDeadband | 02 |
+| Sessiz veri kaybı (QueueSize=1) | Dürüstlük | QueueSize artır / PLC'de latch | 02 |
+| Chattering alarm | Sinyal/gürültü | Hysteresis + on/off-delay (kaynakta) | 03 |
+| Alarm flood | Sinyal/gürültü | Kök-neden / state-based suppression, first-out | 03 |
+| Süresiz shelving | Dürüstlük | Max süre + oto un-shelve + shelved ekranı | 03 |
+| Öncelik enflasyonu | Sinyal/gürültü | Risk-tabanlı rasyonalizasyon (kritik ≤%5) | 03 |
+| Ack yarış durumu | Hesap verilebilirlik | Atomik/idempotent durum geçişi | 03 |
+| JWT iptal edilemez | En az ayrıcalık | Kısa access + refresh'te DB kontrol | 04 |
+| Acil erişim kilidi | Emniyet > güvenlik | Break-glass (fiziksel anahtar + log) | 04 |
+| Frontend-only yetki | Güvenlik | Backend middleware + PLC clamp (defense in depth) | 04 |
+| Bağlantı kopukken yazma | Güvenlik | Yetki ✓ olsa da kopuksa yazma kilitli | 02+04 |
+| Ekran nesne patlaması | Hız | Faceplate + UDT gruplama; ISA-101 bilgi yoğunluğu | 01 |
+| Yıkıcı eylem yanlış dokunma | Güvenlik | Min 15-20 mm hedef, butonu ayır, onay | 01 |
+| Saat kayması (clock skew) | Dürüstlük | NTP/PTP; yaşlılığı tek saatle hesapla | 02 |
+
+### I. Uzman Optimizasyon Sıralaması (Tüm Katmanlar)
+
+Optimizasyon her katmanda **kaynağa/mimariye en yakın yerden** başlar; mikro-iyileştirme her zaman en sona kalır. Yanlış sıra (önce mikro) en yaygın zaman kaybıdır.
+
+| Katman | 1. Önce (en yüksek etki) | 2. Sonra | 3. En son (mikro) |
+|---|---|---|---|
+| 01 Mimari | Bilgi mimarisi / ekran hiyerarşisi | Reaktif binding, görünürlük-farkında | Font/asset/CSS |
+| 02 Veri | Kaynakta filtrele (deadband, toplu okuma) | Ağda coalesce + singleton bağlantı | Frontend throttle (16ms) |
+| 03 Alarm | Rasyonalizasyon (sayı+öncelik) | Kaynakta filtre + flood suppression | Log/render verimliliği |
+| 04 Yetki | En az ayrıcalık (rol-izin haritası) | Defense in depth (ağ+app+PLC) | Asenkron audit batch |
+
+**Çapraz ilke:** Üç katmanda da kural aynı — *gereksiz işi hiç yapma* (kaynakta kes) > *yapılan işi ucuzlat* (ağ/işleme) > *son rötuş* (render/mikro). "Önce çalıştır, sonra optimize et" doğru; ama "önce mikro-optimize et" yanlıştır.
 
 ## Pratikte Nasıl Kullanılır
 
@@ -471,12 +531,18 @@ ISA-18.2'nin "worst actor" analizi sürekli yapılması gereken bir pratiktir. B
 **Sentez Notu 5 — Güvenlik Politikası İnsan Davranışını Hesaba Katmalı**
 Çok karmaşık şifre politikası → Operatör hatırlamıyor → Post-it monitöre yapıştırıyor → Daha tehlikeli. Endüstriyel HMI için en iyi yaklaşım: RFID kart + 4 haneli PIN (fabrika zemini), makul şifre karmaşıklığı, 15 dakika inaktivite zaman aşımı. Güvenlik politikası, onu kullanan insanın gerçek koşullarına uyarlanmalıdır.
 
-**Sentez Notu 6 — Bu Bilgi Tabanının Önerilen Okuma Sırası**
-1. Sentezi oku (bu belge) → Genel harita anlaşıldı
-2. `01_hmi_patterns.md` → ISA-101 ve mimari seçenekler kavrandı
-3. `02_realtime_data.md` → OPC UA subscription ve bağlantı yönetimi öğrenildi
-4. `03_alarm_management.md` → ISA-18.2 alarm durum makinesi anlaşıldı
-5. `04_user_auth.md` → RBAC ve audit log kuruldu
+**Sentez Notu 6 — "Dürüst Pencere" İlkesi Dört Belgeyi Tek Kurala Bağlar**
+Uzman seviyede en güçlü içgörü şudur: stale data (02), chattering/flood (03) ve frontend-only yetki (04) ayrı problemler gibi görünür ama hepsi *aynı* ilkenin ihlalidir — **pencere yalan söylüyor**. Stale data "canlı" yalanını, gürültülü alarm "önemli" yalanını, gizlenmiş ama açık API "yetkisiz erişemez" yalanını söyler. Çözümlerin hepsi de aynı ilkeye döner: değeri zaman damgası + kaliteyle birlikte göster (02), sinyali gürültüden ayır (03), güvenliği görünüme değil mantığa koy (04). Bir HMI'ı denetlerken tek soru yeterli olabilir: "Bu pencere bana her durumda doğruyu mu söylüyor — bağlantı koptuğunda, alarm fırtınasında, biri F12 açtığında?"
+
+**Sentez Notu 7 — Güvenlik Mantığı Asla HMI'da Olmaz (Katmanların Sınırı)**
+Dört belgeyi birleştiren ikinci derin ilke, *sorumluluğun doğru katmana yerleştirilmesidir*. Sık yapılan mimari hata, kontrol/güvenlik mantığını HMI'a taşımaktır ("sıcaklık 85'i geçerse JavaScript motoru durdursun"). Bu üç nedenle yanlıştır: (1) HMI çökerse/kopuk olursa mantık çalışmaz — emniyet asla görselleştirme katmanına bağlanamaz; (2) iki HMI istemcisi farklı yorumlarsa tutarsızlık doğar; (3) güvenlik mantığı PLC'de doğrulanabilir ve sertifikalanabilir (SIL), tarayıcıda değil. Doğru sınır: **PLC karar verir ve clamp yapar (fiziksel doğru), HMI yansıtır ve niyet iletir (komut gönderir), backend yetki+audit uygular (kim+ne).** Defense in depth (04) bu sınırın güvenlik karşılığı, MVVM ayrımı (01) sunum karşılığı, stale-data kilidi (02) ise "kopuk pencere komut veremez" karşılığıdır. Hepsi tek cümle: *HMI prosesi göstermek için vardır, prosesi yönetmek için değil — yönetim PLC'nindir.*
+
+**Sentez Notu 8 — Bu Bilgi Tabanının Önerilen Okuma Sırası**
+1. Sentezi oku (bu belge) → Genel harita + birleştirici ilke anlaşıldı
+2. `01_hmi_patterns.md` → ISA-101, mimari seçenekler, MVVM/yazma yolu, derin teknik
+3. `02_realtime_data.md` → OPC UA subscription iç mekaniği, deadband/QueueSize, quality
+4. `03_alarm_management.md` → ISA-18.2 durum makinesi (iki ortogonal boyut), hysteresis, SoE
+5. `04_user_auth.md` → RBAC dolaylaması, JWT iptal sorunu, defense in depth, 62443
 6. Senaryoyu uygula (bu belgede) → Motor setpoint + alarm + auth akışı çalıştırıldı
 
 ## İlgili Konular

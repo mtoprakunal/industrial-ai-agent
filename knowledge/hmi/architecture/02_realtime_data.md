@@ -2,8 +2,8 @@
 KONU        : HMI'da Gerçek Zamanlı Veri Yönetimi
 KATEGORİ    : hmi
 ALT_KATEGORI: architecture
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.code-brew.com/hmi-software-development-guide/"
     başlık: "Code-Brew — HMI Software Development Guide for 2026"
@@ -570,6 +570,111 @@ Bakım mühendisi HMI'a baktı, motor sıcaklığı 68°C görüyordu. Motoru in
 
 **Not 3 — WebSocket Reconnect'te Tam Güncelleme**  
 WebSocket yeniden bağlandıktan sonra yalnızca değişen değerleri göndermek yetmez. Bağlantı kopuk süresinde değişen ama sonradan eski değerine dönen değerler kaybolur. Çözüm: Reconnect'te her zaman FULL_UPDATE: tüm mevcut değerleri tek mesajda gönder. Ardından delta güncellemeler devam eder.
+
+**Not 4 — Deadband Olmadan Analog Değer Subscription Fırtınası**  
+OPC UA subscription'da analog bir basınç sensörü (gürültülü, ±0.05 bar titreşim) 100ms publish interval ile izleniyordu. Değer fiziksel olarak sabit olmasına rağmen sensör gürültüsü yüzünden her 100ms'de "değişti" bildirimi geliyordu — saniyede 10 bildirim, tek tag için. 200 analog tag → saniyede 2000 gereksiz bildirim, frontend re-render fırtınası. Çözüm: OPC UA MonitoringParameters içinde **DataChangeFilter + DeadbandType.Absolute** (ör. 0.1 bar) tanımlandı. Artık yalnızca 0.1 bar'dan fazla değişim bildiriliyor. Bildirim trafiği %95 düştü. Ders: Subscription "değişince gönderir" doğru ama "değişim" tanımını deadband ile sen belirlemezsen gürültü = değişim sayılır.
+
+**Not 5 — SourceTimestamp vs ServerTimestamp Karışıklığı ve Yanlış Yaşlılık**  
+Stale data tespiti `ServerTimestamp` üzerinden yapılıyordu. Bir OPC UA gateway (aggregating server) araya girdiğinde, gateway her değere kendi taze ServerTimestamp'ini basıyordu — alt PLC 30 saniyedir cevap vermese bile değer "taze" görünüyordu. Operatör stale veriyi canlı sandı. Çözüm: Yaşlılık ölçümü için **SourceTimestamp** (değerin kaynakta üretildiği an) kullanıldı; ayrıca StatusCode kalite biti (`Good_LocalOverride`, `Bad_NoCommunication`) izlendi. Ders: Zincirde gateway/aggregator varsa ServerTimestamp tazeliği gerçek tazeliği garantilemez — SourceTimestamp + StatusCode birlikte değerlendirilmeli.
+
+**Not 6 — Queue Overflow ve Sessizce Atlanan Değerler**  
+Bir devreye alma sırasında PLC'de hızlı değişen bir sayaç (her 20ms artıyor) 500ms publish interval ile subscribe edilmişti. Monitored item'ın `QueueSize`'ı varsayılan 1 idi. Sonuç: PLC 20ms'de değer üretiyor, kuyruk 1 değer tutuyor, 500ms'de bir okunuyor — aradaki ~24 değişim sessizce *overwrite* ediliyordu (DiscardOldest=true). Üretim sayacı atlamalı görünüyordu. Çözüm: Hızlı sayaçlar için ya `QueueSize` artırıldı (geçmiş değerleri toplu al) ya da PLC tarafında latch/biriktirme yapıldı. Ders: publish interval > değişim hızı ise QueueSize ayarı verinin kaybolup kaybolmayacağını belirler; varsayılan 1 çoğu zaman sessiz veri kaybı demektir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Gerçek zamanlı veri katmanı, "her şey yolundayken" çalışır; mühendislik kalitesi sınır koşullarda belli olur. Aşağıdaki tablo en kritik edge case'leri toplar.
+
+| Edge Case | Tetikleyen Koşul | Belirti | Doğru Davranış |
+|---|---|---|---|
+| Stale data canlı görünür | Bağlantı kopuk, ekran son değeri tutuyor | Operatör eski veriyle karar alır | maxAge kontrolü (SourceTimestamp) → gri/italik + overlay |
+| Gateway timestamp yanılgısı | Aggregating server taze ServerTimestamp basar | Yaşlılık tespiti devre dışı kalır | SourceTimestamp + StatusCode kullan |
+| Subscription fırtınası | Gürültülü analog, deadband yok | Saniyede onlarca bildirim/tag, UI takılır | DataChangeFilter + AbsoluteDeadband |
+| Sessiz veri kaybı | publish interval > değişim hızı, QueueSize=1 | Sayaç atlar, geçici tepe kaçar | QueueSize artır veya PLC'de latch |
+| Reconnect delta kaybı | Kopuk sürede değişip dönen değer | İlk delta gelmez, değer eski kalır | Reconnect'te FULL_UPDATE |
+| Saat kayması (clock skew) | PLC ve HMI saatleri senkron değil | Negatif "yaşlılık", trend zaman kayması | NTP/PTP senkron; yaşlılığı backend saatiyle hesapla |
+| WebSocket backpressure | Frontend yavaş, mesaj birikir | Gecikme artar, bellek şişer | Sunucu-tarafı throttle + son-değer koalesleme |
+| Modbus toplu okuma sınırı | Tek FC03 ile >125 register istemek | Exception response, okuma başarısız | Register bloklarını ≤125'e böl, ardışık adresle |
+
+**Sayısal limitler ve eşikler:**
+```
+Modbus FC03/FC04 tek istek      : Max 125 register (16-bit) — protokol sınırı
+Modbus FC16 tek yazma           : Max 123 register — protokol sınırı
+OPC UA publish interval (pratik): 50ms taban (altı server'ı zorlar, fayda yok)
+OPC UA monitored item / sub     : Server'a bağlı; binlerce mümkün ama
+                                  PublishingInterval × ItemCount yükü dengele
+WebSocket mesaj/saniye (browser): Throttle olmadan ~60+ render/s = jank;
+                                  16ms (60fps) altında batch'le
+İnsan algı eşiği                : ~100-200ms gecikme fark edilmez;
+                                  >500ms "takılıyor" hissi başlar
+```
+
+## Optimizasyon
+
+Veri katmanı optimizasyonu kaynağa en yakın yerde başlar: **PLC/server tarafında trafiği azalt**, sonra **ağda azalt**, en son **frontend'de render azalt**. Frontend'de throttle eklemek, kaynaktan gelen gereksiz trafiği geç çözer — önce kaynağı kes.
+
+**Optimizasyon önceliği (kaynaktan görünüme):**
+```
+1. KAYNAK — Gereksiz veriyi hiç üretme/gönderme
+   → OPC UA: DataChangeFilter (deadband) + uygun publish interval katmanı
+   → Modbus: ardışık adres haritası, tek toplu okuma, değişim filtresi
+   → "Değişmeyen değeri gönderme" — subscription'ın tüm amacı budur
+
+2. AĞ — Aktarım maliyetini düşür
+   → Birden çok delta'yı tek mesajda topla (coalesce) — N tag tek frame
+   → Binary protokol (MessagePack/protobuf) JSON yerine yüksek hacimde
+   → Reconnect'te tek FULL_UPDATE; sürekli tam snapshot gönderme
+
+3. BACKEND — Tek paylaşımlı bağlantı
+   → Singleton OPC UA/Modbus client; per-widget bağlantı YASAK
+   → Katmanlı subscription: hızlı(100ms)/normal(500ms)/yavaş(5s)
+   → Son-değer önbelleği (latest value cache) → yeni istemciye anında snapshot
+
+4. FRONTEND — Render maliyetini düşür (en son)
+   → Throttle/coalesce: 16ms penceresinde gelen tüm güncellemeleri batch'le
+   → Görünmeyen widget subscription'ını askıya al (IntersectionObserver)
+   → Trend canvas-tabanlı; immutable state için referans eşitliği koru
+```
+
+**Katmanlı publish interval — neden tek interval kullanılmaz:**
+```
+Tek 100ms subscription tüm tag'lere uygulanırsa:
+  Enerji sayacı (60s'de değişir) bile 100ms'de yoklanır → boşa publish döngüsü.
+
+Doğru: Değişim hızına göre üç subscription:
+  fast_sub   (100ms)  → alarm bitleri, güvenlik
+  normal_sub (500ms)  → ölçümler
+  slow_sub   (5000ms) → sayaçlar, toplamlar
+Server publish döngüsü sayısı ve ağ trafiği dramatik düşer.
+```
+
+## Derin Teknik Detay
+
+**OPC UA subscription'ın iç mekaniği — neden polling'den üstün:**
+Subscription "push" gibi görünse de aslında istemci-yönlü bir mekanizmadır. İstemci `Subscription` oluşturur, içine `MonitoredItem`'lar ekler. Server her bir monitored item'ı **SamplingInterval** ile örnekler (değeri okur), değişim filtresinden (deadband) geçenleri o item'ın **kuyruğuna** (QueueSize) koyar. Ayrı bir **PublishingInterval** zamanlayıcısı, biriken değişiklikleri bir `NotificationMessage`'a paketleyip istemcinin önceden gönderdiği `PublishRequest`'lere yanıt olarak iletir.
+```
+Değer → [SamplingInterval örnekler] → [DataChangeFilter/deadband] →
+        [MonitoredItem Queue (QueueSize)] → [PublishingInterval paketler] →
+        [NotificationMessage → istemci]
+```
+Kritik içgörü: **SamplingInterval ≠ PublishingInterval**. Server değeri hızlı örnekleyip (ör. 50ms) yavaş yayınlayabilir (ör. 1s); bu durumda 1 saniyede 20 örnek kuyruğa girer, QueueSize yeterliyse hepsi tek mesajda gelir (sıkıştırılmış geçmiş). Polling'de bu mümkün değildir: her okuma bir tur-zaman (round-trip) ister, kaçan değer kaçmıştır. Ayrıca subscription bir **KeepAlive** mekanizmasına sahiptir: değişim olmasa bile periyodik "hâlâ buradayım" mesajı gönderir — istemci bunu görmezse bağlantıyı kopuk sayar. Polling'de "sessizlik" hem "değişmedi" hem "öldü" anlamına gelebilir; ayırt edilemez.
+
+**Quality (StatusCode) neden değerin kendisi kadar önemli:**
+OPC UA'da her değer bir üçlüdür: `(Value, StatusCode, Timestamp)`. StatusCode 32-bitlik bir alandır; üst bitler Good/Uncertain/Bad sınıfını, alt bitler nedeni taşır (`Bad_NoCommunication`, `Uncertain_LastUsableValue`, `Good_LocalOverride` vb.). Bir değer `82.5` olabilir ama StatusCode `Bad_NoCommunication` ise o `82.5` anlamsızdır — bağlantı kopmadan önceki son değerdir. Sadece `Value`'yu gösterip StatusCode'u yok saymak, Not 2'deki motor aşırı ısınma vakasının tam nedenidir. Modbus'ta bu kavram protokol seviyesinde **yoktur**; kalite ancak "okuma başarılı oldu mu / timeout mu" şeklinde dolaylı türetilir. Bu, OPC UA'nın legacy üstündeki en büyük somut güvenlik avantajıdır.
+
+**Backend "latest value cache" deseni neden zorunlu:**
+```
+İstemci bağlandığında ekranın TÜM değerlere ihtiyacı var, ama subscription
+yalnızca BUNDAN SONRAKİ değişimleri gönderir. Cache olmadan:
+  Bağlanan istemci, bir tag değişene kadar onu "--.-" görür (saatlerce olabilir).
+
+Latest value cache (backend'de tutulan son değer haritası):
+  Yeni istemci bağlanır → cache'ten anında FULL_UPDATE snapshot alır →
+  ardından delta akışına geçer. Bu, "push" mimarisinin "pull-on-connect"
+  ile birleştiği zorunlu noktadır.
+```
+
+**Saat senkronizasyonu ve trend bütünlüğü:**
+Trend grafikleri ve yaşlılık hesapları zaman damgasına dayanır. PLC saati ile HMI/backend saati arasında kayma (clock skew) varsa: (1) yaşlılık negatif çıkabilir (gelecekten gelen timestamp → "0 saniye önce" görünür ama aslında bayat); (2) farklı kaynaklardan trend'ler hizalanmaz. Endüstriyel ortamda çözüm NTP (≈ms doğruluk) veya kritik motion/SoE senaryolarda PTP/IEEE-1588 (≈µs). Pratik kural: **yaşlılık hesabını tek bir saatle (backend) yap** — `age = backend_now − SourceTimestamp` yerine, mümkünse backend değeri aldığı andaki kendi saatini referans al; böylece PLC-backend skew yaşlılığı bozmaz.
 
 ## İlgili Konular
 
