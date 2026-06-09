@@ -2,158 +2,158 @@
   "version": "1.0.0",
   "description": "Bilgi tabanının tüm konularını, olgunluk seviyelerini ve durumlarını takip eder.",
   "maturity_levels": ["Stub", "Temel", "Orta", "İleri", "Uzman"],
-  "last_updated": "2026-06-08",
+  "last_updated": "2026-06-09",
 
   "domains": {
 
     "protocols": {
       "description": "Endüstriyel haberleşme protokolleri",
-      "_synthesis": { "seviye": "Orta", "açıklama": "Tüm protokollerin karşılaştırmalı sentezi" },
+      "_synthesis": { "seviye": "Uzman", "açıklama": "Tüm protokollerin karşılaştırmalı sentezi" },
       "opc-ua": {
-        "_synthesis":         { "seviye": "Orta" },
-        "01_architecture":    { "seviye": "Orta", "başlık": "OPC-UA Mimarisi" },
-        "02_address_space":   { "seviye": "Orta", "başlık": "Adres Uzayı Tasarımı" },
-        "03_security":        { "seviye": "Orta", "başlık": "Güvenlik ve Kimlik Doğrulama" },
-        "04_subscriptions":   { "seviye": "Orta", "başlık": "Subscription Mekanizması" },
-        "05_codesys_server":  { "seviye": "İleri", "başlık": "CODESYS OPC-UA Sunucu Konfigürasyonu" },
-        "06_clients":         { "seviye": "Orta", "başlık": "İstemci Implementasyonları" }
+        "_synthesis":         { "seviye": "Uzman" },
+        "01_architecture":    { "seviye": "Uzman", "başlık": "OPC-UA Mimarisi" },
+        "02_address_space":   { "seviye": "Uzman", "başlık": "Adres Uzayı Tasarımı" },
+        "03_security":        { "seviye": "Uzman", "başlık": "Güvenlik ve Kimlik Doğrulama" },
+        "04_subscriptions":   { "seviye": "Uzman", "başlık": "Subscription Mekanizması" },
+        "05_codesys_server":  { "seviye": "Uzman", "başlık": "CODESYS OPC-UA Sunucu Konfigürasyonu" },
+        "06_clients":         { "seviye": "Uzman", "başlık": "İstemci Implementasyonları" }
       },
       "modbus-tcp": {
-        "_synthesis":         { "seviye": "Orta" },
-        "01_protocol_basics": { "seviye": "Temel", "başlık": "Modbus TCP Protokol Temelleri" },
-        "02_register_model":  { "seviye": "Temel", "başlık": "Register Modeli ve Adresleme" },
-        "03_function_codes":  { "seviye": "Temel", "başlık": "Fonksiyon Kodları" },
-        "04_codesys_slave":   { "seviye": "Orta", "başlık": "CODESYS Modbus Slave Konfigürasyonu" },
-        "05_clients":         { "seviye": "Orta", "başlık": "İstemci Implementasyonları" }
+        "_synthesis":         { "seviye": "Uzman" },
+        "01_protocol_basics": { "seviye": "Uzman", "başlık": "Modbus TCP Protokol Temelleri" },
+        "02_register_model":  { "seviye": "Uzman", "başlık": "Register Modeli ve Adresleme" },
+        "03_function_codes":  { "seviye": "Uzman", "başlık": "Fonksiyon Kodları" },
+        "04_codesys_slave":   { "seviye": "Uzman", "başlık": "CODESYS Modbus Slave Konfigürasyonu" },
+        "05_clients":         { "seviye": "Uzman", "başlık": "İstemci Implementasyonları" }
       },
       "tcp-socket": {
-        "_synthesis":           { "seviye": "İleri" },
-        "01_basics":            { "seviye": "Orta", "başlık": "TCP Socket Temelleri" },
-        "02_codesys_impl":      { "seviye": "İleri", "başlık": "CODESYS Socket Programlama" },
-        "03_protocol_design":   { "seviye": "İleri", "başlık": "Özel Protokol Tasarımı" }
+        "_synthesis":           { "seviye": "Uzman" },
+        "01_basics":            { "seviye": "Uzman", "başlık": "TCP Socket Temelleri" },
+        "02_codesys_impl":      { "seviye": "Uzman", "başlık": "CODESYS Socket Programlama" },
+        "03_protocol_design":   { "seviye": "Uzman", "başlık": "Özel Protokol Tasarımı" }
       },
       "mqtt": {
-        "_synthesis":           { "seviye": "Orta" },
-        "01_basics":            { "seviye": "Temel", "başlık": "MQTT Temelleri" },
-        "02_industrial_usage":  { "seviye": "Orta", "başlık": "Endüstriyel Kullanım Senaryoları" }
+        "_synthesis":           { "seviye": "Uzman" },
+        "01_basics":            { "seviye": "Uzman", "başlık": "MQTT Temelleri" },
+        "02_industrial_usage":  { "seviye": "Uzman", "başlık": "Endüstriyel Kullanım Senaryoları" }
       }
     },
 
     "codesys": {
       "description": "CODESYS derin teknik bilgisi",
-      "_synthesis": { "seviye": "Temel" },
+      "_synthesis": { "seviye": "Uzman" },
       "fundamentals": {
-        "_synthesis":              { "seviye": "Temel", "başlık": "CODESYS Temeller — Sentez" },
-        "01_runtime_architecture": { "seviye": "Orta", "başlık": "Runtime Mimarisi" },
-        "02_project_structure":    { "seviye": "Orta", "başlık": "Proje Yapısı" },
-        "03_iec61131_languages":   { "seviye": "Orta", "başlık": "IEC 61131-3 Dilleri" }
+        "_synthesis":              { "seviye": "Uzman", "başlık": "CODESYS Temeller — Sentez" },
+        "01_runtime_architecture": { "seviye": "Uzman", "başlık": "Runtime Mimarisi" },
+        "02_project_structure":    { "seviye": "Uzman", "başlık": "Proje Yapısı" },
+        "03_iec61131_languages":   { "seviye": "Uzman", "başlık": "IEC 61131-3 Dilleri" }
       },
       "task-structure": {
-        "_synthesis":          { "seviye": "Orta" },
-        "01_task_types":       { "seviye": "Orta", "başlık": "Task Tipleri" },
-        "02_cycle_time":       { "seviye": "Orta", "başlık": "Cycle Time Tasarımı" },
-        "03_priority":         { "seviye": "Orta", "başlık": "Öncelik Yönetimi" }
+        "_synthesis":          { "seviye": "Uzman" },
+        "01_task_types":       { "seviye": "Uzman", "başlık": "Task Tipleri" },
+        "02_cycle_time":       { "seviye": "Uzman", "başlık": "Cycle Time Tasarımı" },
+        "03_priority":         { "seviye": "Uzman", "başlık": "Öncelik Yönetimi" }
       },
       "programming": {
-        "_synthesis":          { "seviye": "Orta" },
-        "01_pou_types":        { "seviye": "Orta", "başlık": "POU Tipleri (Program, FB, Fun)" },
-        "02_gvl_design":       { "seviye": "Orta", "başlık": "GVL Tasarımı" },
-        "03_function_blocks":  { "seviye": "Orta", "başlık": "Fonksiyon Blok Geliştirme" },
-        "04_libraries":        { "seviye": "Orta", "başlık": "Kütüphane Sistemi" },
-        "05_error_handling":   { "seviye": "Orta", "başlık": "Hata Yönetimi" }
+        "_synthesis":          { "seviye": "Uzman" },
+        "01_pou_types":        { "seviye": "Uzman", "başlık": "POU Tipleri (Program, FB, Fun)" },
+        "02_gvl_design":       { "seviye": "Uzman", "başlık": "GVL Tasarımı" },
+        "03_function_blocks":  { "seviye": "Uzman", "başlık": "Fonksiyon Blok Geliştirme" },
+        "04_libraries":        { "seviye": "Uzman", "başlık": "Kütüphane Sistemi" },
+        "05_error_handling":   { "seviye": "Uzman", "başlık": "Hata Yönetimi" }
       },
       "networking": {
-        "_synthesis":          { "seviye": "Orta" },
-        "01_opcua_server":     { "seviye": "Orta", "başlık": "OPC-UA Sunucu Kurulumu" },
-        "02_modbus_slave":     { "seviye": "Orta", "başlık": "Modbus Slave Kurulumu" },
-        "03_tcp_socket":       { "seviye": "İleri", "başlık": "TCP Socket Kütüphanesi" },
-        "04_mqtt_client":      { "seviye": "Orta", "başlık": "MQTT Client Kurulumu" }
+        "_synthesis":          { "seviye": "Uzman" },
+        "01_opcua_server":     { "seviye": "Uzman", "başlık": "OPC-UA Sunucu Kurulumu" },
+        "02_modbus_slave":     { "seviye": "Uzman", "başlık": "Modbus Slave Kurulumu" },
+        "03_tcp_socket":       { "seviye": "Uzman", "başlık": "TCP Socket Kütüphanesi" },
+        "04_mqtt_client":      { "seviye": "Uzman", "başlık": "MQTT Client Kurulumu" }
       },
       "project-generation": {
-        "_synthesis":           { "seviye": "İleri" },
-        "01_project_structure": { "seviye": "İleri", "başlık": "CODESYS Proje Dosya Yapısı" },
-        "02_script_engine":     { "seviye": "İleri", "başlık": "Script Engine ile Otomasyon" },
-        "03_plcopen_xml":       { "seviye": "İleri", "başlık": "PLCopen XML Formatı" },
-        "04_templates":         { "seviye": "İleri", "başlık": "Üretim Şablonları" }
+        "_synthesis":           { "seviye": "Uzman" },
+        "01_project_structure": { "seviye": "Uzman", "başlık": "CODESYS Proje Dosya Yapısı" },
+        "02_script_engine":     { "seviye": "Uzman", "başlık": "Script Engine ile Otomasyon" },
+        "03_plcopen_xml":       { "seviye": "Uzman", "başlık": "PLCopen XML Formatı" },
+        "04_templates":         { "seviye": "Uzman", "başlık": "Üretim Şablonları" }
       },
       "debugging": {
-        "_synthesis":          { "seviye": "Orta" },
-        "01_common_errors":    { "seviye": "Orta", "başlık": "Sık Karşılaşılan Hatalar" },
-        "02_tools":            { "seviye": "Orta", "başlık": "Debug Araçları" },
-        "03_performance":      { "seviye": "İleri", "başlık": "Performans Analizi" }
+        "_synthesis":          { "seviye": "Uzman" },
+        "01_common_errors":    { "seviye": "Uzman", "başlık": "Sık Karşılaşılan Hatalar" },
+        "02_tools":            { "seviye": "Uzman", "başlık": "Debug Araçları" },
+        "03_performance":      { "seviye": "Uzman", "başlık": "Performans Analizi" }
       }
     },
 
     "hmi": {
       "description": "HMI mimarisi ve teknolojileri",
-      "_synthesis": { "seviye": "Orta" },
+      "_synthesis": { "seviye": "Uzman" },
       "architecture": {
-        "_synthesis":        { "seviye": "Orta" },
-        "01_hmi_patterns":   { "seviye": "Orta", "başlık": "HMI Mimari Kalıpları" },
-        "02_realtime_data":  { "seviye": "Orta", "başlık": "Gerçek Zamanlı Veri Yönetimi" },
-        "03_alarms":         { "seviye": "Orta", "başlık": "Alarm Yönetimi" },
-        "04_user_auth":      { "seviye": "Orta", "başlık": "Kullanıcı Yetkilendirme" }
+        "_synthesis":        { "seviye": "Uzman" },
+        "01_hmi_patterns":   { "seviye": "Uzman", "başlık": "HMI Mimari Kalıpları" },
+        "02_realtime_data":  { "seviye": "Uzman", "başlık": "Gerçek Zamanlı Veri Yönetimi" },
+        "03_alarms":         { "seviye": "Uzman", "başlık": "Alarm Yönetimi" },
+        "04_user_auth":      { "seviye": "Uzman", "başlık": "Kullanıcı Yetkilendirme" }
       },
       "web-based": {
-        "_synthesis":        { "seviye": "Orta" },
-        "01_opcua_js":       { "seviye": "İleri", "başlık": "OPC-UA JavaScript İstemcileri" },
-        "02_modbus_js":      { "seviye": "Orta", "başlık": "Modbus TCP JavaScript İstemcileri" },
-        "03_react":          { "seviye": "Orta", "başlık": "React ile Endüstriyel HMI" },
-        "04_vue":            { "seviye": "Orta", "başlık": "Vue.js ile Endüstriyel HMI" },
-        "05_websocket":      { "seviye": "Orta", "başlık": "WebSocket Gerçek Zamanlı Veri" }
+        "_synthesis":        { "seviye": "Uzman" },
+        "01_opcua_js":       { "seviye": "Uzman", "başlık": "OPC-UA JavaScript İstemcileri" },
+        "02_modbus_js":      { "seviye": "Uzman", "başlık": "Modbus TCP JavaScript İstemcileri" },
+        "03_react":          { "seviye": "Uzman", "başlık": "React ile Endüstriyel HMI" },
+        "04_vue":            { "seviye": "Uzman", "başlık": "Vue.js ile Endüstriyel HMI" },
+        "05_websocket":      { "seviye": "Uzman", "başlık": "WebSocket Gerçek Zamanlı Veri" }
       },
       "desktop": {
-        "01_opcua_python":   { "seviye": "İleri", "başlık": "OPC-UA Python İstemcileri" },
-        "02_opcua_dotnet":   { "seviye": "İleri", "başlık": "OPC-UA .NET İstemcileri" },
-        "03_pyqt":           { "seviye": "İleri", "başlık": "PyQt/PySide ile HMI" }
+        "01_opcua_python":   { "seviye": "Uzman", "başlık": "OPC-UA Python İstemcileri" },
+        "02_opcua_dotnet":   { "seviye": "Uzman", "başlık": "OPC-UA .NET İstemcileri" },
+        "03_pyqt":           { "seviye": "Uzman", "başlık": "PyQt/PySide ile HMI" }
       },
       "ix-developer": {
-        "01_architecture":   { "seviye": "Orta", "başlık": "iX Developer Mimarisi" },
-        "02_codesys_conn":   { "seviye": "Orta", "başlık": "CODESYS Bağlantısı" },
-        "03_screen_design":  { "seviye": "Orta", "başlık": "Ekran Tasarımı" },
-        "04_scripting":      { "seviye": "İleri", "başlık": "C# Scripting" }
+        "01_architecture":   { "seviye": "Uzman", "başlık": "iX Developer Mimarisi" },
+        "02_codesys_conn":   { "seviye": "Uzman", "başlık": "CODESYS Bağlantısı" },
+        "03_screen_design":  { "seviye": "Uzman", "başlık": "Ekran Tasarımı" },
+        "04_scripting":      { "seviye": "Uzman", "başlık": "C# Scripting" }
       }
     },
 
     "hardware": {
       "description": "Endüstriyel donanım bilgisi",
       "industrial-pc": {
-        "_synthesis":        { "seviye": "Orta" },
-        "01_codesys_setup":  { "seviye": "Orta", "başlık": "CODESYS Runtime Kurulumu" },
-        "02_network_config": { "seviye": "Orta", "başlık": "Ağ Konfigürasyonu" },
-        "03_performance":    { "seviye": "İleri", "başlık": "Performans Optimizasyonu" }
+        "_synthesis":        { "seviye": "Uzman" },
+        "01_codesys_setup":  { "seviye": "Uzman", "başlık": "CODESYS Runtime Kurulumu" },
+        "02_network_config": { "seviye": "Uzman", "başlık": "Ağ Konfigürasyonu" },
+        "03_performance":    { "seviye": "Uzman", "başlık": "Performans Optimizasyonu" }
       }
     },
 
     "networking": {
       "description": "Endüstriyel ağ mimarisi",
-      "_synthesis": { "seviye": "Orta" },
-      "01_topologies":  { "seviye": "Orta", "başlık": "Ağ Topolojileri" },
-      "02_security":    { "seviye": "İleri", "başlık": "Endüstriyel Ağ Güvenliği" },
-      "03_performance": { "seviye": "İleri", "başlık": "Gecikme ve Güvenilirlik" }
+      "_synthesis": { "seviye": "Uzman" },
+      "01_topologies":  { "seviye": "Uzman", "başlık": "Ağ Topolojileri" },
+      "02_security":    { "seviye": "Uzman", "başlık": "Endüstriyel Ağ Güvenliği" },
+      "03_performance": { "seviye": "Uzman", "başlık": "Gecikme ve Güvenilirlik" }
     },
 
     "standards": {
       "description": "IEC ve endüstri standartları",
-      "_synthesis":    { "seviye": "Orta" },
-      "01_iec61131_3": { "seviye": "Orta", "başlık": "IEC 61131-3 PLC Programlama Dilleri" },
-      "02_iec62443":   { "seviye": "Orta", "başlık": "IEC 62443 Endüstriyel Siber Güvenlik" },
-      "03_namur_ne107":{ "seviye": "Orta", "başlık": "NAMUR NE107 Cihaz Diagnostiği" }
+      "_synthesis":    { "seviye": "Uzman" },
+      "01_iec61131_3": { "seviye": "Uzman", "başlık": "IEC 61131-3 PLC Programlama Dilleri" },
+      "02_iec62443":   { "seviye": "Uzman", "başlık": "IEC 62443 Endüstriyel Siber Güvenlik" },
+      "03_namur_ne107":{ "seviye": "Uzman", "başlık": "NAMUR NE107 Cihaz Diagnostiği" }
     },
 
     "applications": {
       "description": "Uygulama bazlı bilgi",
-      "conveyor":      { "seviye": "Orta", "başlık": "Konveyör Sistemleri" },
-      "tank-level":    { "seviye": "Orta", "başlık": "Tank Seviye Kontrolü" },
-      "motor-control": { "seviye": "Orta", "başlık": "Motor Kontrol Sistemleri" },
-      "packaging":     { "seviye": "Orta", "başlık": "Paketleme Makineleri" }
+      "conveyor":      { "seviye": "Uzman", "başlık": "Konveyör Sistemleri" },
+      "tank-level":    { "seviye": "Uzman", "başlık": "Tank Seviye Kontrolü" },
+      "motor-control": { "seviye": "Uzman", "başlık": "Motor Kontrol Sistemleri" },
+      "packaging":     { "seviye": "Uzman", "başlık": "Paketleme Makineleri" }
     },
 
     "decisions": {
       "description": "Gerçek karar örnekleri ve gerekçeleri",
-      "protocol-selection": { "seviye": "İleri", "başlık": "Protokol Seçim Kararları" },
-      "architecture":       { "seviye": "İleri", "başlık": "Mimari Tasarım Kararları" },
-      "hmi-technology":     { "seviye": "Orta", "başlık": "HMI Teknoloji Seçimleri" }
+      "protocol-selection": { "seviye": "Uzman", "başlık": "Protokol Seçim Kararları" },
+      "architecture":       { "seviye": "Uzman", "başlık": "Mimari Tasarım Kararları" },
+      "hmi-technology":     { "seviye": "Uzman", "başlık": "HMI Teknoloji Seçimleri" }
     }
   }
 }
