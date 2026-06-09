@@ -2,8 +2,8 @@
 KONU        : CODESYS Proje İç Yapısı
 KATEGORİ    : codesys
 ALT_KATEGORI: fundamentals
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_struct_project_creation.html"
     başlık: "CODESYS Online Help — Creating and Configuring a Project"
@@ -568,6 +568,107 @@ DataLogger uygulaması geliştirilirken makine çalışmaya devam etti. Güncell
 
 **Not 5 — DUT'lerin Değeri**  
 İlk başta struct kullanmaktan kaçınıldı, her motor için ayrı ayrı 10 global değişken tanımlandı (Motor1_Run, Motor1_FB, Motor1_Speed... Motor5_Run...). 5 motor için 50 değişken. Sonra STRUCT tanımlanarak tek bir `ARRAY [1..5] OF ST_MotorData` ile yönetilir hale getirildi. Kod %40 kısaldı, okunabilirlik 3 katına çıktı.
+
+**Not 6 — `.project` İkili Birleştirme (Merge) Cehennemi**  
+İki mühendis aynı `.project` dosyasında paralel çalıştı, Git ile birleştirmeye çalıştı. `.project` XML tabanlı olsa da içinde GUID'ler, sıralı ID'ler ve gömülü binary blob'lar vardır; satır-bazlı Git merge **bozuk proje** üretti, dosya açılmadı. Ders: CODESYS projelerinde Git'i "yedek ve geçmiş" için kullanın, ama gerçek işbirliği için **CODESYS Git** entegrasyonu (V3.5 SP17+) ya da object-level export (`.export`/PLCopenXML) + ortak kütüphane mimarisi kullanın. Ekip aynı uygulamada paralel çalışacaksa, mantığı ayrı **kütüphanelere** bölün; her mühendis kendi kütüphanesini sürümler.
+
+**Not 7 — Device Description Sürüm Tuzağı**  
+Proje bir mühendisin makinesinde açılıyordu, diğerinde "device not found, repository missing" hatası verdi. Neden: `.devdesc` belirli bir **sürümle** projeye bağlanır; diğer mühendiste o sürüm yüklü değildi (sadece daha yenisi vardı). CODESYS otomatik upgrade yapmaz, eşleşme arar. Ders: Device description paketlerini (`.devpkg`) proje deposunda saklayın ve takım genelinde sürüm sabitleyin. `.projectarchive` kullanırken "Device descriptions" kutusunu işaretleyin — arşive gömülür.
+
+**Not 8 — GVL'de `AT %` Doğrudan Adresleme ile Donanım Değişimi**  
+I/O değişkenleri GVL'de `xMotor1_Run AT %Q0.0 : BOOL;` ile sabit adreslere bağlanmıştı. Fieldbus topolojisi değişince (bir slave eklenince) tüm `%Q` adresleri kaydı, yüzlerce çıkış yanlış kanala gitti — makine tehlikeli biçimde yanlış valfleri açtı. Ders: `AT %` doğrudan adreslemeden kaçının; **I/O Mapping ekranı** üzerinden sembolik eşleme yapın. Mapping, slave eklense bile sembolik bağı korur. Doğrudan adres yalnızca topolojisi asla değişmeyecek sabit sistemlerde kullanılmalı.
+
+**Not 9 — Library Namespace Çakışması**  
+İki farklı kütüphane aynı isimde bir FB (`FB_Timer`) içeriyordu; derleyici "ambiguous" hatası verdi. Ders: Kütüphaneleri **namespace** ile ekleyin (Library Manager → Properties → Namespace) ve kodda nitelikli erişin: `MyLib.FB_Timer`. Kendi kütüphanelerinizde namespace tanımlamak, ileride çakışmayı baştan engeller.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Object GUID ve Kopyalama Tuzakları
+
+CODESYS'te her obje (POU, GVL, DUT) bir **GUID** taşır. Bu görünmez ama kritik etkileri vardır:
+
+- Bir POU'yu kopyala-yapıştır yaptığınızda yeni GUID üretilir; ama bazı referanslar (visualization, task call) eski GUID'e bağlı kalabilir → "object not found" tarzı hayalet hatalar.
+- İki projeyi birleştirirken aynı GUID'e sahip iki farklı obje varsa, IDE birini sessizce gölgeleyebilir.
+- Çözüm: Obje taşımak için kopyala-yapıştır yerine **export/import** (`.export`) kullanın; referans bütünlüğü daha iyi korunur.
+
+### Application ve Task Limitleri
+
+| Sınır | Pratik Değer | Not |
+|---|---|---|
+| Device başına Application | Cihaza bağlı (genelde 1, bazıları çoklu destekler) | Çoklu app, runtime lisansı/varyantına bağlı |
+| Application başına Task | ~16-32 | Belge 01'deki scheduler limiti ile örtüşür |
+| GVL boyutu | Pratikte sorun yok, derleme süresi etkilenir | 10.000+ değişken IDE'yi yavaşlatır |
+| Nested STRUCT derinliği | Çok derin (~pratik sınır yok) | Ama bellek hizalama dolgu (padding) büyür |
+| ARRAY boyutu | Bellekle sınırlı | `ARRAY [0..1000000]` bootapp boyutunu şişirir |
+
+### Persistent vs Retain — İnce Ayrım
+
+İki farklı kalıcılık mekanizması karıştırılır:
+
+```
+VAR RETAIN          → power-fail'de korunur, online change'de korunur,
+                       RESET (warm) ile korunur, RESET COLD ile silinir
+VAR PERSISTENT      → RETAIN'in tüm özellikleri + RESET ORIGIN'e kadar
+                       korunur (kod indirmeden bile hayatta kalır)
+```
+
+**Edge case:** `PERSISTENT` değişkenler `PersistentVars` adında özel bir liste objesinde toplanmalıdır; rastgele bir POU içinde `VAR PERSISTENT` tanımlamak bazı sürümlerde derlenir ama **kaydedilmez** (sessiz veri kaybı). Daima `Add Object → Persistent Variables` listesi kullanın.
+
+### Boş Task / Çağrılmayan POU
+
+- Task Configuration'a atanmamış bir PROGRAM **hiç çalışmaz** ama derlenir ve bootapp'a dahil edilir (ölü kod). Statik analiz bunu "unused" olarak işaretler.
+- Bir Task'a atanmış ama içi boş bir program, scheduler'da yer tutar ve cycle overhead yaratır — gereksiz task'lar performans kaçağıdır.
+
+## Optimizasyon
+
+### Proje Mimarisini Yeniden Kullanılabilirlik İçin Tasarlama
+
+- **Kütüphane-merkezli mimari:** Tekrar eden mantığı (motor, valf, PID, iletişim) projeye gömmek yerine **dahili kütüphaneye** (`.library`) çıkarın. Her proje kütüphaneyi sürüm-sabit referansla kullanır. Avantaj: Bir bug fix tüm projelere tek noktadan yayılır; IP korumalı (`.compiled-library`) dağıtım mümkün olur.
+- **Interface tabanlı bağımlılık:** FB'leri somut tiplere değil, `INTERFACE`'lere bağlayın (ör. `I_Motor`). Bu, test için mock instance enjekte etmeyi ve farklı donanımları aynı arayüzle değiştirmeyi sağlar.
+- **GVL'yi katmanla:** `GVL_IO` (donanım sınırı), `GVL_Params` (operatör), `GVL_State` (iç durum), `GVL_Diag` (telemetri). Bu ayrım, OPC UA ile dışarı açılacak değişken setini netleştirir ve erişim kontrolünü kolaylaştırır.
+
+### Derleme ve IDE Performansı
+
+- **Büyük projelerde derleme süresi:** Çok sayıda visualization, derleme süresini lineer artırır. Geliştirme sırasında kullanılmayan visualization'ları ayrı bir application'a taşıyın veya "exclude from build" kullanın.
+- **`__VARINFO` ve sembol dosyaları:** OPC UA / sembolik erişim için üretilen sembol konfigürasyonu (Symbol Configuration) gereğinden fazla değişken içeriyorsa hem bootapp şişer hem indirme yavaşlar. Yalnızca dışa açılacak değişkenleri seçin.
+
+### Bellek Düzeni Optimizasyonu
+
+- **STRUCT alan sıralaması:** Alanları **boyuta göre büyükten küçüğe** sıralamak (LREAL/DINT önce, BOOL sonra) hizalama dolgusunu (padding) azaltır. Karışık sıralanmış bir struct, `pack_mode` olmadan %30'a varan bellek israfı yaratabilir.
+- **BOOL paketleme:** 100 ayrı `BOOL` yerine bir `WORD`/`DWORD` + bit erişimi (`wFlags.0`) hem bellek hem fieldbus bant genişliği tasarrufu sağlar — özellikle Modbus gibi register-tabanlı protokollerde.
+
+## Derin Teknik Detay
+
+### `.project` Dosyasının Anatomisi
+
+`.project` aslında bir **SQLite-benzeri yapılandırılmış konteyner** değil, sıkıştırılmış/XML hibrit bir formattır (sürüme göre değişir). İçinde:
+
+- Her obje ayrı bir "POU object" olarak GUID ile saklanır.
+- Derleme çıktısı (compile cache) ayrı tutulur — bu yüzden `Clean` sonrası dosya küçülür.
+- Kütüphane referansları **gerçek kütüphaneyi içermez**, yalnızca (isim, sürüm, namespace) referansını tutar. Bu yüzden `.project` taşınınca kütüphaneler eksik olabilir; `.projectarchive` ise bağımlılıkları paketler.
+
+Bu tasarım, "neden Git merge çalışmıyor" sorusunun cevabıdır: dosya satır-bazlı diff için değil, IDE'nin obje grafiğini serileştirmesi için tasarlanmıştır.
+
+### Device Tree Neden Hiyerarşik? — Donanım Soyutlamasının Yansıması
+
+Device Tree, fiziksel donanım topolojisini birebir yansıtır: `Device → Bus Master → Slave → Module → Channel`. Bu kasıtlıdır:
+
+- I/O adresleri (`%I`, `%Q`) bu hiyerarşiden **otomatik türetilir**. Bir slave'i ağaçta yukarı/aşağı taşımak, altındaki tüm kanalların adreslerini yeniden hesaplatır (Not 8'deki tuzağın kökü).
+- Fieldbus tarama (scan) sonucu doğrudan bu ağaca yazılır; gerçek donanımı "öğrenip" ağaca ekler.
+- Her düğüm kendi konfigürasyon parametrelerini (PDO mapping, COE startup) taşır — donanım davranışı kod değil, ağaç konfigürasyonuyla belirlenir. Bu, "configuration as data" felsefesidir: aynı kod, farklı ağaç konfigürasyonuyla farklı donanımlarda çalışır.
+
+### PLC Logic Katmanı Neden Var?
+
+`Device → PLC Logic → Application` zincirindeki **PLC Logic** ara düğümü gereksiz görünür ama bir amacı vardır: Bir cihaz birden fazla **çalıştırma bağlamı** (execution context) barındırabilir — ör. ana CPU + bir koprosör + bir safety controller. Her biri ayrı bir "PLC Logic" düğümü olur. Tek CPU'lu cihazlarda tek PLC Logic görürsünüz, ama mimari çoklu işlemcili karmaşık cihazları (ör. CPU + entegre motion kontrolcü) aynı ağaçta temsil edebilmek için bu katmanı korur.
+
+### Online Change'in Proje Yapısıyla İlişkisi
+
+Online Change'in neden bazı değişiklikleri kabul edip bazılarını reddettiği, proje yapısının bellek düzeniyle ilgilidir:
+
+- **Kabul edilen:** Mevcut bir FB'nin implementasyonunu değiştirmek, yeni POU eklemek, yerel değişken eklemek (sona).
+- **Reddedilen / clean download gerektiren:** Bir FB'nin **arayüzünü** (VAR_INPUT/OUTPUT) değiştirmek, GVL'de değişken **sırasını** değiştirmek, task konfigürasyonunu değiştirmek, retain layout'unu bozmak.
+
+Neden? Online Change, çalışan instance'ların **bellek görüntüsünü** korumaya çalışır. Arayüz/sıralama değişikliği bellek haritasını kaydırır; çalışan veriyi taşıyamaz. Bu yüzden "yeni değişkeni sona ekle" kuralı altın değerindedir — sona ekleme bellek haritasının başını bozmaz.
 
 ## İlgili Konular
 

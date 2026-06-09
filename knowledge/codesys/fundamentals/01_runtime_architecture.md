@@ -2,8 +2,8 @@
 KONU        : CODESYS Runtime Mimarisi
 KATEGORİ    : codesys
 ALT_KATEGORI: fundamentals
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.codesys.com/products/runtime/"
     başlık: "CODESYS Control Runtime System — Resmi Ürün Sayfası"
@@ -338,6 +338,147 @@ CODESYS V3'ün çok önemli özelliği: Tek runtime üzerinde **birden fazla App
 
 **Not 5 — Execution Engine Performans Beklentisi**  
 Deneyimsel veri: CODESYS ST ile yazılmış kompakt döngü kodu, C ile yazılmış eşdeğere göre yaklaşık 3-5x daha yavaş çalışır. Bu, 10ms scan cycle için genellikle sorun değildir; ancak görüntü işleme, FFT veya büyük veri sıralama yapıyorsanız harici C kütüphanesi (External Library) kullanmak şart olur.
+
+**Not 6 — Retain Değişkenlerin Sessiz Kaybı (Persistence Tuzağı)**  
+Bir fırınlama tesisinde günlük üretim sayaçları `VAR RETAIN` ile tanımlanmıştı. Online Change'ler sorunsuzdu, ancak bir gün **clean download** (tam yeniden indirme) yapıldığında tüm sayaçlar sıfırlandı. Neden: Retain bölgesi yalnızca online change ve power-cycle'da korunur; clean download retain'i de silebilir (varyanta göre). Daha kötüsü: Bir `RETAIN` değişkeninin **veri tipini veya sırasını** değiştirmek (ör. `INT` → `DINT`), retain bellek haritasını kaydırır ve **tüm retain değerleri çöpe döner** — derleyici uyarı vermez, değerler sessizce bozulur. Ders: Retain değişkenlerini ayrı bir GVL'de toplayın, sırasını ASLA değiştirmeyin, yeni değişkenleri **sona** ekleyin. Kritik veriler için retain yerine dosya/flash tabanlı kalıcılık (`CAA_File`, recipe management) tercih edin.
+
+**Not 7 — Online Change'in Pointer Tuzağı**  
+Bir paketleme makinesinde Online Change sonrası sistem rastgele crash etmeye başladı. Neden: Kodda `POINTER TO` ve `REFERENCE TO` ile tutulan adresler vardı. Online Change, bir FB'nin instance'ını bellekte **yeniden konumlandırdığında** (boyutu değişince) eski pointer'lar geçersiz (dangling) hale geldi. CODESYS bunu engelleyemez. Ders: Online Change yapılacak kod tabanında pointer'ları her scan'de yeniden hesaplayın (`ADR()`), asla scan'ler arası saklamayın. Güvenlik kritik sistemlerde Online Change yerine planlı duruş + clean download kullanın.
+
+**Not 8 — Multicore'da "Daha Fazla Çekirdek = Daha Hızlı" Yanılgısı**  
+8 çekirdekli bir IPC'ye geçen bir müşteri, tek bir 1ms task'ın daha hızlı olmasını bekledi — olmadı. Tek bir IEC task tek bir çekirdekte çalışır; CODESYS task'ları otomatik olarak çekirdekler arası dağıtmaz. Çoklu çekirdeğin faydası, **farklı task'ları farklı çekirdeklere** atamakla (V3.5 SP11+ `Core` parametresi) veya runtime'ı OS'ten izole etmekle gelir. Ders: Tek bir ağır döngüyü hızlandırmak için kodu paralelleştirmek (birden fazla task'a bölmek) gerekir; donanım tek başına çözmez.
+
+**Not 9 — Bootapp ile Çalışan Kod Arasındaki Sürüm Uyuşmazlığı**  
+Saha cihazı her power-cycle'da eski bir uygulamayla açılıyordu, oysa IDE'den yeni kod indirilmişti. Neden: İndirme yapıldı ama **"Create Boot Application"** çağrılmadı; runtime, RAM'deki yeni kodu çalıştırıyordu ama flash'taki `bootapp` hâlâ eskiydi. Power-cycle sonrası flash'tan eski uygulama yüklendi. Ders: Devreye almada her zaman `Online → Create Boot Application` yapın ve power-cycle testi ile doğrulayın.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Watchdog Tetiklenmesinin Gizli Davranışları
+
+Watchdog tetiklendiğinde varsayılan davranış uygulamanın **STOP** durumuna geçmesidir; ancak detaylar incedir:
+
+- **Tek task watchdog ≠ tüm sistem durması:** Çok task'lı bir uygulamada bir task'ın watchdog'u tetiklenirse **tüm uygulama** durur (her task değil). Yani diagnostic task'ınız da durur — alarmı dışarı raporlayamayabilirsiniz. Kritik alarm bildirimini watchdog'tan bağımsız bir mekanizmaya (ör. ayrı bir cihaz, hardware heartbeat) bağlayın.
+- **Watchdog Sensitivity yanlış anlaşılır:** `Sensitivity = 1` her aşımda tetiklenir demek değildir. Watchdog koşulu `(cycle_time × sensitivity)` üzerinden hesaplanır; `Sensitivity` arttıkça tolerans artar. Tek seferlik bir spike'ı tolere etmek isterseniz sensitivity'yi artırın, ama bu gerçek bir takılmayı da geç yakalar.
+- **Çıkışların durumu:** Watchdog STOP'ta çıkışlar **fieldbus master'ın fail-safe ayarına** göre davranır — CODESYS otomatik olarak 0'lamaz. EtherCAT'te SafeOp'a düşer, slave'in kendi fail-safe değerleri devreye girer. Bunu test etmeden "watchdog çıkışları kapatır" varsaymak tehlikelidir.
+
+### Scan Cycle Aşımı (Cycle Overrun) — İki Farklı Senaryo
+
+```
+Senaryo A: Exec Time > Cycle Time, ama < Watchdog Time
+  → Task bir sonraki interval'i KAÇIRIR (jitter birikir)
+  → Sistem çalışmaya devam eder ama deterministik DEĞİLDİR
+  → Sessiz tehlike: monitör dışında belirti yok
+
+Senaryo B: Exec Time > Watchdog Time
+  → Watchdog tetiklenir, uygulama STOP
+  → Gürültülü ama güvenli
+```
+
+Senaryo A en tehlikelisidir çünkü görünmez. `MaxCycleTime` ve `AverageCycleTime` değerlerini sürekli izleyin; üretimde bu değerleri OPC UA ile SCADA'ya raporlayın.
+
+### Sistem Limitleri (Pratik Tavanlar)
+
+| Kaynak | Pratik Limit | Aşıldığında |
+|---|---|---|
+| Task sayısı | ~16-32 (varyanta göre) | Scheduler overhead'i ezici olur |
+| En kısa cycle time | 250µs–1ms (platform) | Jitter cycle time'ı geçer, anlamsızlaşır |
+| Online değişken izleme | ~1000-5000 değişken | Monitoring trafiği task'ı yavaşlatır |
+| String uzunluğu | Varsayılan 80, max 255 byte | `STRING(255)` üstü için WSTRING |
+| POU çağrı derinliği | Stack boyutuna bağlı (~genelde derin değil) | Stack overflow → runtime crash |
+| Retain bellek | Cihaza özgü (ör. 32KB-256KB) | Sessizce taşar veya download reddedilir |
+
+### Zaman ve Tarih Edge Case'leri
+
+- **TIME taşması:** `TIME` tipi 32-bit milisaniyedir, ~**49.7 gün**te taşar (`T#49D17H...`). Uptime sayacı olarak `TIME` kullanan bir sistem 49 günde sıfırlanıp alarm üretti. Uzun süreler için `LTIME` (64-bit) veya `DWORD` saniye sayacı kullanın.
+- **SysTimeGetMs() taşması:** Benzer şekilde 32-bit ms sayaçları periyodik taşar; iki zaman damgası arasındaki farkı `t2 - t1` ile alırken unsigned aritmetik taşmayı doğru ele alır, ama mutlak karşılaştırma (`t2 > t1`) taşma anında yanlış sonuç verir.
+- **RTC senkronizasyonu:** Runtime başlarken RTC pili bitikse sistem 1970'e döner; zaman damgalı loglar bozulur. NTP/SNTP senkronizasyonunu boot'ta zorunlu kılın.
+
+## Optimizasyon
+
+### Jitter'ı Minimize Etme (Production-Grade Linux RT Reçetesi)
+
+Sıralı olarak uygulanması gereken katmanlar (her biri ek kazanç verir):
+
+```bash
+# 1. RT-preempt kernel (PREEMPT_RT yaması veya hazır RT kernel)
+uname -a   # ... PREEMPT_RT ... görünmeli
+
+# 2. CPU izolasyonu — GRUB
+GRUB_CMDLINE_LINUX="isolcpus=2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0,1"
+
+# 3. IRQ'ları izole çekirdeklerden uzak tut (irqaffinity yukarıda)
+#    + tüm taşınabilir IRQ'ları core 0-1'e pinle
+
+# 4. Runtime affinity — CODESYSControl.cfg
+[SysProcess]
+SetAffinityMask=0xC          # core 2,3 (binary 1100)
+RealTimePriority=80          # OS RT öncelik (50-90 arası, 99'a yaklaşmayın)
+
+# 5. CPU frekans yönetimini sabitle (governor)
+cpupower frequency-set -g performance   # ondemand jitter yaratır
+
+# 6. BIOS: C-states, SpeedStep, Turbo Boost, Hyperthreading KAPALI
+#    (uyku durumundan çıkış latency'si jitter'ın en büyük kaynağıdır)
+```
+
+Tek tek etki sıralaması (deneyimsel): C-states kapatma > isolcpus > RT-preempt > affinity > governor. Birçok "açıklanamayan 200µs spike", BIOS'ta açık C-state'lerden kaynaklanır.
+
+### Bellek ve Erişim Optimizasyonu
+
+- **I/O image üzerinden çalış, fieldbus'tan doğrudan okuma:** Doğrudan slave register okumak (acyclic SDO) scan cycle'ı bloke eder. Cyclic process data (PDO) → I/O image → kod akışını koru.
+- **Struct hizalama (alignment):** `{attribute 'pack_mode' := '1'}` pragmasıyla sıkıştırılmış struct'lar bellek tasarrufu sağlar ama **hizasız erişim** bazı ARM platformlarında ciddi yavaşlama (hatta exception) yaratır. Protokol paketleri için pack kullanın, hesaplama struct'ları için kullanmayın.
+- **Pass-by-reference:** Büyük struct/array'leri `VAR_INPUT` ile değere göre geçmek her çağrıda kopya yaratır. `VAR_IN_OUT` (referans) veya `POINTER TO` kullanın — 10KB'lık bir struct'ı 1ms task'ta her döngü kopyalamak ölçülebilir CPU yer.
+- **CONSTANT ve VAR_GLOBAL CONSTANT:** Sabitleri `CONSTANT` işaretlemek derleyiciye optimizasyon (sabit katlama) izni verir ve yanlışlıkla yazmayı engeller.
+
+### Derleyici ve Build Optimizasyonu
+
+- **Compiler warnings as errors:** `Project Settings → Compile options → Treat all warnings as errors` — production kodu uyarısız olmalı.
+- **Build → Clean all** unutulduğunda eski derleme artıkları beklenmedik davranışa yol açar; CI/CD'de daima temiz build.
+- **Static Analysis (CODESYS Static Analysis SL):** Yarışan değişken erişimi, kullanılmayan değişken, ölü kod, naming ihlali otomatik yakalanır — production kod tabanlarında zorunlu sayılmalı.
+
+## Derin Teknik Detay
+
+### Neden JIT Yok? Bytecode VM Tasarım Kararı
+
+CODESYS'in execution engine'i JIT (Just-In-Time) derleme yapmaz; bytecode'u yorumlar (V3'te aslında platforma göre **derlenmiş native kod** üretir, ancak çalışma anında JIT optimizasyonu yapmaz). Bu kasıtlı bir karardır:
+
+- **Determinizm > tepe performans:** JIT, "ısınma" sürecinde aynı kodu farklı sürelerde çalıştırır (önce yorumla, sonra derle, sonra yeniden optimize et). Bir PLC için **her döngünün aynı sürede** çalışması, ortalama hızdan çok daha kritiktir. JIT'in değişken latency'si gerçek zamanlılığı bozar.
+- **Doğrulanabilirlik:** Sabit, öngörülebilir kod yolu, fonksiyonel güvenlik (functional safety) sertifikasyonunu kolaylaştırır. JIT'in çalışma anında ürettiği kodu sertifikalandırmak neredeyse imkânsızdır.
+- **Bellek öngörülebilirliği:** JIT, kod cache'i için dinamik bellek ayırır — bu da deterministik olmayan GC/allocation davranışı demektir.
+
+V2 ile V3 farkı: V2 saf bytecode yorumlayıcısıydı (daha yavaş, daha taşınabilir). V3, hedef platforma derlenmiş native makine kodu üretir (`.app` içinde platform-spesifik kod) — bu yüzden V3'te `.app` platforma bağımlıdır, ama `.project` taşınabilirdir. "Bytecode VM" zihinsel modeli V2 için tam doğru, V3 için yaklaşık doğrudur.
+
+### I/O Image'ın Çift Tamponlama Mantığı
+
+I/O image mekanizması neden var? Determinizm için **giriş tutarlılığı (input consistency)** gerekir: Bir scan içinde aynı girişi iki kez okuyan iki POU **aynı değeri** görmelidir. Eğer doğrudan donanımdan okunsaydı, ilk okuma ile ikinci okuma arasında fiziksel değer değişebilir, mantık tutarsızlaşırdı.
+
+```
+Input Phase  : donanım → input image (tek seferlik snapshot)
+Execution    : tüm POU'lar SADECE image'i okur/yazar (kararlı görünüm)
+Output Phase : output image → donanım (tek seferlik commit)
+```
+
+Bu, veritabanlarındaki **transaction isolation**'a benzer: scan cycle bir "atomik işlem"dir. Alternatif (doğrudan I/O) daha düşük latency verir ama yarış koşulları (race condition) ve tutarsızlık üretir. Yüksek hızlı uygulamalarda kasıtlı olarak image'i bypass eden "direct I/O access" özelliği vardır, ama bu determinizmi feda eder.
+
+### Scheduler ile OS Scheduler'ın Buluşması
+
+CODESYS Scheduler kendi başına thread yaratmaz; OS'in zamanlama primitive'lerini kullanır:
+
+- **Linux:** Her IEC task bir `pthread`'dir, `SCHED_FIFO` politikasıyla ve `RealTimePriority` değeriyle çalışır. Cycle time, bir yüksek çözünürlüklü timer (`timerfd`/`clock_nanosleep`) ile sağlanır. RT-preempt kernel, bu thread'lerin OS kernel thread'lerini (softirq, kworker) bile önceleyebilmesini sağlar — sıradan kernel'de bu mümkün değildir.
+- **Windows RTE:** RTSS (Real-Time Subsystem), Windows HAL'in altına girerek bir timer interrupt'ını ele geçirir; IEC task'ları Windows'un göremediği bir bağlamda çalışır. Bu yüzden Windows Update bile RTE task'ını kesemez — ama Win SL'i keser (Win SL sadece normal bir Windows thread'idir).
+
+Bu mimari, "neden Win SL gerçek zamanlı değil ama Linux SL olabilir" sorusunun cevabıdır: fark runtime'da değil, **runtime'ın OS scheduler'a nasıl bağlandığındadır**.
+
+### Component Manager: Neden Mikroservis-Benzeri Mimari?
+
+Component Manager, runtime'ı 200+ ayrık bileşene (`CmpXXX`) böler. Bu, monolitik bir PLC firmware'ine göre radikal bir karardır:
+
+- **Donanım üreticisi entegrasyonu:** WAGO, sadece kendi I/O sürücüsü bileşenini yazar; CODESYS çekirdeğine dokunmaz. 500+ üretici aynı çekirdeği paylaşır.
+- **Lisans granülerliği:** EtherCAT master, SoftMotion gibi yetenekler ayrı bileşenlerdir; lisans bileşen seviyesinde aktifleşir. Bu yüzden "Standard SL + EtherCAT SL" gibi katmanlı lisanslama mümkün.
+- **Bellek ayak izi:** Kullanılmayan bileşenler yüklenmez. 32MB RAM'li bir cihaz, OPC UA ve WebVisu bileşenlerini hiç yüklemeyerek sığabilir.
+- **Bedeli:** Bileşenler arası çağrı (component interface, `CAL`) doğrudan fonksiyon çağrısından biraz daha pahalıdır; ancak bu maliyet, scan cycle başına bir kez ödenir, döngü içinde değil.
+
+Bu, Linux kernel'in modül sistemine (loadable kernel modules) kavramsal olarak benzer: çekirdek sabit, yetenekler takılıp çıkarılabilir.
 
 ## İlgili Konular
 

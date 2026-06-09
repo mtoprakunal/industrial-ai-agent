@@ -2,8 +2,8 @@
 KONU        : CODESYS'te IEC 61131-3 Programlama Dilleri
 KATEGORİ    : codesys
 ALT_KATEGORI: fundamentals
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_f_obj_pou.html"
     başlık: "CODESYS Online Help — Object: POU (implementation language seçimi)"
@@ -672,6 +672,117 @@ Bir proje özellikle "herkes okuyabilsin" gerekçesiyle tamamen LD ile yazılmı
 
 **Not 5 — SFC + ST Kombinasyonunun Gücü**  
 En başarılı yaklaşım: SFC ana iskelet, ST aksiyon detayı. SFC yöneticilere ve proses mühendislerine "makine ne yapıyor" sorusunun cevabını verir. ST, yazılım ekibine "nasıl yapıyor"un detayını sunar. İkisi birlikte hem okunabilir hem güçlü bir kod tabanı oluşturur.
+
+**Not 6 — REAL Karşılaştırması Yüzünden Takılan SFC Transition**  
+Bir dolum hattında SFC transition'ı `rFillLevel = 100.0` yazılmıştı; makine bazen o adımda sonsuza dek takılıyordu. Neden: Kayan nokta (floating point) eşitliği. Sensör değeri `99.9997` ya da `100.0001` oluyor, asla tam `100.0` olmuyordu. Ders: `REAL`/`LREAL` için **asla `=` kullanma**; `>=`, `<=` ya da tolerans bandı (`ABS(a-b) < 0.001`) kullan. Bu, sahada en çok zaman kaybettiren sessiz hatalardan biridir.
+
+**Not 7 — Timer'ı CASE İçinde Koşullu Çağırmanın Tuzağı**  
+Bir geliştirici TON bloğunu yalnızca belirli bir CASE dalında çağırdı; diğer dallarda `tTimer()` hiç çalışmadı. TON, **her scan çağrılmazsa** iç zamanını güncellemez ve `.ET` donar. Diğer dala geçildiğinde timer kaldığı yerden devam etti, beklenmedik gecikmeler oluştu. Ders: FB instance'larını (özellikle timer/counter) her scan **koşulsuz** çağırın; davranışı `IN` girişiyle kontrol edin, çağrının kendisiyle değil.
+
+**Not 8 — LD'de `JMP` ve Çoklu Network Kötüye Kullanımı**  
+Eski bir projede LD içinde `JMP`/`LABEL` ile spagetti kontrol akışı kurulmuştu; kod LD görünüyordu ama mantığı IL kadar okunaksızdı. Ders: LD'de atlama (jump) kullanımı, dilin "görsel okunabilirlik" avantajını yok eder. Karmaşık akış gerekiyorsa o POU zaten ST'de olmalıydı — dil seçimi en baştan yanlıştı.
+
+**Not 9 — CFC Yürütme Sırası Görünmezliği**  
+CFC'de bloklar serbest konumlandırılır; bir mühendis sol-üstteki bloğun önce çalıştığını varsaydı, ama CFC kendi data-flow sırasını hesaplar ve bunu blok köşesindeki küçük numara ile gösterir. Yanlış varsayım, bir scan gecikmesi yarattı (bir blok diğerinin eski çıkışını okudu). Ders: CFC'de **execution order numaralarını** daima kontrol edin; gerekirse `Order → Set Execution Order` ile elle düzenleyin. FBD grid'e bağlı olduğu için bu sorun FBD'de daha nadirdir.
+
+## Edge Case'ler ve Dil Sınırları
+
+### ST'nin Sessiz Davranışları
+
+- **Tamsayı taşması sessizdir:** `INT` (-32768..32767) taşınca sarmalanır (wrap), exception fırlatmaz. `nCount := nCount + 1` bir döngüde 32767'den sonra -32768 olur. Sayaçlar için `UDINT`/`DINT` kullanın ve sınır kontrolü ekleyin.
+- **Tamsayı bölmede kalan atılır:** `7 / 2 = 3` (REAL değil). `REAL` sonucu için en az bir operand REAL olmalı: `7.0 / 2`.
+- **Tip dönüşümü daraltması (narrowing):** `INT_TO_BYTE(300)` üst bitleri atar, `44` döner — uyarı vermeyebilir. Açık `_TO_` dönüşümlerinde aralık taşmasına dikkat.
+- **`EXIT` ve `RETURN` SFC içinde farklı davranır:** ST aksiyonu içinde `RETURN`, yalnızca o aksiyondan çıkar, SFC adımından değil.
+
+### Operatör ve Değerlendirme Sırası
+
+- **Kısa devre (short-circuit) GARANTİ DEĞİLDİR:** Birçok dilde `A AND B`, A false ise B'yi atlar. IEC ST'de standart bunu **garanti etmez**; CODESYS bazı bağlamlarda her iki tarafı da değerlendirebilir. `IF (pPtr <> 0) AND (pPtr^.value > 0)` güvenli görünür ama pPtr null ise yine de dereference edilebilir → crash. Güvenli yol: iç içe `IF` kullanın.
+- **Bit operatörü vs mantıksal operatör:** `AND`, `OR` hem boolean hem bit-bazlı çalışır (operand tipine göre). `WORD AND WORD` bit işlemidir; istemeden `BOOL` beklenen yerde `WORD` kullanmak sessiz mantık hatası verir.
+
+### SFC Özel Edge Case'leri
+
+- **Action qualifier `P` (Pulse) ve scan etkileşimi:** `P` aksiyonu adım aktifleştiğinde **bir kez** çalışır; ama adıma bir sonraki dönüşte yine bir kez çalışır. "Bir kere ömür boyu" değil, "her giriş başına bir kez"dir.
+- **Eşzamanlı (parallel) dallarda transition:** Paralel kolların **hepsi** kendi son adımına ulaşmadan birleşme (convergence) geçişi tetiklenmez. Bir kol takılırsa tüm birleşme kilitlenir — sessiz deadlock.
+- **SFC flag'leri:** `SFCInit`, `SFCReset`, `SFCError` gibi örtük (implicit) değişkenler etkinleştirilmemişse beklenen reset davranışı olmaz; bunları POU özelliklerinden açmak gerekir.
+
+### LD/FBD Limitleri
+
+- **Yürütme sırası soldan sağa, yukarıdan aşağıya** sabittir (CFC hariç); ama bir network içindeki bir FB çıkışı, aynı network'te kendisinden önce gelen başka bir bloğa beslenirse **bir scan gecikme** oluşur.
+- **Multiple coil (Not'taki Hata 6)** statik analizde uyarı verir ama derlemeyi durdurmaz; son atama kazanır.
+
+## Optimizasyon
+
+### Dil Seçiminin Performans Boyutu
+
+Dil seçimi yalnızca okunabilirlik değil, **üretilen kodun verimliliği**ni de etkiler — ama beklenenden az:
+
+- ST, LD, FBD aynı ara temsile (IR) derlenir; basit mantıkta üçü de benzer makine kodu üretir. "ST daha hızlı" miti çoğunlukla yanlıştır.
+- **Gerçek fark algoritmadadır:** Bir LD merdiveninde 50 rung'luk arama mantığı, ST'de bir `FOR` döngüsü + `ARRAY` ile hem daha hızlı hem daha az kod olur. Fark dilden değil, dilin teşvik ettiği veri yapısından gelir.
+- **SFC overhead:** SFC, adım/geçiş yönetimi için ek durum makinesi kodu üretir. Çok basit (2-3 adım) mantıkta SFC, eşdeğer ST CASE'den ölçülebilir biçimde daha ağırdır. Sık çağrılan, basit mantıkta ST CASE tercih edin.
+
+### ST Performans Best Practice'leri
+
+```iecst
+(* ❌ Yavaş: döngü içinde tekrarlanan FB çağrısı / hesap *)
+FOR i := 0 TO 999 DO
+    aResult[i] := aData[i] * fScale * SQRT(2.0);  (* SQRT her iterasyonda *)
+END_FOR
+
+(* ✅ Hızlı: değişmezi döngü dışına çıkar (loop invariant hoisting) *)
+fFactor := fScale * SQRT(2.0);
+FOR i := 0 TO 999 DO
+    aResult[i] := aData[i] * fFactor;
+END_FOR
+```
+
+- **`MEMCPY`/`MemMove`** büyük array kopyaları için eleman-eleman döngüden kat kat hızlıdır.
+- **`CASE` vs uzun `IF-ELSIF` zinciri:** Yoğun (dense) tamsayı değerlerinde `CASE`, derleyici tarafından jump table'a çevrilebilir; uzun `ELSIF` zinciri sıralı karşılaştırmadır. Durum makineleri için `CASE` hem okunur hem hızlı.
+- **String işlemleri pahalıdır:** `CONCAT`, `FIND` her çağrıda string'i tarar. Sıcak döngüde string kaçının; gerekiyorsa düşük öncelikli task'a taşıyın.
+
+### Karma Dil Mimarisinde Performans Katmanlaması
+
+```
+Hızlı task (1ms)   → ST (kompakt, deterministik, minimum FB)
+Orta task (10ms)   → ST + FBD (proses kontrol, PID)
+Yavaş task (100ms) → SFC (sekans), string/iletişim ST'de
+```
+
+Pahalı, görsel-ağır mantığı (SFC, string) **asla** en hızlı task'a koymayın.
+
+## Derin Teknik Detay
+
+### Beş Dilin Tek Bir Derleyiciye İndirgenmesi
+
+IEC 61131-3'ün beş dili **sözdizimsel cephe (front-end)** farklılıklarıdır; CODESYS derleyicisi hepsini ortak bir **soyut sözdizim ağacına (AST)** indirger, oradan platform native koduna derler. Bu yüzden:
+
+- Bir ST POU, bir LD POU'yu çağırabilir; ikisi de aynı çağrı kuralına (calling convention) derlenir.
+- LD'deki bir kontak ile ST'deki `IF` aynı boolean test makine koduna iner.
+- Bu birleşik model, IEC 61131-3'ün en zarif tasarım kararıdır: diller **temsil**dir, **semantik** ortaktır. Petri-net kökenli SFC bile, altta bir durum değişkeni + transition kontrol akışına derlenir.
+
+### Neden IL Deprecated Edildi?
+
+IL (Instruction List), tek-akümülatörlü (single-accumulator) bir sanal makine modelini varsayar — 1990'ların düşük bellekli PLC'lerine uygundu. Deprecated edilme nedenleri:
+
+- **Modern donanımda anlamsız:** IL'in "elle optimizasyon" avantajı, optimize eden derleyiciler karşısında kayboldu. ST kodu, IL'den en az aynı kadar verimli native kod üretir.
+- **Akümülatör modeli kompozisyona direnir:** Karmaşık ifadeler, parantezli alt-ifadeler (IL'de `(` `)` operatörleri) IL'de çirkin ve hataya açıktır.
+- **OOP ile uyumsuz:** Metot çağrısı, interface, polymorphism gibi V3 kavramları akümülatör modeline oturmaz. IEC komitesi geleceği ST'de gördü.
+
+Siemens STL ile karıştırılır ama farklıdır: STL, S7 donanımına özgü zengin bir komut setine sahiptir; IEC IL ise minimal ve jeneriktir.
+
+### CFC: IEC Dışı Ama Neden Var?
+
+CFC (Continuous Function Chart) IEC standardında yoktur; 3S'in (CODESYS üreticisi) eklentisidir. Varlık nedeni: **DCS dünyasından gelen** kontrol mühendisleri, sürekli proses kontrolünü (geri besleme döngüleri, serbest yerleşim) FBD'nin grid kısıtı olmadan çizmek ister. CFC bunu sağlar:
+
+- **Data-flow yürütme modeli:** CFC, blokları topolojik sıraya göre değil, **veri bağımlılığına** göre sıralar (execution order). Geri besleme döngüsünde bir bloğun çıkışı kendi girişine dönerse, CFC bunu "önceki scan değeri" olarak çözer — bu, FBD'nin yapamadığı şeydir.
+- **Bedeli taşınabilirlik:** CFC POU'ları PLCopenXML ile bile diğer platformlara temiz taşınmaz. Platform-bağımsızlık gerektiren kütüphaneler asla CFC içermemelidir.
+
+### ST'nin OOP Tekel Konumu
+
+CODESYS'te OOP (METHOD, PROPERTY, INTERFACE, EXTENDS, IMPLEMENTS) yalnızca metin tabanlı bağlamlarda tanımlanır — pratikte ST. Neden grafik diller OOP'u tam desteklemez?
+
+- Bir metot çağrısı `fb.Method(args)` doğal olarak metinseldir; bir kontak veya blokla "metot çağırma" semantiği zorlama olur.
+- Inheritance ve polymorphism, derleme-zamanı tip çözümleme gerektirir; grafik editör bunu görsel olarak temsil edemez.
+- Bu yüzden modern, test edilebilir, yeniden kullanılabilir CODESYS kod tabanları **ST + OOP** üzerine kuruludur; grafik diller arayüz/sahaya bakan ince katmanda kalır. Bu, dil seçiminin neden giderek ST'ye kaydığının yapısal sebebidir.
 
 ## İlgili Konular
 
