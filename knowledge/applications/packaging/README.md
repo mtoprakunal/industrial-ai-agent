@@ -2,7 +2,7 @@
 KONU        : Paketleme Makineleri Otomasyonu (CODESYS)
 KATEGORİ    : applications
 ALT_KATEGORI: packaging
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.omac.org/packml"
@@ -908,7 +908,104 @@ OPC UA üzerinden SCADA'ya bağlanan sistemlerde `eCurrentStep` enum değeri `GV
 **Not 6 — Foto-Sensör Seçimi: Tür Farkı**  
 Gıda paketlemede ışıngeçişli (through-beam) sensörler diffüz sensörlere göre daha az sahte tetikleme üretir; ancak karşılıklı montaj gerektirir. Şeffaf ambalaj malzemeleri diffüz sensörü yanıltabilir — bu durumda polarize retroreflektif veya kapasitif sensör tercih edilir. PLC kodu fark etmez ama sensör seçimi sistem güvenilirliğini doğrudan etkiler.
 
+**Not 7 — Reçete Değişiminin "Yumuşak" Olmaması: İlk Döngü Sürprizi**  
+Reçete yalnızca `ePack_Idle`'da yükleniyordu (doğru), ancak `stRecipe` FB'ye VAR_INPUT olarak her cycle kopyalanıyordu. Operatör Idle anında reçeteyi değiştirdi; aynı cycle'da makine `ePack_Feed`'e geçti ama besleme gecikmesi eski reçeteden, sealing süresi yeni reçeteden okundu — karışık parametre. İlk paket yanlış mühürlendi. Çözüm: reçete bir bütün olarak `Idle→Feed` geçişinde tek bir lokal kopyaya alındı (`stRunningRecipe := stRecipe`), döngü boyunca bu lokal kopya kullanıldı. Ders: bir parti boyunca parametreler "donmuş" olmalı; canlı GVL referansı değil, döngü başında alınan snapshot kullanılmalı (RETAIN/PERSISTENT snapshot deseni).
+
+**Not 8 — SFC Time-Limit (Step Watchdog) ile Sessiz Takılmaların Yakalanması**  
+Bir hatta `Step_Position` bazen sonsuza kadar aktif kalıyordu (servo enkoder kablosu intermittent). Operatör makinenin "çalışıyor ama hiçbir şey yapmıyor" olduğunu fark etmiyordu çünkü hata bayrağı yoktu. Çözüm: CODESYS SFC'nin step time-monitoring özelliği (`Step.t` zaman değişkeni veya SFCError bayrağı) kullanıldı — her step için maksimum süre tanımlandı, aşılırsa `SFCError` TRUE oldu ve sistem `Step_Aborting`'e zorlandı. Ders: her bekleme adımının bir timeout'u olmalı; "transition koşulu hiç gelmezse" senaryosu daima tasarlanmalı (FB_PackagingMachine'deki `tFeedTimeout` bunun ST karşılığıdır).
+
+**Not 9 — OEE Performans Faktörünün 1.0'ı Aşması**  
+FB_OEECalculator sahada `rPerformance = 1.07` (>%100) raporladı; SCADA "imkansız" diye alarm verdi. Neden: `rIdealCycleTime` reçeteye konservatif (gerçekten yavaş) girilmişti, makine bundan hızlı çalıştı. Matematiksel olarak doğru ama OEE tanımına aykırı. Çözüm: `rPerformance := MIN(rPerformance, 1.0)` ile kapandı ve ideal cycle time, gözlenen en hızlı kararlı cycle'a göre yeniden kalibre edildi. Ders: OEE faktörleri 0.0–1.0 aralığında clamp edilmeli; >1.0 değer her zaman bir veri/parametre hatasının işaretidir.
+
 ---
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Sınır Koşulları Tablosu
+
+| Senaryo | Davranış | Doğru Tasarım |
+|---------|----------|---------------|
+| Transition koşulu hiç gelmez | Step sonsuza aktif, sessiz takılma | Her adıma timeout (tFeedTimeout / SFC step time-limit) |
+| Reçete Idle'da değişti, aynı cycle Feed | Karışık parametre, ilk paket bozuk | Döngü başında stRunningRecipe snapshot |
+| `rIdealCycleTime` çok konservatif | rPerformance > 1.0 (imkansız OEE) | MIN(faktör, 1.0) clamp |
+| Foto-sensör chatter (şeffaf ambalaj) | Sahte ürün tespiti, sayaç şişer | 20 ms TON debounce + sensör türü seçimi |
+| Sealing ısıya 10 s'de ulaşmaz | eSeal_Heating'de fault (DOĞRU) | tTempTimeout zorunlu — ısıtıcı/sensör arızası yakalanır |
+| `nBatchTarget = 0` | Sayaç ilk cycle'da hedefi geçer, hemen Idle | nBatchTarget > 0 validasyonu reçete yüklemede |
+| Servo MC error sonrası tekrar Execute | Eksen beklenmedik hareket | MC_Reset zorunlu, sonra Execute |
+| Güç kesintisi parti ortasında | RETAIN yoksa sayaç sıfırlanır | dwPackCount RETAIN; aktif step PERSISTENT değil |
+
+### Sayısal ve Zamanlama Limitleri
+
+```
+TON çözünürlüğü = task cycle (10 ms task → ±10 ms hata)
+  Sealing 500–2000 ms : ±10 ms = %0.5–2 → kabul edilebilir
+  Ejeksiyon ±20 ms tolerans : 10 ms task sınırda → 5 ms task gerekebilir
+  ❌ Çok kritik zamanlama (<5 ms) → donanım çıkış karşılaştırma / HSC kullan
+
+Reçete dizisi : ARRAY[1..20] OF ST_Recipe
+  PERSISTENT alan boyutu sınırlı (cihaz NVRAM kapasitesi)
+  ST_Recipe büyürse (STRING(40) + REAL'ler) toplam PERSISTENT taşabilir
+  ✅ Reçete sayısı × struct boyutu < cihaz persistent limiti
+
+OEE faktörleri : her biri 0.0..1.0
+  rOEE = A × P × Q → teorik max 1.0
+  >1.0 görülürse parametre hatası (her zaman)
+```
+
+### Hata Senaryosu — Sealing Sırasında Stop
+
+Operatör `ePack_Sealing` aktifken Stop'a bastı. Kod `xSealerCmd := FALSE; eState := ePack_Idle` yapar. Ancak ısıl sealing çenesi ürüne **temas halinde** ve sıcak; aniden Idle'a dönmek çeneyi açık bırakırsa ürün yanmaya devam eder. Bu yüzden FB_SealingJaw kendi state machine'inde `eSeal_Opening` adımına sahiptir — stop, çenenin kontrollü açılmasını tetiklemeli, anlık kesme değil. Güvenlik katmanı (PRG_Safety, Task_Safety 5 ms) ise sealer'ı **anlık** keser; ikisi farklı amaçlar için ayrılmıştır: normal stop kontrollü, güvenlik stop'u anlıktır (IEC 60204-1 Kategori 1 vs 0 ayrımının paketleme karşılığı).
+
+## Optimizasyon
+
+### SFC vs Büyük CASE — Hangi Durumda Hangisi Hızlı?
+
+SFC çalışma zamanı her cycle yalnızca **aktif** step'in aksiyonunu ve çıkış transition'larını değerlendirir; pasif step'ler taranmaz. Büyük CASE'de ise her cycle CASE değişkeni tek seferde dallanır (jump table) — ikisi de O(1)'e yakındır. Asıl fark teşhiste: SFC online görünürlüğü saha teşhisini hızlandırır (Not 2), ama derin iç-içe FB durum mantığı için CASE daha taşınabilir. Kural: ana sekans SFC (görünürlük), FB-içi alt durum CASE (kütüphane/taşınabilirlik).
+
+```
+Optimizasyon kuralı (kaynak: codesys/task-structure/_synthesis.md):
+  Task_Safety  5 ms  Prio:0  → sadece BOOL interlock (E-stop, kapı, ısı)
+  Task_Control 10 ms Prio:2  → SFC ana sekans + FB çağrıları
+  Task_Slow    100ms Prio:5  → OEE (REAL bölme/çarpma), HMI
+  Task_Log     FW    Prio:15 → dosya yazma (bloklanabilir I/O)
+```
+
+### OEE Hesabını Olay-Tetiklemeli Yapma
+
+OEE her cycle hesaplanmaz; yalnızca `xCycleDone` pulse'ında (her tamamlanan pakette) veya vardiya sonunda güncellenir. Her 10 ms'de REAL bölme yapmak boşa FPU yükü demektir. `FB_OEECalculator` 100 ms Task_Slow'da veya event task'ta koşmalı.
+
+| İşlem | Frekans | Task |
+|-------|---------|------|
+| Sealing/ejeksiyon TON | Her cycle | Task_Control 10 ms |
+| OEE REAL hesabı | Pakette bir / 1 s | Task_Slow / event |
+| Üretim logu dosya yazma | Vardiya / dolunca | Task_Log Freewheel |
+| Reçete dosya I/O | Operatör komutu | Event task (asla cyclic'te) |
+
+### Foto-Sensör Debounce'unu Ürün Hızına Uyarlama
+
+Sabit 20 ms debounce, yüksek hızlı hatta (ürünler 30 ms arayla) iki ürünü tek ürün sayabilir veya geçiş penceresini kaçırabilir. Debounce süresi `< minimum ürün-arası süre` olmalı. Optimizasyon: debounce'u reçeteden (hat hızına bağlı) parametrele; çok hızlı hatlarda yazılım debounce yerine sensörün donanım filtresi (response time ayarı) kullanılmalı — yazılım her zaman cycle çözünürlüğüyle sınırlıdır.
+
+## Derin Teknik Detay
+
+### SFC Step Belleği ve "Initial Step" Mantığı
+
+CODESYS SFC, her step için bir aktiflik bayrağı (`Step.x`) ve bir aktiflik süresi (`Step.t`) tutar. Bu, IEC 61131-3'ün SFC'yi bir token akış modeli olarak tanımlamasından gelir: token (etkinlik) initial step'te başlar, transition koşulu TRUE olunca bir sonraki step'e **geçer** ve önceki step'in token'ı silinir. Bu yüzden iki step'in aynı anda aktif olması (paralel dal hariç) bir hatadır ve SFC runtime bunu yakalar. Büyük CASE state machine'de bu garanti yoktur — programcı `eState`'i yanlışlıkla iki yere atayabilir. SFC'nin değeri tam da bu yapısal token garantisidir: "makine her an tam olarak bir durumdadır" kuralı dilin kendisi tarafından zorlanır. PackML'in 17 durumu bu yüzden SFC'ye doğal oturur — her PackML durumu tam bir token konumudur.
+
+### Neden Sealing Süresi Reçeteden, Kodda Sabit Değil?
+
+Sealing termodinamiği malzeme bağımlıdır: ısıl yapışma (heat seal) süresi, film kalınlığı, çene sıcaklığı ve basıncın bir fonksiyonudur (Arrhenius-tipi difüzyon). Aynı makine 50µm PE film ile 120µm laminat arasında geçtiğinde optimal süre 2–3 kat değişir. Süreyi koda gömmek, ürün değişiminde **kod değişikliği + yeniden derleme + indirme** demektir — bu hem üretim kaybı hem de validasyon riski (gıda/ilaçta her kod değişikliği yeniden doğrulama gerektirir). Reçeteyi PERSISTENT GVL'de tutmak, parametreyi koddan ayırarak ürün geçişini bir HMI seçimine indirger. Bu, "veri ile kodun ayrılması" ilkesinin paketlemedeki en somut örneğidir ve doğrudan GVL/RETAIN/PERSISTENT katman ayrımıyla bağlanır.
+
+### RETAIN vs PERSISTENT — Paketlemede Net Ayrım
+
+| Veri | Tip | Neden |
+|------|-----|-------|
+| Üretim sayacı (dwPackCount) | RETAIN | Güç kesintisinde korunmalı; download'da sıfırlanabilir (yeni vardiya) |
+| OEE birikimleri | RETAIN | Vardiya boyunca güç kesintisine dayanıklı |
+| Reçete tablosu (aRecipes) | PERSISTENT | Program güncellemesinde bile korunmalı |
+| Kalibrasyon ofsetleri | PERSISTENT | Donanım sabiti; koddan tamamen bağımsız |
+| Aktif step (eCurrentStep) | Hiçbiri | Güç gelince makine GÜVENLİ başlamalı (Idle), kaldığı yerden DEĞİL |
+
+Kritik tasarım kararı son satırdadır: aktif step'i RETAIN yapmak tehlikelidir. Güç kesilip geldiğinde makine `ePack_Sealing`'den devam ederse, çene konumu/ürün durumu belirsizken sealer çalışır. Güvenli ilke: makine durumu **uçucu** olmalı, güç gelince daima bilinen güvenli durumdan (Idle) başlamalı. Bu, RETAIN'in "her şeyi sakla" diye düşünülmemesi gerektiğinin kanıtıdır — saklananın güç sonrası anlamı sorgulanmalıdır.
 
 ## İlgili Konular
 

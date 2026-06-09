@@ -2,7 +2,7 @@
 KONU        : Motor Kontrol Sistemleri (CODESYS ile)
 KATEGORİ    : applications
 ALT_KATEGORI: motor-control
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://industrialmonitordirect.com/blogs/knowledgebase/vfd-vs-soft-starter-vs-star-delta-motor-starting-comparison"
@@ -1210,6 +1210,105 @@ Bir proje yöneticisi "PLC termal modeli varken donanımsal overload relay'e ger
 
 **Not 6 — jog Fonksiyonu Rampa Süresini Etkiliyor**
 VFD'de normal rampa süresi 5 saniyeydi; jog modu için ayrı bir rampa parametresi (P1.05 Jog Acceleration Time) 0.5 saniyeye ayarlıydı. Operatör jog modunda motoru konumlandırmaya çalışırken ani hız değişimi mekanik yatakları zorladı. Çözüm: Jog hız referansı düşürüldü (100 RPM) ve jog rampa süresi 2 saniyeye artırıldı. Jog modu için ayrı parametre grubu VFD kılavuzunda mutlaka incelenmeli.
+
+**Not 7 — Modbus Comm-Loss'ta VFD Çalışmaya Devam Etti**
+Bir pompa istasyonunda RS-485 hattı gevşek bir terminalden koptu; PLC `bCommOK` FALSE oldu ve FB_VFD_Modbus `eVFD_CommError`'a geçip `CW_STOP` göndermeyi denedi — ama yazacak hat yoktu. VFD ise kendi haberleşme watchdog'u (parametre P8-04 fieldbus timeout) "fault" yerine "son referansı koru" olarak yapılandırıldığından motor en son hızda çalışmaya devam etti. Ders: comm-loss güvenliği iki taraflıdır. PLC'nin stop göndermesi yeterli değil; VFD'nin kendi fieldbus timeout parametresi mutlaka "fault stop" veya "ramp to stop" olarak ayarlanmalı. Yazılım watchdog (tCommWatchdog) yalnızca PLC tarafını korur.
+
+**Not 8 — Status Word Bit Maskesi Profil Bağımlı Çıktı**
+FB_VFD_Modbus'taki `SW_RUNNING := 16#0004` (Bit 2) ABB Drives profili içindi. Müşteri sürücüyü "DCU Profile" (Drive Control Unit) ile devreye almıştı; aynı bit farklı anlam taşıyordu, "running" gerçekte Bit 1'deydi. xRunning hiç TRUE olmadı, FB `eVFD_Enabling`'de takıldı, start timeout fault'u verdi. Ders: Control/Status Word bit haritası yalnızca register adresine değil, seçili **drive profiline** de bağlıdır (ABB'de ABB Drives vs DCU vs Standard). Bit maskeleri sabit (CW_/SW_ literal) olarak FB'ye gömülmemeli, en azından profil seçimine göre parametrelenmeli.
+
+**Not 9 — VFD Rampada Dururken Start Komutu — "Reverse Jerk"**
+Operatör DEC rampasıyla (8 s) yavaşlayan bir fanı, tam durmadan tekrar başlattı. FB henüz `eVFD_Running`'e dönmemişti ama VFD hâlâ pozitif frekansta dönüyordu; yeni start + farklı yön seçimi VFD'nin DC bus'ında ani tork tersine dönmesine (reverse jerk) ve aşırı gerilim (overvoltage) trip'ine yol açtı. Çözüm: FB'ye "tam duruş onayı" eklendi — yön değişimi veya yeniden start yalnızca `wActualSpeed_In < eşik` iken kabul edilir. Büyük ataletli yüklerde VFD'nin DC bus chopper/fren direnci de gözden geçirilmeli.
+
+---
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Sınır Koşulları Tablosu
+
+| Senaryo | Davranış | Doğru Tasarım |
+|---------|----------|---------------|
+| Modbus comm-loss | PLC stop gönderir ama hat yok → motor son refte | VFD fieldbus timeout = fault/ramp stop |
+| Yanlış drive profili (ABB DCU vs Drives) | Status Word bit maskesi yanlış → xRunning hep FALSE | Bit maskelerini profile göre parametrele |
+| Hız ref ölçek karışıklığı (16384 vs 20000) | Motor yanlış hızda | Ölçek sabitini magic number yapma, parametreden oku |
+| Y-Δ geçişi motor hızlanmadan | Δ'ya geçişte yüksek akım darbesi, termik trip | tStarTime ölçüme dayalı; geçiş 50–200 ms |
+| Q_Star + Q_Delta eşzamanlı | Faz-faz kısa devre | Yazılım + donanım interlock (çift) |
+| VFD reset CW her cycle | VFD reset döngüsünde kalır | R_TRIG ile tek-pulse reset |
+| Tam durmadan reverse start | DC bus overvoltage trip, mekanik jerk | Yön/start için v < eşik onayı |
+| Termik model akım=0 okuyor | Yazılım koruma kör; motor yanar | Donanım overload relay zorunlu |
+
+### Sayısal Limitler ve Ölçekleme
+
+```
+ABB ACS355  : 20000 = %100 nominal hız
+Danfoss FC302: 16384 = %100 (firmware'e göre 20000 olabilir!)
+  ❌ rSpeedRef/rSpeedMax * 20000 → Danfoss'ta %122 fazla hız
+  ✅ Ölçek faktörü GVL_Params'tan, üretici+firmware doğrulanmış
+
+REAL_TO_WORD(>65535) : WORD overflow → düşük anlamsız değer
+  ✅ LIMIT(0.0, x, 20000.0) çağrıdan önce zorunlu
+
+Motor akımı register : ×0.1 A (üretici bağımlı; bazıları ×0.01)
+  → ölçek faktörü yanlışsa termal model 10× hatalı
+
+Soft starter start limiti : tiristör ısısı → saatte 6–10 start
+  ✅ PLC'de start sayacı + soğuma timer ile sınırla
+```
+
+### Hata Senaryosu — Geri Bildirim ve Acil Stop Çakışması
+
+FB_MotorDOL'da E-stop/overload kontrolü CASE'den **önce** her cycle çalışır ve `eState := eFault` set eder. Ancak `xRunFeedback` aux-contact gecikmesi (kontaktör fiziksel açılma süresi ~20–50 ms) nedeniyle, durduktan sonra `eStopping` durumunda geri bildirimin sıfırlanmasını beklerken kontaktör bounce'u false "feedback lost" üretebilir. Çözüm: feedback kaybı kararına da kısa bir onay gecikmesi (TON ~100 ms) eklenmeli — anlık spike değil, kalıcı koşul fault üretmeli. Bu, fail-safe ile gürültü reddi arasındaki dengeyi gösterir: güvenlik kararı hızlı olmalı (E-stop, RETURN ile) ama teşhis kararı gürültüye dayanıklı olmalı (debounce).
+
+## Optimizasyon
+
+### Modbus Trafiğini Ayrı Task'a İzole Etme
+
+En kritik performans deseni (Hata 7, Not 3): Modbus okuma/yazma **asla** kontrol döngüsüyle aynı task'ta olmamalı. Modbus FB'leri I/O için bloklanır (TCP timeout 100+ ms, RTU char timeout); bu gecikme 10 ms kontrol döngüsünün watchdog'unu tetikleyebilir.
+
+```
+Task mimarisi (kaynak: codesys/task-structure/_synthesis.md):
+  Task_Main 10 ms  Prio:2  → FB state machine, sadece GVL oku/yaz
+  Task_Comm 100 ms Prio:5  → PRG_CommManager, Modbus FC03/FC16
+  İki task arası köprü     → GVL_Modbus (single-writer: comm task yazar)
+```
+
+GVL_Modbus single-writer prensibi burada kritiktir: Status Word/Actual Speed'i **yalnızca** comm task yazar, kontrol task'ı yalnızca okur. Tersi olursa iki task aynı WORD'e yazıp veri yarışı (race) oluşturur.
+
+### Write-on-Change ile Bus Yükünü Azaltma
+
+| Strateji | Bus yükü | Risk |
+|----------|----------|------|
+| Her cycle full write | Yüksek | Düşük gecikme, hat doygunluğu |
+| Write-on-change | Düşük | Comm-loss watchdog tetiklenmeyebilir |
+| Change + periyodik refresh (1 s) | Orta | En dengeli — önerilen |
+
+Çok sürücülü RS-485 hattında poll turu süresi = Σ(her slave yanıt süresi). Write-on-change ile gereksiz yazmalar elenince tur kısalır, her VFD'nin status tazeliği artar. Ancak run/stop komutu periyodik refresh edilmeli (Not 7 — comm-loss güvenliği).
+
+### Termal Modeli FPU-Verimli Tutma
+
+FB_ThermalProtection her cycle `(I/I_rated)²` hesaplar (REAL çarpma). Çok motorlu panoda (20+ motor) bu yük birikir. Optimizasyon: termal model 10 ms yerine 100 ms task'ta koşar — termal zaman sabiti (τ) dakikalar mertebesinde olduğundan 100 ms çözünürlük fazlasıyla yeterlidir. Bu, "pahalı işlemi yavaş task'a topla" kuralının motor korumadaki uygulamasıdır.
+
+## Derin Teknik Detay
+
+### Neden Control Word / Status Word? Doğrudan Bit I/O Değil mi?
+
+VFD'ler durumu tek bir 16-bit register'da kodlar çünkü Modbus/fieldbus üzerinde her register transferi protokol overhead'i taşır (RTU'da CRC, adres, fonksiyon kodu). 16 ayrı coil yerine tek holding register okumak, tek bir FC03 ile tüm durumu atomik olarak alır — bu **atomiklik** kritiktir: "running" ve "fault" bitlerini ayrı transferlerde okusaydık, ikisi arasında VFD durumu değişebilir ve tutarsız anlık görüntü (torn read) oluşurdu. Tek register = tek tutarlı snapshot. PLC tarafında bit maskeleme (`AND SW_RUNNING`) bu yüzden register okunduktan sonra yapılır, hat üzerinde değil. Bu tasarım, GVL'de tek WORD'ün single-writer kuralıyla korunmasının neden doğal olduğunu da açıklar: register zaten atomik bir bütündür.
+
+### V/Hz vs Vektör Kontrol — PLC Programcısı Neden Bilmeli?
+
+VFD motor frekansını ayarlarken iki temel kontrol modu vardır ve bu, PLC'nin gördüğü davranışı değiştirir:
+
+| Mod | Prensip | Düşük hızda tork | PLC etkisi |
+|-----|---------|------------------|------------|
+| **Skaler (V/Hz)** | Voltaj/frekans oranı sabit | Zayıf (<5 Hz) | Hız ref basit; konveyör start'ta tork yetersiz olabilir |
+| **Vektör (sensorless)** | Akı + tork ayrı kontrol | Güçlü | Tam yük start mümkün; ama parametre tuning gerekir |
+| **Closed-loop (encoder)** | Enkoder geri besleme | Mükemmel | PLC pozisyon/hız senkronizasyonu yapabilir |
+
+PLC'den gelen hız referansı aynı olsa bile, V/Hz modunda düşük hızda yüklü konveyör hiç hareket etmeyebilir (motor "stall"). FB_MotorDOL'un start timeout fault'u bu durumda tetiklenir ve programcı "kod hatası" sanır — gerçekte VFD kontrol modu yanlıştır. Bu yüzden FB tasarımı VFD parametrelerinden bağımsız değildir; ikisi birlikte devreye alınır.
+
+### IEC 61131-3 FB Instance Belleği ve VFD State Machine
+
+FB_VFD_Modbus'un `eState` değişkeni, FB instance'ının statik belleğinde durur (her instance ayrı VFD = ayrı bellek). Bu, OOP'deki nesne durumuna benzer ama kritik fark: CODESYS'te FB çağrı sırası, kullanıcının kod yazma sırasıyla belirlenir ve cycle başına **bir kez** çalışması garanti edilir (koşullu çağrı dışında). VFD state machine'in `eVFD_Enabling → eVFD_Running` geçişi bu yüzden her cycle "running bit geldi mi?" diye yoklayabilir — durum cycle'lar arası korunur. Eğer FB her cycle çağrılmazsa (Hata: koşullu çağrı), `tCommWatchdog` saymayı durdurur ve comm-loss algılaması saatlerce gecikebilir. Determinizmin güvenlikle birleştiği nokta budur: watchdog'un güvenilirliği, FB'nin deterministik (koşulsuz, her cycle) çağrılmasına bağlıdır.
 
 ---
 

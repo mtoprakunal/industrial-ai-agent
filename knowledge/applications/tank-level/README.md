@@ -2,7 +2,7 @@
 KONU        : Tank Seviye Kontrolü (CODESYS ile)
 KATEGORİ    : applications
 ALT_KATEGORI: tank-level
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/libs/Util/Current/Controller/PID.html"
@@ -810,6 +810,99 @@ Kritik bir kimyasal tankta iki ayrı seviye transmitteri kullanılıyorsa, değe
 
 **Not 6 — RETAIN vs PERSISTENT için Alarm Eşikleri**  
 Alarm eşiklerini RETAIN'e koymak yeterlidir — operatör ayarları güç kesilmesinde korunmalı, ama program yeniden yüklendiğinde üretim mühendisinin yeni eşikleri uygulamaya almasına izin verilmeli. Kalibrasyon ofsetleri (sensör kalibrasyonu, ölçü dönüştürme sabitleri) ise PERSISTENT olmalı. (Bkz. iç belge: `knowledge/codesys/programming/_synthesis.md`, Not 4)
+
+**Not 7 — Lead Pompa Rotasyonu Çalışırken Tetiklendi**  
+FB_PumpManager'da rotasyon timer'ı her 8 saatte `nLeadPump`'ı değiştiriyordu — pompa **çalışırken** dahil. Bir gece rotasyon, lead pompa tam basınçta çalışırken tetiklendi; lead Pompa 1'den Pompa 2'ye anlık geçiş yapıldı, Pompa 1 durdu, Pompa 2 soğuk başladı ve hatta su darbesi (water hammer) oluştu, çek valf gürültüyle kapandı. Çözüm: rotasyon kararı yalnızca `xRunRequest = FALSE` (pompa boştayken) uygulandı; rotasyon zamanı geldiğinde "bekleyen rotasyon" bayrağı set edildi, bir sonraki doğal duruşta gerçekleşti. Ders: durum değişimi (lead seçimi) ile aktüatör durumu (pompa çalışıyor) çakışmamalı; geçiş daima güvenli ana ertelenmelidir.
+
+**Not 8 — PID Manuel→Otomatik Geçişinde Bump (Sıçrama)**  
+Operatör pompayı manuel %60'ta çalıştırıyordu; otomatik moda geçti ve PID çıkışı bir anda %12'ye düştü (integral terimi manuel modda birikmemişti). Pompa hızı aniden düştü, seviye dalgalandı. Çözüm: CODESYS PID FB'sinin MANUAL girişi bumpless transfer için tasarlanmıştır — manuel moddayken FB'yi RESET veya MANUAL=TRUE ile çağırıp Y'yi manuel değere senkronlamak gerekir; FB_LevelPID'de manuel moddan çıkarken integral terimi mevcut çıkışa göre ön-yüklenmeli (bumpless). Ders: mod geçişlerinde çıkış sürekliliği (continuity) korunmalı; PID iç durumu manuel modu "izlemeli" (tracking).
+
+**Not 9 — Hidrostatik Transmitter Yoğunluk Sapması**  
+Bir kimyasal tankta hidrostatik (basınç) transmitter kullanılıyordu; sıvı yoğunluğu sıcaklıkla %4 değişti. Basınç = ρgh olduğundan, yoğunluk düşünce aynı seviye daha düşük basınç → PLC "seviye düştü" okudu, oysa hacim aynıydı. PID gereksiz yere pompayı çalıştırıp tankı taşırdı. Çözüm: kritik tank radar transmitter'a (yoğunluktan bağımsız) geçirildi; alternatifte sıcaklık kompanzasyonu eklenebilirdi. Ders: ölçüm teknolojisinin fiziksel varsayımı (hidrostatik = sabit yoğunluk) proses gerçeğiyle uyuşmalıdır — kod kusursuz olsa da yanlış sensör yanlış kontrol verir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Sınır Koşulları Tablosu
+
+| Senaryo | Davranış | Doğru Tasarım |
+|---------|----------|---------------|
+| 4–20 mA kablo kopması (0 mA) | Ham raw=0 → "seviye 0 cm" → false LALL | FC_ScaleAnalog'da <4 mA → xFault, NE107 F |
+| Transmitter >20 mA (kısa devre) | Raw>tam ölçek → seviye taşmış görünür | >20.5 mA → xFault, fail değer |
+| Hidrostatik yoğunluk değişimi | Aynı hacim, farklı basınç → yanlış seviye | Radar/DP veya sıcaklık kompanzasyonu |
+| Rotasyon pompa çalışırken | Anlık lead geçişi → water hammer | Rotasyon yalnızca xRunRequest=FALSE'da |
+| Manuel→Auto geçiş | PID çıkışı sıçrar (integral boş) | Bumpless: integral ön-yükleme/tracking |
+| Setpoint LAHH'a çok yakın | PID overshoot → LAHH → durdur → döngü | Setpoint–alarm arası %10–15 boşluk |
+| Histerezis bandı = 0 | Eşik çevresinde chatter, motor yanar | rHigh – rLow ≥ 10–20 cm |
+| Float switch bounce/köpük | LALL defalarca tetiklenir | TON 2–5 s debounce (kalıcı koşul) |
+| Tek transmitter kontrol+güvenlik | Arızada ikisi de devre dışı | Bağımsız LL/HH switch (IEC 61511) |
+
+### Sayısal ve Ölçekleme Limitleri
+
+```
+ADC tam ölçek üretici bağımlı:
+  Siemens S7 : 0–27648    Bazıları : 0–32767    Bazıları : 0–65535
+  ❌ Yanlış tam ölçek → tüm seviye lineer hatalı (ölçek faktörü kayar)
+  ✅ rRaw_4mA / rRaw_20mA GVL_IO yorumunda belgelenir
+
+4 mA ofset (live zero) :
+  0 mA ≠ 0 seviye; 4 mA = min seviye
+  ❌ Ofset atlanırsa min seviyede %20 sabit hata
+  ✅ Seviye = (raw – raw_4mA)/(raw_20mA – raw_4mA) × span + min
+
+PID yavaş proses (entegratör):
+  Ti çok küçük (<dolum süresi) → integral windup, overshoot
+  ✅ Ti ≈ 3–5 × dolum/boşaltma süresi; Y_MIN/Y_MAX anti-windup zorunlu
+
+Sıfır bölme noktaları:
+  rSpan = raw_20mA – raw_4mA   → 0 ise ölçekleme patlar
+  rRatedCurrent, rIdealCycle   → tüm bölmelerde > 0 kontrolü
+```
+
+### Hata Senaryosu — Sensör Arızası Tüm Kontrol Katmanını Çökertir
+
+Tek bir transmitter hem PID girişi, hem histerezis, hem LAHH/LALL yazılım alarmına bağlıysa; transmitter sürüklenir (drift) ve yanlış-düşük okursa: PID pompayı tam hızda çalıştırır, histerezis "boş" der, LALL "kuru" alarmı verir — hepsi aynı yanlış veriyle. Bu, ortak-neden arızasıdır (common-cause failure). IEC 61511 çözümü: güvenlik fonksiyonu (LAHH/LALL interlock) **fiziksel olarak bağımsız** bir float/switch'ten gelmeli. PRG_Safety bu bağımsız switch'i (`xLevelHH_Switch`, `xLevelLL_Switch`) okur, hesaplanan `rLevelCm`'i değil. Yazılım katman ayrımı (Task_Safety bağımsız task) yetmez; sinyal kaynağı da bağımsız olmalıdır.
+
+## Optimizasyon
+
+### Analog Filtreleme ve Ölçeklemeyi Tek Yerde Toplama
+
+`FC_ScaleAnalog` her PID/histerezis çağrısında tekrar çağrılırsa aynı ham değer birden çok kez ölçeklenir (REAL bölme tekrarı). Optimizasyon: ölçekleme PRG_TankControl başında bir kez yapılır, sonuç `rLevelCm` GVL'ye yazılır, tüm FB'ler bunu okur. Bu GVL single-writer prensibidir: seviye değerinin tek bir yazıcısı (ölçekleme adımı) olur, FB'ler salt okur — hem tutarlılık hem CPU tasarrufu.
+
+```
+Optimizasyon kuralı (kaynak: codesys/task-structure/_synthesis.md):
+  Seviye yavaş proses → Task_Slow 100 ms PID için fazlasıyla yeterli
+  PID_FIXCYCLE yerine standart PID: cycle time'ı FB hesaplar, jitter toleranslı
+  Hızlı (>5 ms) seviye kontrolü neredeyse hiç gerekmez
+```
+
+| İşlem | Frekans | Task |
+|-------|---------|------|
+| LAHH/LALL interlock (BOOL) | 10 ms | Task_Safety Prio:0 |
+| Ölçekleme + PID (REAL) | 100 ms | Task_Control Prio:2 |
+| Lead-lag rotasyon, çalışma saati | 100 ms / 1 s | Task_Slow |
+| Trend log, OPC UA yayını | 1 s | Task_Log Freewheel |
+
+### Hareketli Ortalama ile Ölçüm Gürültüsünü Bastırma
+
+Ultrasonik/radar yüzey dalgalanmasında ham seviye gürültülüdür; PID türev terimi bu gürültüyü büyütür (bu yüzden seviyede TV=0). Optimizasyon: 5–10 örnekli hareketli ortalama (moving average) veya birinci dereceden IIR filtre, PID girişini yumuşatır. Ancak filtre gecikmesi (lag) faz kaybı getirir; yavaş seviye prosesinde bu kabul edilebilir ama hızlı tankta filtre süresi proses zaman sabitinden çok küçük tutulmalı.
+
+### Alarm Değerlendirmesinde Histerezis ile Chatter'ı Önleme
+
+`rLevelCm >= rLevelHH_cm` çıplak karşılaştırması, seviye eşik etrafında gürültüyle salınırken alarmı defalarca set/reset eder (alarm flooding). PID çıkış chatter'ıyla aynı sorun. Çözüm: alarm set ve reset için ayrı eşik (deadband) — örn. LAHH 280 cm'de set, 275 cm'de reset. Bu, on/off pompa histerezisinin alarm tarafındaki karşılığıdır ve SCADA alarm günlüğünü temiz tutar.
+
+## Derin Teknik Detay
+
+### CODESYS PID FB İçinde Anti-Windup Nasıl Çalışır?
+
+Integral windup, çıkış doygunluğa (Y_MAX) ulaştığında integral teriminin birikmeye devam etmesidir: pompa zaten %100'de ama PID hâlâ "daha fazla" diye integrali şişirir; seviye düşmeye başladığında bu birikmiş integralin boşalması gecikme ve büyük overshoot yaratır. CODESYS Util PID FB'si, Y çıkışı Y_MIN/Y_MAX'a clamp edildiğinde integral toplamını da sınırlandırarak (back-calculation / clamping) bunu önler. Bu yüzden Y_MIN/Y_MAX'ı yalnızca aktüatör sınırı için değil, anti-windup için de doğru ayarlamak şarttır (Not 1, Not 4). Seviye gibi entegratör proseslerinde windup en sık görülen tuning hatasıdır çünkü hata uzun süre tek yönlü kalır — integral hızla doygunluğa gider.
+
+### Neden Seviye "Entegratör Proses"tir ve Bu Tuning'i Nasıl Değiştirir?
+
+Çoğu proses (sıcaklık, basınç) self-regulating'dir: girdi sabitse çıktı bir dengeye oturur. Seviye farklıdır: sabit giriş akışında seviye **durmadan yükselir** (∫ akış dt = hacim). Bu, transfer fonksiyonunda bir saf integratör (1/s) demektir. Pratik sonuç: seviye prosesi zaten bir integratör içerdiğinden, PID'in integral terimi (1/Ti) çoğu zaman gereksiz hatta zararlıdır — saf P (oransal) kontrol çoğu seviye döngüsünü dengeler. Bu yüzden Not 4'te "Kp küçük, Ti büyük (yavaş), Td=0" önerilir; klasik self-regulating proses tuning'i (agresif PI) seviyede salınım yaratır. Kontrol teorisinin pratiğe yansıması: prosesin doğasını (entegratör mü, self-regulating mi) bilmeden PID ayarlanamaz.
+
+### 4–20 mA "Live Zero" Tasarımının Dahiyane Yanı
+
+Neden 0–20 mA değil de 4–20 mA? Çünkü 4 mA alt sınır (live zero), "sıfır sinyal" ile "sıfır seviye"yi ayırır. 0 mA = kablo kopması/güç kaybı; 4 mA = gerçek minimum seviye. Bu sayede transmitter arızası (akım 4 mA'nın altına düşer) ile geçerli minimum ölçüm (tam 4 mA) yazılımda **ayırt edilebilir** — FC_ScaleAnalog'daki `< rRaw_4mA - tolerans` kontrolü tam da bunu yapar ve NE107 F (failure) durumuna eşler. 0–20 mA standardında bu mümkün olmazdı: 0 mA hem "boş tank" hem "kopuk kablo" anlamına gelirdi, fail-safe teşhis imkansızlaşırdı. Live zero, akım döngüsünün kendi içinde bir teşhis kanalı taşımasını sağlayan minimalist bir mühendislik kararıdır — fail-safe felsefesinin elektriksel düzeydeki en zarif örneklerinden biridir.
 
 ## İlgili Konular
 

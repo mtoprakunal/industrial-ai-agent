@@ -2,7 +2,7 @@
 KONU        : Konveyör Sistemleri Otomasyonu (CODESYS ile)
 KATEGORİ    : applications
 ALT_KATEGORI: conveyor
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://industrialmonitordirect.com/blogs/knowledgebase/siemens-s7-conveyor-sorting-system-io-design-and-fault-handling"
@@ -760,6 +760,125 @@ Bant üzerindeki enkoder ölçüm tekerleği zamanla slip yapmaya başladı (tek
 
 **Not 6 — Güvenlik Rölesinin PLC E-Stop'undan Bağımsız Olması**  
 Bir kullanıcı "PLC kodu zaten E-stop mantığı uyguluyor, safety relay neden gerekli?" diye sordu. Cevap: PLC watchdog hatası, CPU arızası veya program hatası durumunda yazılım E-stop çalışmaz. Safety relay donanım katmanıdır ve PLC çökmesinden bağımsız olarak motor kontaktörünü keser. ISO 13849 PLd için bu ikili yapı zorunludur.
+
+**Not 7 — `stDiag.tRunningTime` Sabit Cycle Varsayımının Çökmesi**  
+FB_Conveyor `eRunning` durumunda çalışma süresini `stDiag.tRunningTime + T#10MS` ile artırıyordu; "Task_Control 10 ms" varsayımıyla. Müşteri sahada CPU yükü nedeniyle task periyodunu 20 ms'ye çıkardı; çalışma süresi sayacı gerçek zamanın yarısını gösterdi ve bakım planlaması (yağlama saati) kaydı. Çözüm: süre artışını sabit literal yerine `TASK_INFO` üzerinden okunan gerçek cycle time'a bağladık ya da daha sağlam olarak `SysTimeGetMs()` farkı kullandık. Ders: bir FB asla onu çağıran task'ın periyodunu kod içine gömmemeli — bu, GVL single-writer kuralının zaman boyutundaki karşılığıdır.
+
+**Not 8 — Enkoder WORD Sayaç Overflow'unun Underspeed Alarmı Doğurması**  
+Hız hesabı `wEncoderRaw - wEncoderPrev` (WORD) farkıyla yapılıyordu. HSC sayacı 65535'ten 0'a sardığında (wrap-around) fark devasa pozitif değil, modüler aritmetik nedeniyle çok küçük/yanlış bir değer üretti; bir cycle'da hız "0" görünüp `tUnderspeedDly` saymaya başladı. Yüksek hızlı bantta her ~12 saniyede bir false underspeed trip oluştu. Çözüm: fark hesabını WORD modüler aritmetiğine güvenerek bilinçli yapmak (overflow zaten doğru sonucu verir) ancak negatif yön ve duruş ayrımı için kalibre eşiği koymak; ayrıca tek cycle düşüşünün alarm üretmemesi için `tUnderspeedDly` 2 s'de tutuldu.
+
+**Not 9 — VFD "Coast" Durmasının Stopping State'i Asla Bitirmemesi**  
+`eStopping` durumu `NOT xMotorRunFB` koşulunu bekliyordu. Bir tesiste VFD serbest duruşa (coast/OFF2) ayarlıydı ve ağır rulolu bant ataletle 40+ saniye döndü; bu sürede xMotorRunFB hâlâ TRUE kaldı, operatör "makine durmuyor" diye panik yaptı ve E-stop'a bastı. Çözüm: eStopping'e `tStopTimeout` (örn. T#30S) eklendi; süre aşılırsa ya eFault'a geçilir ya da VFD'nin DEC rampası (Kategori 1) zorunlu kılınır. Coast stop yalnızca atalet düşükken kabul edilebilir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Sınır Koşulları Tablosu
+
+| Senaryo | Davranış | Doğru Tasarım |
+|---------|----------|---------------|
+| Enkoder WORD sayaç wrap (65535→0) | Hız farkı yanlış hesaplanır → false underspeed | Modüler fark + min eşik + onay gecikmesi |
+| VFD coast stop, ağır atalet | xMotorRunFB uzun süre TRUE → eStopping takılır | eStopping'e tStopTimeout + Kategori 1 rampa |
+| `tJamTimeout` < gerçek geçiş süresi | Yavaş ürünlerde sürekli false jam | tJamTimeout = L/v_min × 1.5 (dinamik) |
+| Task periyodu değişti (10→20 ms) | tRunningTime, dwProductCount/saat sapar | Cycle time'ı TASK_INFO'dan oku |
+| ZPA'da downstream sensör arızası | Zon sonsuza dek "dolu" → tüm hat kilitlenir | Sensör diagnostiği + jam timeout per-zon |
+| E-stop (NC) kablo kopması | `xEStop=FALSE` → fail-safe stop (DOĞRU) | NC kablolama korunmalı; NO asla kullanılma |
+| `rSpeedSetpoint_pct > 100` | `REAL_TO_WORD(>32767)` taşması, VFD hatalı ref | Setpoint girişine LIMIT(0,x,100) |
+
+### Sayısal Limitler
+
+```
+wSpeedRefOut ölçeği : 0..32767 (INT/WORD tam ölçek)
+  rSpeedSetpoint_pct * 327.67 → %100'de 32767
+  ❌ %101 → 33094 → WORD overflow yok ama VFD >max okur
+  ✅ LIMIT(0.0, rSpeedSetpoint_pct, 100.0) çağrıdan ÖNCE
+
+Enkoder hız çözünürlüğü (500ms periyot örneği):
+  v_min algılanabilir = 1 pulse / 0.5 s
+  Düşük hızda (örn. <%5) enkoder çözünürlüğü yetersiz → ölçüm gürültülü
+  ✅ Ölçüm periyodunu hıza göre uyarla veya ortalama al
+
+ZPA zon dizisi : ARRAY[1..N], N tipik 4–32
+  FOR döngüsü her cycle N kez koşar → N=32'de 32× kaskat
+  10 ms task'ta N>50 ise döngü süresi kritik olabilir
+```
+
+### Hata Senaryosu — Çoklu Eşzamanlı Trip
+
+E-stop, aşırı yük ve jam aynı cycle'da gelebilir. FB tasarımında öncelik sırası nettir: E-stop/overload her döngünün **başında** `RETURN` ile her şeyi keser (en yüksek öncelik); jam/underspeed yalnızca `eRunning` içinde değerlendirilir. Bu sıralama, `Task_Safety` (Prio:0, 5 ms) ile `Task_Control` (Prio:2, 10 ms) arasındaki determinizm hiyerarşisini yazılım içinde tekrarlar — kritik kararlar her zaman yavaş prosesten önce verilir.
+
+```iecst
+(* ❌ Tehlikeli: jam kontrolü E-stop'tan ÖNCE *)
+IF tJamTimer.Q THEN eState := eJammed; END_IF
+IF NOT xEStop THEN ... END_IF   (* Bir cycle gecikme: motor 1 cycle fazla döner *)
+
+(* ✅ Doğru: E-stop en başta, RETURN ile *)
+IF NOT xEStop OR xOverloadFault THEN
+    xMotorRunCmd := FALSE; wSpeedRefOut := 0;
+    RETURN;   (* State machine'e hiç girilmez *)
+END_IF
+```
+
+## Optimizasyon
+
+### Hız Hesaplamasını Olay Tabanlı Yapma
+
+`tSpeedCalcTimer` her 500 ms'de WORD farkı alıyor; ancak çok bantlı sistemde her FB ayrı timer + REAL bölme çalıştırır. Optimizasyon: ortak bir 500 ms'lik `Task_Slow` tetikleyicisi tüm enkoder hesaplarını tek noktadan yapsın, FB'ler sadece sonucu okusun. Bu, GVL single-writer prensibine uyar (enkoder hesabı tek yazıcı) ve kayan nokta bölme sayısını N FB'den 1'e indirir.
+
+```
+Optimizasyon kuralı (kaynak: codesys/task-structure/_synthesis.md):
+  Pahalı (REAL bölme, SQRT) işlemleri YAVAŞ task'a topla.
+  10 ms kontrol döngüsünde yalnızca BOOL/INT mantık kalsın.
+```
+
+| İşlem | Maliyet | Önerilen Task |
+|-------|---------|---------------|
+| State machine (CASE, BOOL) | Düşük | Task_Control 10 ms |
+| Enkoder REAL hız hesabı | Orta (FPU bölme) | Task_Slow 100/500 ms |
+| Modbus VFD oku/yaz | Yüksek (I/O gecikme) | Task_Slow 100 ms |
+| Üretim sayacı, log | Düşük ama sürekli | Task_Log Freewheel |
+
+### ZPA Kaskat Döngüsünü Erken Çıkışla Kısaltma
+
+`FOR i := N DOWNTO 1` her zaman tüm zonları tarar. Hattın yalnızca bir bölümü doluysa boş zonlarda işlem boşa gider. Tüm hat boşsa (`NOT xAnyProductOnLine`) FOR döngüsü tamamen atlanabilir; bu, boştaki konveyörde CPU yükünü minimuma indirir. Yine de timer'ların donmaması için zon timer'ları `IN := FALSE` ile resetlenmeli (FB koşullu çağrı tuzağının dizi karşılığı — bkz. Hata 6).
+
+### Modbus Yazma Trafiğini Azaltma — Sadece Değişeni Yaz
+
+VFD'ye her 100 ms'de Control Word + Speed Ref yazmak yerine, değer değişmediyse yazma atlanabilir (write-on-change). Setpoint sabit, motor çalışıyorken bus trafiği %90 düşer; RS-485 hattında birden çok VFD varsa bu, poll turunu hızlandırır ve geri bildirim tazeliğini artırır.
+
+```iecst
+IF (wControlWord <> wControlWord_Last) OR (wSpeedRef <> wSpeedRef_Last) THEN
+    fbModbusWrite(Execute := TRUE, ...);   (* Sadece değişince yaz *)
+    wControlWord_Last := wControlWord;
+    wSpeedRef_Last    := wSpeedRef;
+END_IF
+```
+
+Kritik istisna: run/stop komutu **her zaman** yazılmalı veya periyodik refresh edilmeli; aksi halde VFD'nin haberleşme watchdog'u (comm-loss timeout) tetiklenmeyebilir ve hat kopukluğu fark edilmez. Pratik: değişeni yaz + 1 s'de bir tam refresh.
+
+## Derin Teknik Detay
+
+### Neden State Machine + Sabit Cycle Çağrı?
+
+FB_Conveyor'un her cycle'da koşulsuz çağrılması (Hata 6) tesadüfi bir stil tercihi değil, IEC 61131-3 çalışma zamanı modelinin doğrudan sonucudur. CODESYS'te bir FB instance'ı, `VAR` bölümündeki tüm durumu (TON.ET, eState, wEncoderPrev) statik bellekte saklar. FB çağrılmadığı cycle'da bu durum **güncellenmez ama korunur** — yani TON kendi `ET` birikimini ancak çağrıldığında ilerletir. Koşullu çağrı, bir timer'ın "donmuş zaman" yaşamasına yol açar: jam timer 3 saniye saymaya başlar, FB 2 cycle çağrılmaz, gerçek dünyada 30 ms geçer ama TON için sadece çağrılan cycle'lar sayılır. Bu yüzden zaman tabanlı mantığın doğruluğu, çağrı düzeninin determinizmine bağlıdır.
+
+### Enkoder Hız Ölçümü: Frekans mı Periyot mu?
+
+İki temel yöntem vardır ve seçim doğrudan çözünürlüğü belirler:
+
+| Yöntem | Prensip | İyi olduğu yer | Zayıf yanı |
+|--------|---------|----------------|------------|
+| **Frequency (M-method)** | Sabit zaman penceresinde pulse say | Yüksek hız | Düşük hızda az pulse → kuantizasyon gürültüsü |
+| **Period (T-method)** | İki pulse arası zamanı ölç | Düşük hız | Yüksek hızda zaman ölçümü çok kısa |
+
+Bu belgedeki `wEncoderRaw - wEncoderPrev / Δt` yaklaşımı M-method'dur ve bu yüzden düşük bant hızlarında doğal olarak gürültülüdür (Edge Case bölümündeki "düşük hızda yetersiz çözünürlük"). Endüstride geniş hız aralığı için M/T-method (her ikisini hız bandına göre seçen) kullanılır; CODESYS tarafında bu, HSC modülünün donanım özelliği veya yazılımda iki ölçüm modunun seçilmesiyle çözülür. Kritik nokta: hız ölçüm yöntemi, underspeed alarmının eşiğinden önce tasarlanmalıdır — alarmın güvenilirliği ölçümün çözünürlüğünü asla aşamaz.
+
+### "Downstream Önce Başlat" Kuralının Fiziksel Temeli
+
+Bu kural yazılım kolaylığı değil, malzeme akış korunumunun (mass conservation) sonucudur. Bir konveyör zinciri seri bir tampon sistemidir: upstream konveyör akış **kaynağı**, downstream ise **yutucu**. Eğer kaynak (upstream) yutucudan (downstream) önce çalışırsa, akış birikme noktası downstream'in başında oluşur — duran bant üstünde ürün yığılır. Tersine durdurmada upstream önce durur ki downstream üstündeki ürünler boşalabilsin. Bu, akümülasyon patentinin (US6315104B1) kaskat mantığıyla aynı prensiptir: her zon kararını **aşağı yöndeki** zon durumuna göre verir. Yazılımda SFC sıralı başlatma bu fiziksel zorunluluğu kodlar; "kolay olduğu için" değil, "fizik böyle gerektirdiği için" downstream önce başlar.
+
+### Yazılım E-Stop'un Neden Tek Katman Olamayacağının Mimari Kökü
+
+PLC kontrol döngüsü tek bir hata noktasıdır (single point of failure): CPU kilitlenirse, watchdog reset atarsa veya program ELSE dalına düşerse, çıkışlar son yazılan durumda **kalır** (CODESYS'te çıkış process image, runtime durduğunda donar veya fail-safe değere gider — bu davranış cihaz konfigürasyonuna bağlıdır). Donanım güvenlik rölesi (Kategori 3/4, ISO 13849) bu zinciri tamamen baypas eder: E-stop butonu doğrudan kontaktör bobinini keser, PLC'nin çalışıp çalışmadığından bağımsızdır. Bu yüzden yazılım E-stop'u "ikinci katman" olarak adlandırırız — birincil değil. Determinizm garantisi olan `Task_Safety` bile runtime'ın ayakta olmasına bağımlıdır; donanım rölesi ise değildir. Mimari ilke: güvenlik fonksiyonu, korumaya çalıştığı sistemden bağımsız bir hata alanında (failure domain) bulunmalıdır.
 
 ## İlgili Konular
 
