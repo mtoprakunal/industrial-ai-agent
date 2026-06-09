@@ -2,8 +2,8 @@
 KONU        : OPC-UA İstemci Implementasyonları
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://github.com/FreeOpcUa/opcua-asyncio"
     başlık: "GitHub — FreeOpcUa/opcua-asyncio (Python)"
@@ -775,6 +775,58 @@ node-red-contrib-opcua paketi node-opcua üzerine kurulu. Node-RED akışında O
 
 **Not 3 — .NET SDK'nın Belgeleme Zorluğu**  
 OPC Foundation .NET SDK, güçlü ama belgesi karmaşık. API'yi anlamak için Unified Automation örnek projeleri çok daha faydalı. Enterprise projesinde SDK kullanmak zorundaydık (müşteri OPC Foundation sertifikasyonu istiyordu) — API'yi sarmak için kendi abstraction katmanını yazdık.
+
+**Not 4 — asyncio Event Loop'unun Sync Kodla Kilitlenmesi**  
+asyncua ile yazılmış bir köprü, FastAPI içinde çalışırken zaman zaman tüm OPC UA bağlantılarını dondurdu. Sebep: bir geliştirici handler içinden senkron `requests.post()` çağırmıştı; bu, tek event loop'u bloklayıp tüm subscription'ları durdurdu. asyncua tek thread'li asyncio üzerinde çalışır — handler'da senkron blocking çağrı, *tüm* istemciyi durdurur. Çözüm: blocking I/O için `run_in_executor` veya tamamen async kütüphane. Ders: async kütüphanede "bir yeri bloklamak hepsini bloklamaktır".
+
+**Not 5 — node-opcua Otomatik Reconnect ile Hayalet MonitoredItem'lar**  
+node-opcua'nın otomatik reconnect'i bağlantı kopunca subscription'ları yeniden kurar; ama uygulama kodu da kendi reconnect mantığını ekleyince her kopmada MonitoredItem'lar iki kez oluşturuldu. Sunucu tarafında `MaxMonitoredItems` birkaç saat içinde doldu. Çözüm: SDK'nın yerleşik reconnect'ine güvenmek ve uygulama seviyesinde çift mantık koymamak. SDK reconnect davranışını anlamadan üstüne reconnect yazmak limit tüketir.
+
+**Not 6 — .NET ReadValue Sync API'sinin Thread Havuzunu Tüketmesi**  
+.NET SDK'da senkron `Session.ReadValue()` yüzlerce eş zamanlı çağrıda thread pool'u tüketti (her çağrı bir thread bloklar). ASP.NET servisi yanıt veremez hale geldi. Çözüm: async overload'lar (`ReadValueAsync` / `ReadAsync`) ve toplu Read kullanımı. Ders: yüksek eşzamanlılıkta sync OPC UA API'leri ölçeklenmez; async + batch zorunlu.
+
+## Edge Case'ler ve Sistem Limitleri
+
+İstemci tarafı sorunlarının çoğu protokol değil, *eşzamanlılık modeli* ve *reconnect/cleanup yaşam döngüsü* kaynaklıdır:
+
+| Edge Case | Kütüphane | Belirti | Önlem |
+|---|---|---|---|
+| Handler'da blocking çağrı | asyncua (tek loop) | Tüm istemci donar | `run_in_executor` / queue |
+| Sync API + yüksek eşzamanlılık | .NET SDK | Thread pool tükenir | Async overload + batch |
+| Çift reconnect mantığı | node-opcua | Hayalet MonitoredItem | SDK reconnect'ine güven |
+| Session kapatılmadan çıkış | Hepsi | Sunucuda hayalet session | Context manager / using |
+| Namespace index her döngü sorgu | Hepsi | Gereksiz round-trip | Bir kez al, cache |
+| Reconnect sonrası NodeId yeniden çözmeme | Hepsi | `BadNodeIdUnknown` | Reconnect'te tekrar resolve |
+| Subscription republish atlama | Düşük seviye | Kopma sonrası boşluk | sequenceNumber takibi |
+| SecureChannel timeout (idle) | Hepsi | Uzun idle'da kopma | Keepalive/periyodik read |
+| python-opcua (eski) kullanımı | Python | Bakım yok, async yok | asyncua'ya geç |
+
+Kritik sınır gerçekleri:
+- **asyncua tek event loop'tur — bir blocking çağrı her şeyi durdurur.** Bu en sık görülen production hatasıdır; handler ve callback'ler asla senkron I/O yapmamalı.
+- **Reconnect sonrası durum yeniden kurulmalı.** Çoğu SDK SecureChannel/Session'ı kurtarır ama uygulama, çözülmüş NodeId cache'ini ve subscription handle'larını doğrulamalı; kör reconnect `Bad` döngüsüne girebilir.
+- **Cleanup yaşam döngüsünün parçasıdır.** Session ve subscription temizlenmezse sunucu kotaları (MaxSessions/MaxSubscriptions/MaxMonitoredItems) sessizce dolar; istemci hatası sunucuyu kilitler.
+
+## Optimizasyon
+
+İstemci optimizasyonu = round-trip minimizasyonu + doğru eşzamanlılık modeli. Öncelik:
+
+1. **Toplu Read/Write kullan.** Tek `read_values([...])` / batch Read, 100 ayrı çağrının round-trip maliyetini 1'e indirir. En büyük tek kazanç.
+2. **Polling yerine subscription.** İzleme her zaman subscription; istemci sürekli sormaz, sunucu değişimde iter. Read yalnızca anlık tek-okuma için.
+3. **Namespace index ve Node nesnesini cache'le.** Her döngüde `get_namespace_index` / `get_node` çağırmak gereksiz overhead'tir; bir kez çöz, sakla.
+4. **Handler'ı non-blocking yap (queue + worker).** Handler değeri queue'ya atıp döner; ağır iş (DB/InfluxDB/ağ) ayrı task/thread. Hem performans hem kararlılık.
+5. **Async API + concurrency.** .NET'te async overload, Python/Node'da zaten async. Sync API yüksek eşzamanlılıkta thread tüketir.
+6. **Tek kalıcı bağlantı.** Her işlem için connect/disconnect yapmak SecureChannel asimetrik kripto maliyetini tekrarlatır; tek kalıcı Session + reconnect mantığı.
+7. **UA Binary (varsayılan) bırak.** İstemci tarafında JSON/XML kodlamaya zorlamak gereksiz boyut ve CPU yaratır; cihaz iletişiminde Binary kal.
+
+## Derin Teknik Detay
+
+**Neden async modelin OPC UA istemcileri için doğal eşleşme?** OPC UA istemci-sunucu iletişimi tek SecureChannel üzerinde RequestId ile çoğullanmış (multiplexed) istek-yanıtlardan oluşur; yanıtlar sırasız dönebilir. Bu, doğal olarak asenkron bir modeldir — istemci bir Read'i beklerken paralel bir Browse gönderebilir ve event loop yanıtları RequestId ile eşleştirir. Bu yüzden asyncua (Python asyncio) ve node-opcua (Node.js event loop) modeli protokole birebir oturur. Bedeli: tek event loop'u bloklamak (senkron I/O) tüm çoğullamayı durdurur (Not 4). .NET SDK senkron API de sunar ama altta yine async I/O vardır; senkron sarmalama her çağrıyı bir thread'e bağlayarak ölçeklenmeyi bozar (Not 6). Eşzamanlılık modeli kütüphane seçiminden daha kritiktir.
+
+**Subscription republish: kayıpsız teslimin altyapısı.** Her bildirim bir `sequenceNumber` taşır. İstemci, aldığı son sequence'ı sunucuya bildirir (acknowledge); sunucu onaylanmamış bildirimleri retransmission queue'da tutar. Bağlantı kopup yeni SecureChannel ile aynı Session'a dönüldüğünde istemci, eksik sequence'ları `Republish` servisiyle yeniden ister. Bu, "geçici ağ kesintisinde veri kaybetme" garantisinin mekanizmasıdır ve düşük seviyeli SDK kullananların elle yönetmesi gerekir; yüksek seviyeli SDK'lar (asyncua, node-opcua) bunu otomatikleştirir. Kütüphane seçerken "republish'i kim yönetiyor?" kritik sorudur.
+
+**Reconnect: SecureChannel/Session/Subscription katmanlarının ayrı kurtarılması.** Sağlam bir reconnect üç katmanı sırayla ele alır: (1) yeni SecureChannel aç (asimetrik handshake), (2) `ActivateSession` ile eski Session'a dön — başarılıysa subscription'lar yaşıyordur; (3) Session da öldüyse (SessionTimeout aşıldı) her şeyi sıfırdan kur ve NodeId cache'ini yeniden doğrula. İyi SDK'lar bu kademeyi otomatik dener; kötü uygulama doğrudan (3)'e atlayıp her kopmada yeni session+subscription üreterek sunucu kotalarını tüketir (Not 5). Reconnect'i "her şeyi sil-baştan kur" sanmak, OPC UA'nın katmanlı dayanıklılığını boşa harcar.
+
+**Kütüphane seçiminin gerçek ekseni: ekosistem + eşzamanlılık + sertifikasyon.** asyncua Python veri/IoT ekosistemine (pandas, InfluxDB, ML) doğal bağlanır ve async'tir; node-opcua web/Node-RED ve WebSocket köprüleri için idealdir; OPC Foundation .NET SDK ise tek "OPC Foundation uyumluluk sertifikalı" seçenektir — müşteri sertifikasyon şartı koyuyorsa zorunludur, aksi halde karmaşıklığı çoğu projede gereksizdir. Performans farkları (Node/.NET daha yüksek throughput) çoğu endüstriyel yükte belirleyici değildir; belirleyici olan, çevreleyen ekosistem ve eşzamanlılık modelidir.
 
 ## İlgili Konular
 

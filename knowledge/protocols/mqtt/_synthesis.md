@@ -2,8 +2,8 @@
 KONU        : MQTT Protokol — Sentez
 KATEGORİ    : protocols
 ALT_KATEGORI: mqtt
-SEVİYE      : Temel-Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/protocols/mqtt/01_basics.md"
     başlık: "MQTT Protokol Temelleri"
@@ -48,6 +48,37 @@ BAĞLANTILAR :
 ## Özün Ne
 
 Bu sentez, "MQTT'yi temel pub/sub mekanizmasından endüstriyel IIoT'ye kadar bütünsel görmek isteyene ne anlatılmalı?" sorusuna yanıt verir. İki kaynak belge birbirinin devamıdır: `01_basics.md` MQTT'nin nasıl çalıştığını (broker, QoS, retain, LWT, topic) öğretir; `02_industrial_usage.md` bu mekanizmaların fabrika ortamında nasıl şekillendiğini (Sparkplug B, broker seçimi, OPC UA entegrasyonu, UNS mimarisi) gösterir. Bu ikisi bir arada anlaşıldığında MQTT'nin neden bu kadar yaygınlaştığı ve onu doğru kullananla yanlış kullananı ayıran kararlar netleşir.
+
+### Birleştirici İlke — MQTT'yi Tek Cümlede Anlamak
+
+MQTT'nin tüm tasarımı tek bir çekirdek fikirden türer ve uzman seviyesinde her karar bu ilkeye geri bağlanır:
+
+> **MQTT, broker-aracılı yayın/abone modeliyle gönderen ile alanı uzayda, zamanda ve senkronizasyonda ayrıştırır (decoupling).** Bu ayrıştırma onun hem gücünü hem sınırlarını belirler.
+
+Bu çekirdekten dört sonuç doğar:
+
+```
+1. Broker = Aracı → Gevşek bağlantı (decoupling)
+   Yayıncı alıcıyı, alıcı yayıncıyı bilmez. N×M entegrasyon N+M'ye iner.
+   Bedeli: Broker bir SPOF ve ekstra atlama (latency + altyapı).
+
+2. LWT + Retained = Broker bir "durum hafızası" (state memory)
+   Retained: topic'in SON değerini broker tutar (yayıncı gitse de).
+   LWT: istemcinin ölümünü broker onun adına ilan eder.
+   → İstemciler durumsuz olabilir; durumu broker taşır.
+
+3. QoS = Teslimat / overhead takası (trade-off)
+   Güvenilirlik bedava değildir; her seviye ek round-trip ve state demektir.
+   QoS 0 (kayıp olası, sıfır maliyet) → QoS 2 (tam-bir-kez, en pahalı).
+   Seçim uygulamaya bırakılır: telemetride kayıp önemsiz, sayaçta felaket.
+
+4. Hafif + olay-güdümlü + bulut-yerel; AMA gerçek zamanlı DEĞİL
+   2 byte sabit başlık, push, kalıcı bağlantı → uydu/4G/binlerce cihaz ideal.
+   TCP + broker kuyruğu deterministik gecikme vermez → motion control DEĞİL.
+   MQTT bir "taşıma borusu"dur; anlam (Sparkplug B) ve güvenlik (TLS) üstüne katmandır.
+```
+
+Endüstriyel katmanın tamamı bu ilkenin uzantısıdır: **UNS** = decoupling'in fabrika ölçeği; **Sparkplug B** = "taşıma borusu"na endüstriyel state machine + metadata katmanı; **OPC UA + MQTT** = kontrol (deterministik, iki yönlü) ile gözlemlenebilirlik (dağıtım, ölçek) işbölümü.
 
 ## Nasıl Çalışır
 
@@ -199,6 +230,42 @@ MQTT'yi anlamanın en kısa yolu şu dört cümleye sığar:
 
 **Doğru seçim**: OPC UA cihaz-SCADA katmanında, MQTT veri toplama-bulut katmanında. İkisi çelişmez, katmanlı çalışır.
 
+---
+
+### F. Konsolide Edge-Case ve Tuzak Tablosu
+
+| Tuzak | Belirti | Kök Neden | Çözüm |
+|---|---|---|---|
+| Client ID çakışması | İki istemci birbirini sürekli atar (ping-pong) | Aynı Client ID = tek oturum (MQTT kuralı) | Globally-unique Client ID (seri no ekle) |
+| Retained komut zombisi | Reset sonrası makine kendiliğinden çalışır | `command/` topic'inde retain=True | Komut topic'leri ASLA retained; boş retained ile temizle |
+| QoS 1 duplikasyon | Alarm 2 kez görünür, sayaç çift sayar | PUBACK kaybolunca DUP retransmit | Payload'a idempotency anahtarı (batch_id/seq) |
+| Half-open bağlantı | Kopuş 90 sn'ye kadar fark edilmez | TCP kabloyu çekince FIN yok; keepalive=60 | keepalive'ı senaryoya göre düşür (10-20 sn) |
+| Locale ondalık ayraç | `{"temp":82,5}` parse hatası / sessiz yanlış | REAL_TO_STRING locale'e göre virgül üretir | Sayıları daima nokta/C-locale ile üret |
+| clean_session=True kayıp | Offline cihaza komutlar kaybolur | Broker oturum tutmaz | clean_session=False + sabit Client ID + Session Expiry |
+| Sparkplug seq/Rebirth fırtınası | Sürekli NBIRTH trafik patlaması | Reconnect'te seq sıfırlanmıyor | seq disiplini; Rebirth akışını doğru kur |
+| ACL sessiz reddi (3.1.1) | "Veri gelmiyor" ama hata yok | 3.1.1 reason code yok | MQTT 5.0 reason code'lar; ya da broker log |
+| Retained patlaması | Wildcard abonelik açılışta binlerce mesaj | 1000 sensör retained tutuyor | Yalnızca state retain; telemetri retain=False |
+| Tek tüketici darboğazı | InfluxDB-yazıcı kuyruğu birikir | 3.1.1'de her abone kopya alır | MQTT 5.0 shared subscription ($share) |
+| TLS thundering herd | Broker restart sonrası CPU patlar | Binlerce eş zamanlı TLS handshake | Kademeli reconnect; sertifika rotasyon planı |
+| Bridge döngüsü | Mesaj sonsuz çoğalır | İki broker aynı topic'i iki yönlü forward eder | Bridge yönlerini ve döngü filtresini ayarla |
+
+---
+
+### G. Uzman Optimizasyon Sıralaması (En Ucuzdan En Pahalıya)
+
+| Sıra | Optimizasyon | Etki | Not |
+|---|---|---|---|
+| 1 | QoS'u iş gereksinimine düşür | QoS 2→0 broker CPU %60→%8 | En büyük tek kazanç |
+| 2 | Report-by-exception (deadband / Sparkplug NDATA) | Trafik %70-90 azalır | UNS'te en ucuz mesaj gönderilmeyendir |
+| 3 | Payload sıkıştır (JSON→Protobuf/Sparkplug) | %80'e varan boyut azalması | 4G/uydu faturasını belirler |
+| 4 | Retained/topic kardinalitesini sınırla | Broker bellek/disk yükü düşer | Yalnızca state retain |
+| 5 | Subscriber'ı yatay ölçekle (5.0 shared sub) | Tüketici kuyruğu erir | Broker load-balance eder |
+| 6 | Broker kural motorunu edge'de kullan | Bulut maliyeti düşer | EMQX/HiveMQ ile filtrele/downsample |
+| 7 | Keepalive ve clean_session'ı bilinçli ayarla | Broker yükü / oturum belleği dengesi | Senaryoya göre |
+| 8 | Broker cluster + donanım | Yatay kapasite | EN SON çare; mimari düzeltilmeden atma |
+
+**İlke**: Donanım/cluster atmadan önce daima sor — "daha az mesaj, daha küçük payload, daha düşük QoS gönderebilir miyim?" Mesaj tasarımı neredeyse her zaman donanımdan ucuzdur.
+
 ## Pratikte Nasıl Kullanılır
 
 ### Katmanlı Endüstriyel Mimari — Kurulum Adımları
@@ -333,6 +400,15 @@ Bir projede SCADA ile OPC UA, analitik ile MQTT. İlk başta "çift entegrasyon 
 
 **Not 6 — Sparkplug B'nin Entegrasyon Süresine Etkisi**
 Ham MQTT ile bir PLC entegrasyonu: Topic yapısını anla, payload formatını çöz, birimleri belgele, InfluxDB tag'lerini tanımla, Grafana konfigure et → 2-3 gün. Sparkplug B ile: NBIRTH mesajındaki metadata her şeyi anlatıyor, Ignition otomatik tag yapısı oluşturuyor → 2-3 saat. 10 PLC'de fark = yaklaşık 3 hafta.
+
+**Not 7 — Client ID Çakışması Telemetriyi Süpürdü**
+Yedeklilik için iki PLC aynı Client ID ile bağlandı. MQTT kuralı gereği aynı Client ID tek oturuma sahiptir: her bağlanan diğerini düşürdü, otomatik reconnect ile saniyede onlarca kez ping-pong döngüsü oluştu, telemetri kayboldu. Globally-unique Client ID (seri no ekli) ile çözüldü. Client ID benzersizliği MQTT'nin sessiz ama ölümcül kuralıdır.
+
+**Not 8 — Retained Komut Makineyi Kendiliğinden Başlattı (Güvenlik)**
+`command/start` topic'i retain=True ile yayınlanmıştı. PLC bakım sonrası yeniden bağlanıp `command/#`'e subscribe olunca broker saklanmış START'ı anında teslim etti; konveyör kimse dokunmadan çalıştı. Komut bir olaydır, durum değil — komut topic'leri ASLA retained olmamalı. Boş retained mesaj (`-r -n`) ile zombi temizlendi.
+
+**Not 9 — MQTT 5.0'a Geçiş İki Sorunu Aynı Anda Çözdü**
+(a) Tek InfluxDB-yazıcı `factory/#` trafiğine yetişemiyordu; 3.1.1'de her abone kopya aldığı için paralel tüketici kurulamıyordu. 5.0 shared subscription (`$share/...`) ile 3 yazıcıya yük dağıtıldı, kuyruk eridi. (b) 3.1.1'de ACL reddi sessizdi — "veri gelmiyor" saatler aldı; 5.0 reason code'ları (0x87 Not Authorized) hatayı log'da anında gösterdi. Ders: Production'da broker + istemci 5.0 yeteneği büyük kazanç. Tuzak: eski Mosquitto ve bazı istemciler shared subscription desteklemez — doğrula.
 
 ## İlgili Konular
 

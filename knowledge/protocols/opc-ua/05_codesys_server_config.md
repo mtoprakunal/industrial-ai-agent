@@ -2,8 +2,8 @@
 KONU        : CODESYS OPC-UA Sunucu Detaylı Konfigürasyonu
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Communication/_cds_runtime_opc_ua_server.html"
     başlık: "CODESYS Online Help — OPC UA Server"
@@ -526,6 +526,57 @@ Bir SCADA sistemi 2000 MonitoredItem açmaya çalışıyordu. MaxMonitoredItems=
 
 **Not 3 — Symbol Configuration ile Hassas Veri Açığı**  
 Bir projede "tüm değişkenleri işaretle" seçeneği kullanıldı. GVL_Config içindeki makine seri numarası, kalibrasyon katsayıları ve üretim reçeteleri de OPC UA'ya açıldı. Güvenlik denetiminde "aşırı açıklama" olarak işaretlendi. Sonraki versiyonda yalnızca gerekli değişkenler işaretlendi.
+
+**Not 4 — Symbol Set'in OnlineChange'te Sessizce Bozulması**  
+Çalışan bir hatta OnlineChange ile yeni değişken eklendi ve Symbol Configuration "Build" edildi. Ama eklenen değişken Symbol Set'e dahil edilmediğinden bazı istemciler onu göremedi; bazıları gördü. Karışıklığın nedeni: OnlineChange adres uzayını yeniden üretir ve bu sırada NodeId'ler ve set üyelikleri değişebilir; bazı istemcilerin subscription'ları geçersiz NodeId'lere düştü ve sessizce `Bad` döndü. Ders: adres uzayını etkileyen Symbol Configuration değişiklikleri OnlineChange ile değil, planlı download + istemci yeniden bağlanmasıyla yapılmalı.
+
+**Not 5 — `MinSamplingInterval=0` Bırakıldığı İçin DoS Benzeri Yük**  
+CODESYSControl.cfg'de `MinSamplingInterval` ayarlanmamıştı (varsayılan 0). Üçüncü parti bir istemci yanlışlıkla sampling=0 ile 800 MonitoredItem açtı. Sunucu her PLC scan'inde tümünü örneklemeye çalıştı; OPC UA task exec time kontrol task'ını geciktirdi ve watchdog tetiklendi. Sunucu tarafında `MinSamplingInterval=100` kelepçesi konunca istemci ne isterse istesin minimum 100ms'ye sabitlendi. Ders: istemciye güvenme — sunucu tarafında sert kelepçe koy.
+
+**Not 6 — Lisans Sınırlı Node Sayısı Sürprizi**  
+Bazı CODESYS runtime lisansları (özellikle OEM/küçük PLC) OPC UA'da yayınlanabilen node sayısını veya eş zamanlı session'ı lisansla sınırlar. 1500 değişken işaretlendi ama runtime yalnızca ilk N tanesini yayınladı, gerisi sessizce eksik kaldı. PLC Shell log'unda lisans uyarısı vardı ama fark edilmedi. Ders: hedef runtime'ın OPC UA lisans sınırlarını (node/session) devreye almadan önce doğrula; "çalışıyor ama eksik" en sinsi hatadır.
+
+## Edge Case'ler ve Sistem Limitleri
+
+CODESYS OPC UA sunucusunun sınırları hem runtime kotalarından hem de adres uzayının runtime adına bağlı olmasından kaynaklanır:
+
+| Edge Case | Neden | Belirti | Önlem |
+|---|---|---|---|
+| RuntimeName NodeId'de | String NodeId runtime adını içerir | Platform/isim değişince tüm tag bozulur | Custom namespace (Comm.Manager) |
+| OnlineChange + Symbol | Adres uzayı yeniden üretilir | Subscription `Bad`'a düşer | Planlı download + reconnect |
+| Lisans node/session limiti | OEM runtime kısıtı | Sessiz eksik yayın | Lisansı önceden doğrula |
+| `MaxSessions=0` | "Sınırsız" = kaynak tükenmesi | Bellek/CPU spike, DoS | Daima sonlu limit |
+| `MinSamplingInterval=0` | İstemci sunucuyu boğabilir | Watchdog/kontrol gecikmesi | ≥100ms kelepçe |
+| Sertifika klasör yolu sürümle değişti | `/var/opt/.../pki` vs `/etc/codesys/pki` | Trust işe yaramaz | Doğru yolu logla/doğrula |
+| Symbol Set ≠ kullanıcı eşlemesi | Set tanımlı ama role bağlanmamış | Yetkisiz veri görünür | Set'i erişim haklarına bağla |
+| BOOL array / büyük struct | Encoding limiti / decode sorunu | `Bad` veya ham byte | Tip tanımı yükle, boyut sınırla |
+
+Kritik sınır gerçekleri:
+- **`MaxSessions=0` tehlikelidir.** "Sınırsız" pratikte gömülü cihazda bellek/CPU tükenmesine ve DoS'a açık kapı bırakır; her zaman sonlu, gerçek ihtiyaç + pay olan bir değer ver.
+- **Sertifika klasör yolu runtime sürümüne göre değişir.** Eski kurulumlarda `/var/opt/codesys/PlcLogic/Application/pki`, yeni kurulumlarda `/etc/codesys/pki` olabilir; yanlış yola sertifika koymak "trusted'a aldım ama hâlâ reddediyor" hatasının klasik kaynağıdır.
+- **Symbol Configuration yayınladığın her şeyi yayınlar.** "Tümünü işaretle" kolaylığı, kalibrasyon/reçete/seri-no gibi hassas veriyi de açar; bu bir bilgi sızıntısıdır.
+
+## Optimizasyon
+
+CODESYS sunucu tarafı optimizasyonu hem performans hem kararlılık içindir; kontrol döngüsünün OPC UA yükünden etkilenmemesi önceliklidir:
+
+1. **OPC UA task'ını izole et (CPU pinning + öncelik).** `AffinityMask` ile OPC UA'yı kontrol task'larından ayrı çekirdeğe pin'le; OPC UA yükü asla kontrol jitter'ını etkilemesin. Çok çekirdekli cihazda en yüksek kararlılık kazancı budur.
+2. **`MinSamplingInterval` kelepçesi koy (≥100ms).** İstemcinin sunucuyu boğmasını sunucu tarafında kesin engeller — istemci politikasına güvenme.
+3. **Adres uzayını sadeleştir.** Yalnızca dışarı gereken değişkenleri işaretle. Daha az node = daha hızlı browse, daha az bellek, daha küçük saldırı yüzeyi, daha hızlı OnlineChange.
+4. **Limitleri gerçeğe göre boyutlandır.** `MaxSessions`, `MaxSubscriptions`, `MaxMonitoredItems` = beklenen yük + makul pay. Çok yüksek limit kaynak israfı, çok düşük limit sessiz red.
+5. **Custom namespace ile NodeId'yi runtime'dan bağımsızlaştır.** Communication Manager ile sabit namespace URI, runtime/platform değişiminde tag güncelleme maliyetini (Not 1'deki 2 günlük iş) sıfırlar.
+6. **LogLevel'ı üretimde düşür.** `LogLevel=4 (debug)` kalırsa yoğun trafik altında loglama I/O'su ek yük yaratır; üretimde 1-2 yeterli.
+7. **Toplu erişimi teşvik et.** İstemci tarafına toplu Read/Write ve tek subscription kullandırmak sunucu round-trip ve subscription tablosu yükünü azaltır.
+
+## Derin Teknik Detay
+
+**Symbol Configuration ile Communication Manager — neden iki mimari?** Symbol Configuration, IEC değişkenlerini (GVL üyelerini) doğrudan ve otomatik bir adres uzayına yansıtır; NodeId'ler `|var|RuntimeName.App.GVL.Var` formülüyle deterministik üretilir. Bu kolaylık bir bedelle gelir: adres uzayı CODESYS'in iç proje yapısına ve runtime adına *bağlıdır* — yani bilgi modeli aslında "ham değişken dökümü"dür, semantik tip sistemi içermez. Communication Manager + OPC UA Server nesnesi ise gerçek bir information model katmanı sunar: custom namespace, ObjectType, Method, kontrollü hiyerarşi. Bedeli manuel kurulum; getirisi runtime'dan bağımsız NodeId, companion specification uyumu ve method desteğidir. Doğru karar: basit SCADA/HMI için Symbol Configuration, müşteriye-açık/standart-uyumlu/method-gerektiren sistemler için Communication Manager.
+
+**NodeId'nin runtime adına bağlanmasının kök nedeni.** Symbol Configuration NodeId'yi runtime adından türetir çünkü tek bir OPC UA sunucusu teorik olarak birden çok runtime/application barındırabilir ve bunları ayırt etmek gerekir. Ancak pratikte bu, runtime adı değişince (Windows→Linux taşıması, platform yükseltmesi) tüm string NodeId'leri kıran kırılganlık yaratır. Bu, "deterministik üretim" ile "stabilite" arasındaki bir takastır; custom namespace bu takası kullanıcı kontrolüne verir.
+
+**MinSamplingInterval neden sunucu tarafında zorunlu kelepçe?** OPC UA'da sampling interval'i istemci ister ama sunucu revize edebilir. CODESYS'te OPC UA örnekleme, runtime task scheduler'ı içinde çalışır; çok düşük sampling, OPC UA task'ının CPU bütçesini tüketip kontrol task'larıyla yarışmasına yol açar. `MinSamplingInterval`, istemci ne isterse istesin sunucunun kabul edeceği tabandır — bu, kontrol determinizmini istemci davranışından koruyan bir güvenlik supabıdır. Bu yüzden CODESYS'te OPC UA "best effort" katmandır ve asla gerçek-zamanlı kontrol döngüsünün yerini almamalıdır.
+
+**OnlineChange ve adres uzayı tutarlılığı.** CODESYS OnlineChange, çalışan PLC'yi durdurmadan kod günceller; ama Symbol Configuration'ı etkileyen değişiklikler adres uzayının yeniden üretilmesini gerektirebilir. Bu sırada NodeId'ler ve continuation point'ler geçersizleşebilir, açık subscription'lar kopuk NodeId'lere düşer. Bunun nedeni adres uzayının çalışma-zamanı türetilmiş olmasıdır: kod değişince türetilen yapı da değişir. Bu yüzden adres uzayını etkileyen değişiklikler OnlineChange ile değil, planlı bir bakım penceresinde download + istemci reconnect ile yapılmalıdır — aksi halde "bazı istemciler görüyor, bazıları görmüyor" türü tutarsızlıklar oluşur.
 
 ## İlgili Konular
 

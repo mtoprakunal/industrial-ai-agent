@@ -2,8 +2,8 @@
 KONU        : OPC-UA Mimari Yapısı
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://opcfoundation.org/about/opc-technologies/opc-ua/"
     başlık: "OPC Foundation — OPC UA Overview"
@@ -319,6 +319,57 @@ Bir robot entegrasyonunda, robot OEM'i OPC 40010 (Robotics Companion Spec) uyuml
 
 **Not 3 — PubSub ile Ölçekleme**  
 50 PLC'nin her birini ayrı OPC UA client/server olarak yönetmek karmaşıktı. OPC UA PubSub (MQTT transport) eklendikten sonra tüm PLC'ler broker'a yayınladı, SCADA tek noktadan abone oldu. 50 farklı bağlantı yerine 1 broker bağlantısı — operasyonel yük dramatik şekilde azaldı.
+
+**Not 4 — Reverse Connect ile DMZ Sorununun Çözülmesi**  
+Bir saha projesinde SCADA, DMZ'nin dışındaydı ve güvenlik politikası gereği IT, hiçbir dışarıdan-içeriye (inbound) bağlantıya izin vermiyordu — yani SCADA, PLC'nin 4840 portuna ulaşamıyordu. Çözüm OPC UA Reverse Connect oldu: bağlantıyı PLC (server) başlatıp SCADA (client) tarafına outbound TCP açtı, ardından roller normale döndü (server hâlâ server). Firewall'da yalnızca PLC→SCADA yönü açık kaldı, IT memnun oldu. Reverse Connect'in client-server semantiğini değiştirmediği, sadece TCP el sıkışmasının kim tarafından başlatıldığını değiştirdiği anlaşılınca tasarım netleşti.
+
+**Not 5 — Discovery Server'ın Beklenmedik Tek Nokta Hatası**  
+Birden çok sunucuyu tek noktadan bulmak için LDS (Local Discovery Server) kuruldu. Discovery URL'i tüm istemcilere hardcode edildi. LDS servisi crash edince istemciler hiçbir sunucuyu "bulamadı" ve operatörler tüm sahanın çöktüğünü sandı — oysa sunucular çalışıyordu. Çözüm: kritik istemcilerde doğrudan endpoint URL'i fallback olarak tutmak. Ders: Discovery bir kolaylık katmanıdır, veri yolu değildir; ona bağımlılık yaratmamak gerekir.
+
+**Not 6 — UA TCP Mesaj Chunk Limiti ile Büyük Browse Yanıtı**  
+Çok geniş bir adres uzayında (12.000+ node) BrowseNext olmadan tek seferde browse denendiğinde istemci `BadEncodingLimitsExceeded` aldı. Neden: UA TCP, mesajları chunk'lara böler ve `MaxMessageSize`/`MaxChunkCount` ile sınırlar; bir Browse yanıtı bu limiti aşamaz. Çözüm: `RequestedMaxReferencesPerNode` ile sayfalama + ContinuationPoint kullanmak. Büyük adres uzaylarında sayfalama opsiyonel değil, zorunludur.
+
+## Edge Case'ler ve Sistem Limitleri
+
+OPC UA'nın sınırları çoğunlukla protokolün kendisinde değil, transport seviyesindeki kotalarda ve sunucu implementasyonlarındaki sabit tablolarda saklıdır. Aşağıdaki limitler saha hatalarının büyük bölümünü açıklar:
+
+| Limit / Edge Case | Neden Var | Tipik Belirti | Pratik Sınır |
+|---|---|---|---|
+| `MaxMessageSize` (UA TCP) | Bellek koruması, DoS önlemi | `BadEncodingLimitsExceeded`, `BadResponseTooLarge` | Varsayılan ~16 MB; gömülü PLC'de daha düşük |
+| `MaxChunkCount` | Tek mesajın chunk sayısı tavanı | Büyük struct/array reddedilir | Gömülü cihazda 5-50 chunk |
+| `MaxStringLength` / `MaxArrayLength` | Encoding kotaları | Uzun string node `Bad` döner | 64 KB string tipik |
+| `MaxBrowseContinuationPoints` | Sunucu başına aktif CP sayısı | `BadNoContinuationPoints` | Sunucuya göre 10-100 |
+| SecureChannel lifetime | Anahtar yenileme zorunluluğu | Uzun süreli idle bağlantı kopar | Varsayılan 1 saat (RenewSecureChannel) |
+| Endpoint sayısı | Her SecurityPolicy×Mode bir endpoint | İstemci yanlış endpoint seçer | Politika başına 2-3 endpoint |
+| 32-bit zaman damgası taşması yok | DateTime 64-bit (100ns tick, 1601 epoch) | Y2K38 OPC UA'yı etkilemez | Avantaj |
+
+Sınır davranışları:
+- **SecureChannel ≠ Session ≠ Subscription.** Bir SecureChannel kopsa bile Session, sunucu `SessionTimeout` dolana kadar yaşar; istemci yeni kanal açıp aynı Session'ı *reactivate* edebilir ve subscription'lar kaybolmaz. Bu üç katmanlı bağımsızlık, geçici ağ kesintilerine dayanıklılığın temelidir.
+- **Discovery güvensiz olmak zorundadır.** GetEndpoints/FindServers, henüz güven kurulmadan çağrıldığı için her zaman `None` security ile yanıt verir. Bu bir açık değil, tasarımdır; gerçek veri yine güvenli endpoint üzerinden akar.
+- **opc.tcp Nagle etkileşimi.** Düşük gecikme isteyen küçük request/response'larda Nagle algoritması (TCP_NODELAY kapalıysa) round-trip'i 40 ms'ye kadar yapay olarak şişirebilir. Yüksek frekanslı senaryolarda transport katmanında TCP_NODELAY önemlidir.
+
+## Optimizasyon
+
+Mimari seviyesinde performans, "doğru katmanda doğru desen" seçmekle başlar. Optimizasyon önceliği (en yüksek kazanç → en düşük):
+
+1. **Polling yerine Subscription.** En büyük kazanç burada. Read döngüsü her node için tam request/response (~200-400 byte) üretirken, subscription değişim başına ~50-100 byte ile çalışır ve değişim yoksa hiç trafik üretmez. Mimari kararı: izleme her zaman subscription, anlık tek-okuma için Read.
+2. **SecureChannel'i yeniden kullan.** SecureChannel açılışı asimetrik kripto (RSA) gerektirir ve pahalıdır; her işlem için kanal açıp kapamak CPU'yu yer. Tek kalıcı kanal + tek Session üzerinden tüm işlemler.
+3. **Toplu işlem (batch).** 100 node'u tek Read/Write servisiyle göndermek, 100 ayrı çağrıdan kat kat verimlidir — round-trip sayısı 100'den 1'e iner. Aynı şey CreateMonitoredItems için de geçerli.
+4. **UA Binary kodlama kullan.** XML/JSON kodlamalar insan-okunur ama 3-5x daha büyük ve yavaştır. Cihaz-cihaz iletişiminde daima UA Binary; JSON yalnızca web/PubSub köprülerinde.
+5. **PubSub'a geç (çok-abone senaryosu).** Aynı veriyi N istemci izliyorsa, client-server'da sunucu N kez serileştirir/şifreler. PubSub'da Publisher bir kez yayınlar, broker dağıtır — sunucu yükü istemci sayısından bağımsızlaşır.
+6. **Endpoint sadeleştirme.** Gereksiz SecurityPolicy/Mode kombinasyonlarını kapatmak hem saldırı yüzeyini hem de istemcinin endpoint seçim süresini azaltır.
+
+Anti-optimizasyon uyarısı: OPC UA'yı EtherCAT/PROFINET seviyesinde "hızlandırmaya" çalışmak yanlış katman optimizasyonudur; jitter ve determinizm bu protokolün hedefi değildir.
+
+## Derin Teknik Detay
+
+**Neden iki ayrı kanal: SecureChannel ve Session?** OPC UA, kriptografik güvenliği (SecureChannel) ile uygulama oturumunu (Session) bilinçli olarak ayırır. SecureChannel transport seviyesinde mesaj imzalama/şifreleme yapar ve simetrik anahtarları periyodik yeniler; Session ise kullanıcı kimliği, açık subscription'lar ve istemci durumunu taşır. Bu ayrım sayesinde ağ bir an koptuğunda (TCP reset, NAT timeout) istemci yeni bir SecureChannel açıp `ActivateSession` ile aynı oturuma geri dönebilir — subscription'lar ve queue'daki bildirimler korunur. Tek katmanlı tasarımlarda (örn. ham TLS soketi) bağlantı kopması tüm uygulama durumunu siler; OPC UA bunu mimari olarak önler.
+
+**UA Secure Conversation (UASC) neden TLS değil?** OPC UA, TLS yerine kendi mesaj-seviyesi güvenlik protokolü UASC'yi kullanır. Sebep: TLS *bağlantıyı* korur ama OPC UA *mesajı* korumak ister — böylece güvenli mesajlar bir broker veya gateway üzerinden geçebilir (özellikle PubSub'da end-to-end). UASC, her mesajı ayrı imzalar/şifreler; bu, store-and-forward ve çok-noktalı topolojilerde TLS'in yapamadığını mümkün kılar. Bedeli: daha karmaşık handshake (OpenSecureChannel servisi) ve asimetrik kripto maliyeti.
+
+**Request/Response neden asenkron çoğullanır?** UA TCP üzerinde tek SecureChannel, birden fazla istek-yanıtı RequestId ile çoğullar (multiplex). Yani istemci bir Read yanıtını beklerken paralel bir Browse gönderebilir; yanıtlar sırasız dönebilir, RequestId ile eşleştirilir. Bu, HTTP/1.1'in head-of-line blocking sorununu önler ve tek bağlantı üzerinden yüksek verim sağlar — modern istemci SDK'larının asyncio/async-await mimarisinin altındaki neden budur.
+
+**Neden information model client-server'ın kalbi?** Modbus'ta bir register'ın "ne anlama geldiği" protokol dışı bir dokümandadır (insan okur, kodlar). OPC UA'da node'un DataType, EngineeringUnits, ilişkiler ve tip tanımı *adres uzayının içindedir* — makine okur. Bu fark "self-describing" olmanın kaynağıdır ve OPC UA'nın asıl değeridir: maliyeti büyük adres uzayı ve overhead, getirisi otomatik keşif ve entegrasyon süresinde dramatik düşüştür. Alternatif protokollerin (Modbus, MQTT) düz olması onları hafif ama "anlamsız" yapar; OPC UA tam tersi tarafı seçer.
 
 ## İlgili Konular
 

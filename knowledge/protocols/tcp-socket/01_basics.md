@@ -2,8 +2,8 @@
 KONU        : TCP Socket Temelleri
 KATEGORİ    : protocols
 ALT_KATEGORI: tcp-socket
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://medium.com/@harshithgowdakt/deep-dive-into-tcp-sockets-how-data-travels-under-the-hood-7c16f6b2bf95"
     başlık: "Medium — Deep Dive into TCP Sockets: How Data Travels Under the Hood"
@@ -427,6 +427,144 @@ Eski bir SCADA sistemi Modbus veya OPC UA desteklemiyordu. Kendi özel binary pr
 
 **Not 3 — Keep-Alive'ın Önemi**  
 Bir gece mesai olmayan fabrikada, sabah SCADA PLC'ye bağlanamıyordu. Araştırma: Gece boyunca veri gönderilmemiş, NAT gateway 30 dakika sonra session'ı kapsamış. TCP'nin "phantom bağlantı" durumu: PLC tarafında bağlantı "connected" görünüyor ama NAT'ı geçemiyordu. Çözüm: SO_KEEPALIVE ile her 60 saniyede probe. Session artık geceleri de canlı kalıyor.
+
+**Not 4 — Nagle Algoritması ve "Neden 40ms Gecikme?"**  
+İki PLC arasında küçük komut paketleri (2-4 byte) gönderiliyordu. Yanıt süresi bazen 40-200ms'ye fırlıyordu, oysa LAN round-trip <1ms olmalıydı. Suçlu: Nagle algoritması + delayed ACK etkileşimi. Nagle, küçük paketleri biriktirip tek segmentte gönderir; karşı taraf delayed ACK (40-200ms) ile beklerken Nagle yeni veriyi tutuyor → "deadlock benzeri" gecikme. İstek-yanıt (ping-pong) trafiğinde klasik tuzak. Çözüm: `TCP_NODELAY` aktif (Nagle kapalı). Komut-yanıt protokollerinde Nagle neredeyse her zaman kapatılmalı; throughput odaklı toplu transferde açık bırakılabilir.
+
+**Not 5 — Half-Open Bağlantı: Kablo Çekildi, PLC Bilmiyor**  
+Bir cihazın ethernet kablosu fiziksel olarak çekildi. PLC tarafında bağlantı saatlerce "connected" kaldı; recv() sürekli -1 (veri yok) döndü, send() ilk birkaç çağrıda başarılı göründü (yerel TX buffer'a yazıldı, henüz ACK beklenmedi). Bu "half-open" durumdur: bir uç bağlantının öldüğünü bilmez. Sadece OS keep-alive probe'ları veya uygulama heartbeat'i bunu açığa çıkarır. Ders: "send başarılı" demek "karşı taraf aldı" demek değildir — sadece "yerel kuyruğa kondu" demektir.
+
+**Not 6 — Listen Backlog ve Eşzamanlı Bağlantı Fırtınası**  
+PLC TCP Server, birden fazla istemcinin (SCADA + 2 HMI) aynı anda yeniden bağlanmaya çalıştığı bir restart anında bazı bağlantıları reddetti. Neden: `listen(backlog=1)` ile accept kuyruğu doluydu ve scan döngüsü her turda yalnızca tek accept yapıyordu. Yarı tamamlanmış SYN'ler kuyrukta birikti, istemciler SYN retransmit'e düştü (her seferinde ~1s, sonra ~2s exponential backoff). Çözüm: backlog artırıldı ve her scan'de döngüyle birden çok accept denendi.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Ham TCP, "her byte ulaşır" garantisi verir ama altındaki OS ve donanım katmanı sert limitler ve sürpriz davranışlar barındırır. Endüstriyel ortamda bunları bilmemek, "ara sıra olan, açıklanamayan" arızaların temel sebebidir.
+
+### TCP Stream'in Sınır Durumları
+
+| Edge Case | Belirti | Kök Neden | Doğru Davranış |
+|---|---|---|---|
+| `recv()` = 0 | "Veri gelmiyor" sanılır | Karşı taraf FIN gönderdi (graceful close) | EOF olarak yorumla, yeniden bağlan — hata DEĞİL |
+| Kısmi `recv()` | 100 byte gönderildi, 37 byte geldi | TCP stream; segment sınırı ≠ mesaj sınırı | Akümülatör buffer + framing zorunlu |
+| Birleşik mesaj | İki ayrı send() tek recv()'de | Nagle veya TCP coalescing | Length/delimiter ile mesajları ayır |
+| Kısmi `send()` | send(1000) → 600 döndü | TX buffer doldu, akış kontrolü | Kalan byte'ı tekrar gönder (send loop) |
+| Half-open bağlantı | recv -1, send başta OK ama veri gitmiyor | Kablo/güç kesildi, FIN gelmedi | Keep-alive + uygulama heartbeat ile tespit |
+| TIME_WAIT | Restart sonrası bind reddi (2-4 dk) | Önceki bağlantının kapanış beklemesi | `SO_REUSEADDR` (bind'den önce) |
+| Connection refused | connect() anında reddedildi | Karşı tarafta dinleyen yok (RST) | Cihaz açık mı / port doğru mu kontrol |
+| ARP/route gecikmesi | İlk connect ~1-3s, sonrakiler hızlı | ARP çözümü + SYN retransmit | Connect timeout'u ≥ 5-10s tut |
+
+### Sayısal Limitler ve Tampon Gerçekleri
+
+```
+TCP segment (MSS):        ~1460 byte (Ethernet MTU 1500 - 40 IP/TCP başlık)
+  → 4 KB'lik bir mesaj 3 segmente bölünür; recv() bunları parça parça verebilir.
+
+OS socket buffer (tipik): RX/TX 64-256 KB (gömülü PLC'de daha düşük, 8-32 KB olabilir)
+  → Buffer dolarsa: gönderen bloke (blocking) veya -1 (non-blocking) alır.
+
+Eşzamanlı socket limiti:  Gömülü PLC runtime'da onlarla sınırlı (PC'de binlerce)
+  → Her açık socket bir handle + buffer tüketir; sızıntı hızla limite çarpar.
+
+TIME_WAIT süresi:         2×MSL ≈ 60s-240s (OS'a bağlı)
+SYN retransmit:           ~1s, 2s, 4s... (exponential backoff)
+Varsayılan keep-alive:    7200s + 9×75s ≈ 2.2 saat (endüstriyel için kullanılamaz)
+```
+
+### Tipik Tehlikeli Senaryolar
+
+```
+1. Mesaj > socket buffer:
+   Tek bir 200 KB binary blok gönderilirken non-blocking send() kısmi yazar.
+   "Gönderdim" varsayımı → veri kaybı. Kalan byte için send-loop şart.
+
+2. Yüksek frekanslı küçük paket:
+   10ms'de bir 4-byte komut. Nagle açıksa biriktirilir, gecikir.
+   TCP_NODELAY ile her komut anında gönderilir.
+
+3. Gömülü cihaz socket sızıntısı:
+   Her hatada socket kapatılmazsa handle havuzu dolar; ~saatler/günler sonra
+   "socket create failed" → tüm haberleşme durur. Yeniden başlatma "düzeltir",
+   ama kök neden sızıntıdır.
+```
+
+## Optimizasyon
+
+Ham TCP'de "optimizasyon" çoğunlukla doğru OS-seviyesi ayar + doğru bağlantı stratejisi demektir; mikro-optimizasyon nadiren gerekir. Etki sırasına göre:
+
+```
+ÖNCELİK 1 — Kalıcı bağlantı (en büyük kazanç):
+  Her mesajda connect/close yerine bir kez bağlan, sürekli kullan.
+  Etki: Mesaj başına 6 paket (SYN/ACK/FIN) overhead'ı → 0.
+  100ms polling'de saniyede ~60 gereksiz paketi ortadan kaldırır.
+
+ÖNCELİK 2 — TCP_NODELAY (komut-yanıt trafiğinde):
+  Nagle'ı kapat. Küçük paketlerde 40-200ms delayed-ACK gecikmesini siler.
+  ⚠ Toplu/streaming transferde KAPATMA — küçük paket sayısını artırır.
+
+ÖNCELİK 3 — Doğru buffer boyutu (SO_SNDBUF / SO_RCVBUF):
+  Yüksek throughput (görüntü, dalga formu) için RX/TX buffer büyüt.
+  Düşük gecikme + küçük mesaj için varsayılan yeterli, hatta küçültülebilir.
+
+ÖNCELİK 4 — Toplu gönderim (batching) protokol seviyesinde:
+  Çok sayıda küçük değer yerine tek frame'de paketle.
+  TCP_NODELAY açıkken bile uygulama batching latency/throughput dengeler.
+
+ÖNCELİK 5 — recv() buffer'ı yeterince büyük tut:
+  Tek recv() çağrısında mümkün olduğunca çok byte al; scan başına
+  çok sayıda küçük recv yerine az sayıda büyük recv.
+```
+
+| Senaryo | Bağlantı | Nagle | Buffer | Gerekçe |
+|---|---|---|---|---|
+| Komut-yanıt (PLC↔PLC) | Kalıcı | KAPALI (NODELAY) | Küçük | Gecikme kritik, paket küçük |
+| Periyodik veri (sensör) | Kalıcı | KAPALI | Orta | Düzenli küçük paket, anlık iletim |
+| Büyük binary (görüntü) | Kalıcı | AÇIK | Büyük | Throughput kritik, gecikme değil |
+| Nadir transfer | Kısa olabilir | Önemsiz | Varsayılan | Overhead toplam içinde küçük |
+
+## Derin Teknik Detay
+
+### Neden "Stream" — Mesaj Tabanlı Değil?
+
+TCP, 1970'lerde güvenilir bir **byte boru hattı** olarak tasarlandı; üzerinde Telnet, FTP gibi karakter akışı uygulamaları çalışacaktı. Tasarım hedefi "uygulamanın gönderdiği byte dizisini, aynı sırada ve eksiksiz teslim et" idi — "uygulamanın mantıksal mesaj sınırlarını koru" değil. Bu yüzden TCP, send() çağrılarını birleştirme (coalescing) veya bölme (segmentation) konusunda tamamen serbesttir. Mesaj sınırı kavramı OS/TCP katmanında **hiç yoktur**; bu bilinçli bir basitleştirmedir ve TCP'nin akış kontrolü, yeniden iletim ve pencereleme mekanizmalarını basit tutar.
+
+```
+Uygulama:   send("ABC")  send("DEF")  send("GHI")
+TCP görüşü: ...ABCDEFGHI...  (tek, ayrımsız byte akışı)
+Karşı taraf recv() döngüsü:
+   recv() → "ABCD"      (1.5 mesaj)
+   recv() → "EFGHI"     (1.5 mesaj)
+Mesaj sınırı = uygulamanın inşa etmesi gereken kavram.
+```
+
+UDP datagram tabanlıdır (mesaj sınırı korunur) ama güvenilirlik/sıralama yoktur. TCP, güvenilirliği seçip mesaj sınırını feda eder. Endüstriyel "mesaj" kavramına ikisi de doğrudan uymaz: framing'i uygulama katmanında kendin kurarsın. SCTP (mesaj sınırı + güvenilirlik) bu ikilemi çözer ama gömülü PLC'lerde yaygın değildir.
+
+### Üçlü El Sıkışmanın "Neden"i
+
+Üç adım, **iki yönlü** sequence number senkronizasyonunun minimumudur. İki taraf da kendi başlangıç sequence number'ını (ISN) karşıya bildirmek ve onaylatmak zorundadır:
+
+```
+SYN     : İstemci ISN'ini bildirir          (1 yön kuruldu)
+SYN-ACK : Sunucu hem onaylar hem kendi ISN'i (geri yön + onay birleşik)
+ACK     : İstemci sunucu ISN'ini onaylar     (çift yön tam kuruldu)
+```
+
+İki paketle yapılamaz çünkü her iki yönün ISN'i ayrı ayrı onaylanmalı; SYN-ACK'in tek pakette birleşmesi sayesinde dört değil üç paket yeter. Rastgele ISN seçimi ise eski bağlantıların gecikmiş paketlerinin yeni bağlantıya karışmasını ("segment from a previous incarnation") önler — TIME_WAIT'in de var olma sebebi budur.
+
+### TIME_WAIT Neden Var, Neden Sinir Bozucu?
+
+Bağlantıyı aktif kapatan taraf (FIN'i ilk gönderen) 2×MSL süre TIME_WAIT'te bekler. İki sebep: (1) son ACK kaybolursa karşı tarafın FIN retransmit'ine yanıt verebilmek, (2) aynı 4'lü (kaynak IP/port + hedef IP/port) için gecikmiş eski segmentlerin yeni bağlantıya sızmasını engellemek. PLC server restart'ında aynı portu hemen tekrar açmak istediğinde bu bekleme "Address already in use" verir. `SO_REUSEADDR`, "bu portta TIME_WAIT'te bekleyen bir bağlantı olsa da bind'e izin ver" der — güvenli çünkü yeni bağlantının 4'lüsü farklı olacaktır. Bu yüzden her endüstriyel TCP server şablonunda standarttır.
+
+### vs Alternatifler — Neden Bazen Yine de Ham TCP?
+
+```
+Ham TCP    : Maksimum kontrol/minimum overhead; framing+güvenlik sana ait.
+Modbus TCP : Hazır framing (MBAP başlığı, length alanı dahil) ama register modeli kısıtlı.
+OPC UA     : Zengin model + güvenlik ama el sıkışma/session overhead'ı ve runtime maliyeti yüksek.
+UDP        : Datagram (mesaj sınırı korunur) ama kayıp/sıra garantisi yok → kendi ACK'in.
+```
+
+Cihaz zaten standart bir protokol konuşuyorsa ham TCP'ye inmek "tekerleği yeniden icat etmek"tir. Ham TCP'nin haklı olduğu tek yer: karşı tarafın dilini sen seçemiyorsun (legacy/üretici-özel) veya standart protokolün overhead'ı/modeli probleme uymuyor. O zaman bu klasördeki framing + state machine + handle yönetimi disiplinleri devreye girer.
 
 ## İlgili Konular
 

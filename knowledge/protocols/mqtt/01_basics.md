@@ -2,8 +2,8 @@
 KONU        : MQTT Protokol Temelleri
 KATEGORİ    : protocols
 ALT_KATEGORI: mqtt
-SEVİYE      : Temel
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.hivemq.com/mqtt/"
     başlık: "HiveMQ — MQTT Essentials 2026 Guide"
@@ -547,6 +547,180 @@ Ağ ekipmanı güncelleme sırasında bir PLC bağlantısı beklenmedik biçimde
 
 **Not 3 — QoS 2'nin Overhead'i**  
 Bir pilot projede tüm mesajlar QoS 2 ile gönderildi. 200 sensör × 1/sn = 200 msg/sn × 4 paket = 800 paket/sn. Mosquitto CPU %60'a çıktı. QoS 0'a geçildi (telemetri) + QoS 1 (alarmlar). CPU %8'e indi. Gerçek proje etkisi.
+
+**Not 4 — Aynı Client ID ile İki İstemcinin "Ping-Pong" Döngüsü**  
+Bir hatta yedeklilik için iki CODESYS PLC aynı `sClientID := 'Line1_PLC'` ile broker'a bağlandı. MQTT spesifikasyonu aynı Client ID'nin tek bağlantıya sahip olmasını şart koşar: ikinci istemci bağlanınca broker birincinin oturumunu **DISCONNECT** ile düşürdü. Birinci istemci `loop_start` yeniden bağlanma mantığıyla anında geri bağlandı → ikincisini düşürdü. İki istemci saniyede onlarca kez birbirini atan bir döngüye girdi; broker logları `client already connected, kicking old client` ile doldu, telemetri kayboldu. Çözüm: Her fiziksel cihaza globally-unique Client ID (örn. seri numarası eklenmiş `Line1_PLC_SN8842`). Ders: Client ID benzersizliği "öneri" değil, MQTT'nin sessiz ama ölümcül bir kuralıdır.
+
+**Not 5 — Retained Komut "Zombi"si Makineyi Beklenmedik Başlattı**  
+HMI, `factory/line1/command/start` topic'ine `retain=True` ile START komutu gönderiyordu (geliştiricinin "komut kaybolmasın" iyi niyetiyle). Broker bu mesajı sakladı. Hafta sonu PLC bakım için resetlenip yeniden bağlandığında, `command/#` topic'ine subscribe olur olmaz broker saklanmış START'ı anında teslim etti — kimse HMI'a dokunmadan konveyör çalıştı. Komut topic'leri **asla** retained olmamalı; komut bir olaydır (event), durum (state) değil. Retain yalnızca state için. Eski zombi mesajı temizlemek: `mosquitto_pub -t "factory/line1/command/start" -r -n` (boş retained mesaj retained'i siler).
+
+**Not 6 — JSON Payload'daki Ondalık Ayraç (Locale) Tuzağı**  
+CODESYS'te `REAL_TO_STRING` çağrısı runtime'ın locale ayarına göre `82,5` (virgül) üretebiliyordu. Bu değer `{"temperature":82,5}` olarak yayınlandı; subscriber tarafı (Node-RED `JSON.parse`) bunu ya hata verdi ya da `82` + ayrı bir `5` alanı olarak yorumladı — sessizce yanlış veri. İnternet üzerinden farklı locale'li sunuculara giden veride saatlerce fark edilmedi. Çözüm: Sayısal payload'ları her zaman nokta ondalık ayraçla, locale-bağımsız formatla üret (manuel string formatlama veya `LREAL_TO_STRING` yerine sabit format fonksiyonu). JSON sayıları daima C-locale'dir; broker payload'ı denetlemez — bu tamamen uygulama sorumluluğudur.
+
+## Edge Case'ler ve Sistem Limitleri
+
+MQTT'nin "basit" görünümü, sınır koşullarında çok sayıda sessiz tuzak barındırır. Aşağıdaki durumlar saha sistemlerinde gerçekten karşılaşılanlardır.
+
+```
+1. Keepalive ve Half-Open (Yarı Açık) Bağlantı Tespiti
+   ──────────────────────────────────────────────────
+   TCP, kabloyu çekince FIN göndermez — broker bağlantının koptuğunu
+   anlamaz. MQTT keepalive bu yüzden var:
+     • İstemci keepalive süresinde mesaj göndermezse PINGREQ yollar.
+     • Broker 1.5 × keepalive boyunca hiçbir paket almazsa bağlantıyı
+       ölü kabul eder → LWT tetiklenir.
+   TUZAK: keepalive=60 → kopuş tespiti 90 saniyeye kadar gecikebilir.
+   Hızlı LWT isteniyorsa keepalive düşürülür (örn. 10-20 sn), ama bu
+   her istemciden düzenli PINGREQ → broker yükü artar.
+   Mobil/4G ağda NAT timeout keepalive'dan kısaysa bağlantı sessizce ölür.
+
+2. Client ID Çakışması (bkz. Not 4)
+   ──────────────────────────────────
+   Aynı Client ID = tek oturum. İkinci bağlanan birinciyi düşürür.
+   Otomatik üretilen rastgele Client ID'ler (clean session) ise
+   her yeniden bağlanmada offline mesaj kuyruğunu KAYBETTİRİR.
+
+3. QoS 1 Duplikasyon (En Az Bir Kez ≠ Tam Bir Kez)
+   ───────────────────────────────────────────────
+   PUBACK ağda kaybolursa istemci aynı mesajı DUP flag'iyle tekrar yollar.
+   Subscriber aynı alarmı 2 kez görür. "Üretim sayacı +1" gibi
+   biriktiren işlemler ÇİFT sayar. Çözüm: payload'a idempotency anahtarı
+   (batch_id, sequence) koy; subscriber daha önce gördüğü ID'yi yok say.
+
+4. Retained Mesaj + Wildcard Subscribe = Açılışta Patlama
+   ──────────────────────────────────────────────────────
+   1000 sensör retained değer tutuyorsa, yeni bir `factory/#` aboneliği
+   açılış anında 1000 mesajı tek seferde alır. Bağlantı/parse darboğazı.
+
+5. Topic ve Payload Boyut Limitleri
+   ─────────────────────────────────
+   Topic max 65535 byte (pratikte kısa tut). Payload teorik max 256 MB
+   ama broker'lar varsayılan limit koyar (Mosquitto message_size_limit).
+   "Tek mesajda 50 MB dosya" göndermek MQTT'nin kullanım amacı değildir.
+
+6. Wildcard'ın Subscribe-Only Oluşu
+   ─────────────────────────────────
+   PUBLISH'te `+` veya `#` KULLANILAMAZ. `factory/+/temp` topic'ine
+   publish denemesi protokol hatasıdır — bazı istemciler sessizce yutar.
+
+7. $SYS ve Rezerve Topic'ler
+   ─────────────────────────
+   `factory/#` aboneliği $SYS topic'lerini KAPSAMAZ (broker bilinçli
+   ayırır). Broker istatistiği için açıkça `$SYS/#` subscribe gerekir.
+
+8. Saat Senkronizasyonu Yok
+   ────────────────────────
+   MQTT'nin payload'a timestamp koyma zorunluluğu yoktur. Broker mesaja
+   zaman damgası eklemez (MQTT 5.0 dışında, o da opsiyonel). Veri sırası
+   ve gecikme analizini uygulama kendi timestamp'iyle çözmek zorunda.
+```
+
+## Optimizasyon
+
+Endüstriyel MQTT'de optimizasyon, "broker'a daha güçlü donanım vermek"ten önce mesaj tasarımı ve QoS disiplini ile yapılır. Uzman önceliği aşağıdaki sıradadır:
+
+```
+ÖNCELİK 1 — QoS'u iş gereksinimine göre düşür (en büyük kazanç)
+  Telemetri akışı QoS 0. Her QoS 1→0 düşüşü mesaj başına PUBACK'i,
+  her QoS 2→1 düşüşü 4 paketi 2'ye indirir. 200 msg/sn sistemde
+  QoS 2→0 geçişi broker CPU'sunu %60 → %8 düşürdü (gerçek ölçüm).
+
+ÖNCELİK 2 — Report-by-exception (yalnızca değişeni yayınla)
+  Sensör değeri değişmediyse yayınlama. 1 sn periyot yerine
+  "deadband: ±0.2°C değişince yayınla" → trafik %70-90 düşebilir.
+  Sparkplug B bunu standart hale getirir (NDATA yalnızca değişen).
+
+ÖNCELİK 3 — Payload'ı küçült
+  Verbose JSON: {"temperature":82.5,"timestamp":1717200000} ~40 byte
+  Anahtar kısalt / binary (Protobuf, Sparkplug B) → %80'e varan azalma.
+  Fabrika LAN'ında önemsiz; 4G/uydu/internet üzerinden faturayı belirler.
+
+ÖNCELİK 4 — Topic kardinalitesini ve retained sayısını sınırla
+  Her retained mesaj broker'ın bellekte ve diskte tuttuğu kalıcı yüktür.
+  Yalnızca state retain et. Telemetri retain=False.
+
+ÖNCELİK 5 — Keepalive'ı senaryoya göre ayarla
+  Stabil LAN: keepalive 60-120 sn (PINGREQ yükü düşük).
+  Hızlı kopuş tespiti gereken kritik sistem: 10-20 sn (LWT hızlı tetiklenir),
+  ama broker'a düzenli ping yükü gelir — denge kur.
+
+ÖNCELİK 6 — Bağlantı sayısını ve clean-session politikasını yönet
+  Binlerce kısa ömürlü bağlantı yerine kalıcı (persistent) bağlantı kullan.
+  Offline mesaj gereken cihazlarda clean_session=False + sabit Client ID;
+  gereksiz yere persistent session tutmak broker belleğini şişirir.
+
+ÖNCELİK 7 — Broker yatay ölçekleme (en son çare)
+  Yukarıdakiler tükendiğinde cluster (EMQX/HiveMQ). Donanım atmadan
+  önce mesaj tasarımını düzeltmek neredeyse her zaman daha ucuzdur.
+
+Genel kural: Önce "ne kadar az mesaj, ne kadar küçük, ne kadar düşük QoS"
+gönderebileceğini sor; broker'ı güçlendirmek son adımdır.
+```
+
+## Derin Teknik Detay
+
+MQTT'nin tasarım kararlarını anlamak, onu doğru kullanmanın anahtarıdır. Protokol 1999'da SCADA için petrol boru hattı telemetrisi (uydu, çok düşük bant genişliği, sık kopan hat) üzerine tasarlandı — bu köken, tüm tasarımı açıklar.
+
+```
+1. Neden Broker-Aracılı Pub/Sub? (Decoupling)
+   ────────────────────────────────────────────
+   İstek-yanıt (Modbus/OPC UA) modelinde gönderen ve alan birbirini
+   bilmek ZORUNDA: IP, port, hazır olma durumu. MQTT broker'ı araya
+   koyarak üç boyutta ayrıştırma (decoupling) sağlar:
+     • Uzay (space): Publisher subscriber'ın adresini bilmez.
+     • Zaman (time): Subscriber offline'ken yayınlanan mesaj (session
+       + QoS 1) sonra teslim edilebilir.
+     • Senkronizasyon: Publisher yayınlayıp işine devam eder, yanıt
+       beklemez (fire-and-forget). İstek-yanıttaki blokaj yoktur.
+   Bedeli: Broker bir SPOF ve ekstra atlamadır (latency + altyapı).
+
+2. Neden LWT + Retained = Broker'ın "Durum Hafızası"
+   ──────────────────────────────────────────────────
+   MQTT istemcileri durumsuz (stateless) olabilir; durumu broker tutar.
+   • Retained: "Bu topic'in SON değeri nedir?" sorusunu broker yanıtlar —
+     yayıncı gitmiş olsa bile. Broker bir nevi son-değer veritabanıdır.
+   • LWT: Broker, istemcinin ölümünü onun adına ilan eder. İstemci
+     "öleceğini" peşinen broker'a söyler; öldüğünde broker konuşur.
+   İkisi birlikte: Broker, bağlı olmayan cihazların güncel durumunu
+   bile yeni gelenlere anlatabilen merkezi bir state machine olur.
+   Bu, OPC UA'nın "sunucuya sor, sunucu ayakta olmalı" modelinin tersidir.
+
+3. Neden Üç QoS Seviyesi? (Teslimat / Overhead Takası)
+   ────────────────────────────────────────────────────
+   Güvenilirlik bedavadır sanılır; değildir. Her garanti seviyesi
+   ek round-trip ve broker state demektir:
+     QoS 0: 0 ek paket, 0 broker state → kayıp mümkün.
+     QoS 1: +1 PUBACK, gönderen mesajı ack gelene dek saklar → duplikasyon.
+     QoS 2: +3 paket, hem gönderen hem broker state machine tutar (PUBREC/
+            PUBREL/PUBCOMP) → tam-bir-kez, ama en yavaş ve en pahalı.
+   Tasarımcılar "tek bir güvenilirlik" dayatmak yerine seçimi uygulamaya
+   bıraktı: telemetride kayıp önemsizken sayaçta felakettir.
+
+4. Neden TCP Üzerinde 2 Byte'lık Sabit Başlık?
+   ─────────────────────────────────────────────
+   Uydu/2G hattında her byte para ve enerjidir. Sabit başlık 2 byte;
+   Remaining Length alanı değişken uzunluklu kodlama (variable-length
+   integer) kullanır — küçük mesajlar 1 byte uzunluk alanıyla geçer.
+   HTTP'nin onlarca satırlık metin başlığına karşı bu, pille çalışan
+   sahada cihazın aylarca dayanmasını sağlayan tasarımdır.
+   Port 1883 (düz) / 8883 (TLS) ayrımı IANA'da rezervedir; TLS handshake
+   ek byte getirir ama transport şifrelemesi başka türlü sağlanamaz
+   (MQTT'nin kendi içinde uygulama katmanı şifrelemesi yoktur).
+
+5. MQTT vs Alternatifler — Neden "Gerçek Zamanlı Değil"
+   ─────────────────────────────────────────────────────
+   MQTT TCP üzerinde çalışır; TCP retransmission ve broker kuyruğu
+   deterministik gecikme vermez. Motion control'ün µs-ms determinizmi
+   MQTT'de YOKTUR — bu yüzden saha kontrolünde EtherCAT/PROFINET kalır.
+   MQTT'nin yeri: "event-driven, hafif, çok-alıcılı, bulut-yerel telemetri".
+   • vs AMQP: AMQP daha zengin kuyruk/routing semantiği ama çok daha ağır.
+   • vs HTTP/REST: REST istek-yanıt + polling; MQTT push + kalıcı bağlantı,
+     binlerce cihazda çok daha verimli.
+   • vs OPC UA: OPC UA semantik + güvenlik + browse; MQTT bunların hiçbirini
+     vermez, bunun yerine sadeliği ve ölçeklenebilirliği verir.
+   Doğru zihinsel model: MQTT bir "taşıma borusu"dur; anlamı (Sparkplug B)
+   ve güvenliği (TLS) protokolün üstüne katman olarak eklersin.
+```
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : OPC-UA Güvenlik Modeli
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/Security/_sec_using_secure_opc_ua_server.html"
     başlık: "CODESYS Online Help — Securely Using the OPC UA Server"
@@ -456,6 +456,56 @@ Kural: Kullanıcı kimliği Username/Password ise
 
 **Not 3 — Rol Tabanlı Erişimin Güvenlik Denetimini Geçmesi**  
 Fabrika, NIS2 direktifi kapsamında güvenlik denetiminden geçti. OPC UA rol tabanlı erişim (her kullanıcının kendi hesabı + minimum izin) denetçilere sistem güvenliği konusunda güven verdi. Modbus tabanlı sistemler "kimlik doğrulama yok" gerekçesiyle daha ayrıntılı incelendi.
+
+**Not 4 — ApplicationUri Uyumsuzluğu ile Gizemli Red**  
+Güvenli bağlantı `Basic256Sha256/SignAndEncrypt` ile kuruldu, sertifika trusted'a alındı, ama sunucu yine `BadCertificateUriInvalid` döndürdü. Saatlerce uğraşıldı. Sebep: istemci sertifikasının içindeki `SubjectAltName/URI` alanı (ApplicationUri) ile bağlantı sırasında gönderilen ApplicationUri birebir eşleşmiyordu. OPC UA spec, bu iki değerin aynı olmasını zorunlu kılar — sertifika kimliğin bağlandığı yer burasıdır. URI'lar eşitlenince anında bağlandı. Ders: sertifika üretirken ApplicationUri'yi uygulama konfigürasyonuyla aynı tut.
+
+**Not 5 — Self-Signed Sertifika Cehennemi ve GDS'e Geçiş**  
+30 istemci × 12 sunucu ortamında her istemcinin self-signed sertifikasını her sunucunun trusted klasörüne elle taşımak (360 işlem) yönetilemez hale geldi. Bir sertifika yenilendiğinde tüm güven ilişkisi bozuluyordu. Çözüm: GDS (Global Discovery Server) ile merkezi CA. Artık tek bir CA'ya güveniliyor, istemci/sunucu sertifikaları o CA tarafından imzalanıyor; trusted listesine yalnızca CA konuyor. Yenileme GDS push'u ile otomatik. PKI ölçeklendiğinde self-signed bitmeli, CA başlamalı.
+
+**Not 6 — None Endpoint Açık Kaldığı İçin Denetimden Kalma**  
+Sunucu `SignAndEncrypt` kullanıyordu ama endpoint listesinde `None` security endpoint'i de açıktı (varsayılan). Bir penetrasyon testçisi `None` endpoint üzerinden anonim browse yapıp tüm adres uzayını döktü. Veri yazamadı ama tüm makine yapısını sızdırdı. Çözüm: `None` endpoint tamamen kapatıldı (`MinSecurityMode=2`). Ders: güvenli endpoint kullanıyor olmak, güvensiz endpoint'in kapalı olduğu anlamına gelmez — ikisi ayrı ayrı yönetilir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+OPC UA güvenliğinde hataların çoğu kriptografi değil, kimlik-eşleşme ve güven-zinciri ayrıntılarından çıkar:
+
+| Edge Case | Tetikleyen | Hata Kodu / Belirti | Çözüm |
+|---|---|---|---|
+| ApplicationUri ≠ sertifika URI | Sertifika/konfig uyumsuzluğu | `BadCertificateUriInvalid` | İkisini eşitle |
+| Hostname ≠ sertifika SAN | IP ile bağlanma, SAN'da yok | `BadCertificateHostNameInvalid` | SAN'a IP+hostname ekle veya `checkDomain=false` |
+| Saat kayması | NTP yok, PLC saati yanlış | `BadCertificateTimeInvalid` | NTP senkronizasyonu |
+| CRL eksik ama EnableCRLChecks=1 | İptal listesi yok | Tüm sertifikalar reddedilir | CRL üret veya kontrolü kapat |
+| None endpoint açık | Varsayılan endpoint listesi | Anonim browse mümkün | `MinSecurityMode=2` |
+| Sign ama şifresiz şifre | Username + Mode=Sign | Şifre imzalı ama açık | `SignAndEncrypt` zorunlu |
+| Sertifika expiry | Kısa ömürlü sertifika | Tüm bağlantı kopar | 5-10 yıl + 30 gün uyarı |
+| Anahtar boyutu uyumsuzluğu | 4096-bit gömülü cihazda | Handshake CPU spike / timeout | Politikaya uygun key size |
+
+Önemli sınır gerçekleri:
+- **Discovery her zaman güvensizdir** (GetEndpoints `None` ile yanıtlar) — bu tasarımdır, açık değildir. Endpoint listesinin kendisi imzalı SecureChannel kurulduktan sonra `GetEndpoints` ile tekrar doğrulanabilir (MITM tespiti için).
+- **Trust tek yönlü değil, çift yönlüdür.** SignAndEncrypt'te sunucu istemci sertifikasına, istemci de sunucu sertifikasına güvenmelidir. Bir taraf güvenmezse bağlantı olmaz. Saha hatalarının yarısı "diğer tarafın trusted'ı" unutulmasıdır.
+- **Sertifika ≠ kullanıcı.** Uygulama sertifikası "hangi yazılım" sorusunu, kullanıcı kimliği "hangi kişi/rol" sorusunu yanıtlar. İkisi bağımsız katmandır; sertifika güveni kullanıcı yetkisini vermez.
+
+## Optimizasyon
+
+Güvenlik optimizasyonu performans değil, *operasyonel sürdürülebilirlik ve doğru güvenlik seviyesi* optimizasyonudur. Öncelik:
+
+1. **PKI'yı ölçeğe göre seç.** Az sayıda düğüm → self-signed + manuel trust kabul edilebilir. Çok düğüm → GDS/CA zorunlu; aksi halde sertifika yönetimi operasyonu kilitler.
+2. **SecurityPolicy'yi donanıma göre seç.** Güçlü sunucuda `Aes256-Sha256-RsaPss`; kaynak-kısıtlı PLC'de `Aes128-Sha256-RsaOaep` daha az CPU yer. Aşırı güçlü politika gömülü cihazda handshake'i ve dolayısıyla bağlantı kurma süresini şişirir.
+3. **SecureChannel'i yeniden kullan, sık yenileme.** Asimetrik kripto yalnızca kanal açılış/yenilemede; simetrik anahtarla devam eder. Kanalı kapatıp açmak yerine uzun ömürlü kanal + makul `ChannelLifetime` (anahtar yenileme) dengesi.
+4. **Endpoint sadeleştirme = saldırı yüzeyi düşürme.** Kullanılmayan tüm Policy/Mode kombinasyonlarını ve özellikle `None` endpoint'i kapat. Daha az endpoint = daha az saldırı yüzeyi + daha hızlı endpoint seçimi.
+5. **En az ayrıcalık (least privilege).** Her uygulamaya kendi kullanıcısı + minimum rol. Tek admin hesabı hem güvenlik hem denetlenebilirlik açığıdır.
+6. **Sertifika ömrü uzun + otomatik uyarı.** Kısa ömür güvenlik kazandırmaz ama kesinti riski yaratır; uzun ömür + 30 gün önceden alarm (PLC log/HMI) doğru dengedir.
+
+## Derin Teknik Detay
+
+**Sign vs SignAndEncrypt — neden ikisi de var?** `Sign`, mesajı imzalar (bütünlük + kimlik) ama şifrelemez (gizlilik yok). Anlamı: veri kurcalanamaz ama okunabilir. Bu mod, gizliliğin önemsiz ama tampering'in kritik olduğu (örn. üretim sayaçları, yüksek throughput gereken iç ağ) durumlarda CPU tasarrufu için vardır — şifreleme/deşifre maliyeti elenir. `SignAndEncrypt` her ikisini de yapar ve üretim varsayılanıdır. Kritik nokta: kullanıcı adı/şifre ile kimlik doğrulanıyorsa `Sign` yetmez, çünkü şifre açık gider; bu yüzden Username + en az `SignAndEncrypt` kuralı vardır.
+
+**SecureChannel anahtar müzakeresi nasıl çalışır?** OpenSecureChannel sırasında her iki taraf nonce üretir; bu nonce'lar ve sertifikalardaki açık anahtarlar kullanılarak simetrik oturum anahtarları türetilir (RSA ile nonce değişimi → simetrik AES anahtarları). Sonraki tüm mesajlar bu simetrik anahtarlarla şifrelenir/imzalanır — asimetrik kripto yalnızca bir kez (ve yenilemede) çalışır. `RenewSecureChannel` periyodik olarak yeni nonce'larla anahtarları yeniler, böylece tek bir anahtarın uzun süre kullanılma riski azalır (forward secrecy benzeri koruma). Bu, TLS'in oturum anahtarı mimarisine paraleldir ama mesaj-seviyesinde çalışır.
+
+**Trust list neden iki ayrı yer: trusted vs issuers?** `trusted/` doğrudan güvenilen peer sertifikaları (self-signed istemci/sunucu sertifikaları) içindir; `issuers/` ise güvenilen CA sertifikalarını tutar ama bu CA tek başına yetki vermez — bir sertifika CA tarafından imzalı *ve* zinciri issuers'tan trusted'a ulaşıyor olmalıdır. Bu ayrım, "CA'ya güveniyorum ama her CA-imzalı sertifikayı otomatik kabul etmiyorum" kontrolünü mümkün kılar. `rejected/` ise henüz karar verilmemiş sertifikaların karantinasıdır; ilk bağlantıda otomatik buraya düşer, yönetici manuel taşır. GDS bu manuel adımı ortadan kaldırır.
+
+**Anonymous SP17 sonrası neden varsayılan kapalı?** OPC UA güvenliği "secure by default" ilkesine doğru evrildi. Eski sürümlerde anonymous + None kolaylık içindi ama saha kurulumlarının büyük kısmı bu varsayılanları üretime taşıyordu. CODESYS SP17+ anonymous'u varsayılan kapatarak, "yapılandırmayı unutursan güvenli kalırsın" modeline geçti. Bedeli: yükseltmede eski anonim istemciler aniden kopar (Not 2'deki felaket); getirisi: yanlış yapılandırma kaynaklı saldırı yüzeyinin kapatılması. Bu, güvenlik ile geriye-uyumluluk arasındaki klasik gerilimin bilinçli çözümüdür.
 
 ## İlgili Konular
 

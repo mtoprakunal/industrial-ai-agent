@@ -1,21 +1,21 @@
 ---
-KONU        : Endüstriyel Protokoller — Karşılaştırmalı Üst Sentez
+KONU        : Endüstriyel Protokoller — Karşılaştırmalı Üst Sentez (Uzman)
 KATEGORİ    : protocols
 ALT_KATEGORI: protocols
-SEVİYE      : Orta
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/protocols/opc-ua/_synthesis.md"
-    başlık: "OPC UA Sentezi"
+    başlık: "OPC UA Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/protocols/modbus-tcp/_synthesis.md"
-    başlık: "Modbus TCP Sentezi"
+    başlık: "Modbus TCP Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/protocols/tcp-socket/_synthesis.md"
-    başlık: "TCP Socket Sentezi"
+    başlık: "TCP Socket Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/protocols/mqtt/_synthesis.md"
-    başlık: "MQTT Sentezi"
+    başlık: "MQTT Sentezi (Uzman)"
     güvenilirlik: deneyimsel
 BAĞLANTILAR :
   - konu: "knowledge/protocols/opc-ua/_synthesis.md"
@@ -53,6 +53,33 @@ BAĞLANTILAR :
 ## Özün Ne
 
 Bu üst sentez, "Elimde bir entegrasyon problemi var — hangi protokolü seçmeliyim ve neden?" sorusunu yanıtlar. Dört protokol alt sentezinin (OPC UA, Modbus TCP, Ham TCP Socket, MQTT) bağımsız olarak anlaşıldığı varsayılarak bu belgede yalnızca aralarındaki **karşılaştırma, seçim rehberi ve gerçek mimari kararlar** sunulur. Aynı sorunu farklı protokollerle çözmenin sonuçları gerçek proje deneyimine dayanır.
+
+**Uzman seviyesinde asıl mesaj:** dört protokol rakip değil, **üç eksende konumlanan** ve **üç ortak ilkeyle yönetilen** araçlardır. Doğru protokolü seçmek (eksen) ile onu sağlam kurmak (ilke) ayrı işlerdir; uzman ikisini birlikte yapar.
+
+---
+
+## Birleştirici İlke: Üç Eksen + Üç Ortak İlke
+
+**Üç eksen** (protokolü SEÇTİREN — "hangisini?"):
+1. **Zenginlik ↔ Basitlik** — OPC UA (zengin model/tip/method) ↔ Modbus (16-bit register) ↔ Ham TCP (ham byte). Daha zengin = daha güçlü ama daha pahalı/karmaşık.
+2. **Güvenlik** — OPC UA (AES+sertifika+auth, yerleşik) ↔ MQTT (TLS opsiyonel) ↔ Modbus/Ham TCP (sıfır → ağ-seviyesi koruma zorunlu).
+3. **Push ↔ Poll** — MQTT (proaktif broker push) ↔ OPC UA (subscription) ↔ Modbus (master poll) ↔ Ham TCP (custom).
+
+**Üç ortak ilke** (protokolü KURAN — "nasıl sağlam?"):
+1. **Veri kaynağı disiplini (tek-yazar)** — Her register/node/topic'in tek yazarı olmalı; çift yön karışırsa setpoint kaybolur (Modbus HR ezme, OPC UA node, MQTT retained komut).
+2. **Bloke-I/O ayrımı** — Ağ çağrıları (TCP connect, MQTT broker bağlantısı, OPC UA session) bloke edebilir; CODESYS'te bunlar Freewheeling/düşük öncelik task'ta kalmalı, ana kontrol döngüsünü dondurmamalı.
+3. **Raporlama ≠ kontrol** — Dördü de raporlama/komuta katmanıdır, gerçek zamanlı kontrol değil. Motion/servo senkronizasyonu fieldbus'ın (EtherCAT/PROFINET) işidir; bu dörtten beklenmez.
+
+| Eksen / İlke | OPC UA | Modbus | Ham TCP | MQTT |
+|---|---|---|---|---|
+| Zenginlik | çok yüksek | düşük | sıfır (byte) | orta (topic) |
+| Güvenlik | AES+auth | yok | yok | TLS ops. |
+| Push/Poll | subscription | poll | custom | broker push |
+| Tek-yazar riski | node çift-yön | HR ezme | — | retained komut |
+| Bloke-I/O | session | — | connect | broker bağlantı |
+| RT mi? | hayır | hayır | hayır | hayır |
+
+**Uzman içgörüsü:** Bir entegrasyon sorununda önce ekseni belirle (yanlış protokol mü seçildi — Modbus'a güvenlik beklemek gibi?), sonra ihlal edilen ortak ilkeyi kontrol et (tek-yazar mı, bloke-I/O mu, gerçek-zaman beklentisi mi?). "SCADA değeri geç görüyor" → çoğunlukla sampling/poll periyodu, ağ değil.
 
 ---
 
@@ -418,6 +445,52 @@ Entegre edilecek cihaz / senaryo:
     Gerçek zamanlı kontrol (< 1ms)?
         → EtherCAT / PROFINET — bu 4 protokolden hiçbiri
 ```
+
+---
+
+## Uzman Edge Case Konsolidasyonu
+
+Alt sentezlerin Derin Teknik Detay / Edge Case bölümlerinden süzülen, dört protokolü kesen kritik tuzaklar:
+
+```
+PROTOKOL  EDGE CASE                        BELİRTİ                  KORUMA / KAYNAK
+──────────────────────────────────────────────────────────────────────────────
+OPC UA    sembol patlaması                 bootapp şişer + açık     sembol seti daralt (05)
+OPC UA    sampling < task cycle            kademeli değer            sampling ≥ cycle (04)
+OPC UA    sertifika expire / saat          toptan kopuş             süre izle + NTP (03)
+OPC UA    NodeId = değişken adı            ad değişince tag kaybı   isimleri "frozen" say (02)
+Modbus    word tearing (DWORD/REAL)        Frankenstein değer       tek FC isteğinde oku (02)
+Modbus    0 vs 1 tabanlı adres             Illegal Data Address     test değeriyle doğrula (03)
+Modbus    HR'ı PLC eziyor                  setpoint kaybolur        HR→GVL tek yön (04)
+Modbus    125-register limiti              istek reddedilir          blok böl (03)
+Ham TCP   1 recv ≠ 1 mesaj                 yarım/birleşik paket     framing + accumulator (01)
+Ham TCP   connect blocking                 task donar, watchdog     Freewheeling task (02)
+Ham TCP   handle sızıntısı                 fd dolar                 her hatada Close (02)
+Ham TCP   half-open (kablo koptu)          ölü bağlantı canlı       keepalive/heartbeat (03)
+MQTT      aynı Client ID                   bağlan-kop döngüsü       benzersiz ID (01)
+MQTT      QoS1 duplikasyon                 çift alarm               idempotency (02)
+MQTT      retained komut                   zombi komut geri gelir   komut retained DEĞİL (01)
+MQTT      LWT yok                          dashboard offline diyemez LWT retained 'false' (02)
+```
+
+---
+
+## Sentez Notları (Uzman)
+
+**Sentez Notu 1 — Eksen Seçer, İlke Kurar**
+Protokol seçimi (üç eksen) ile sağlam kurulum (üç ortak ilke) ayrı işlerdir. Yanlış eksen = baştan yanlış protokol (Modbus'a güvenlik beklemek, MQTT ile setpoint yazmak). İhlal edilen ilke = doğru protokol kötü kurulum (TCP'yi ana task'ta çalıştırmak, Modbus HR'ı ezmek). Uzman önce ekseni doğru seçer, sonra üç ilkeyle sağlamlaştırır.
+
+**Sentez Notu 2 — Tek-Yazar Her Protokolde Tekrar Eder**
+"Tek-yazar" kuralı protokoller arası evrenseldir: Modbus HR'ı PLC ezmemeli (master setpoint yazıyorsa), OPC UA node'unu tek taraf yazmalı, MQTT komut topic'i retained olmamalı (zombi komut). Bu, CODESYS GVL "tek-yazar" disiplininin (programming/_synthesis) ağ katmanına yansımasıdır. Her veri akışında "bu register/node/topic'i kim yazıyor?" sorusu sorulmalı.
+
+**Sentez Notu 3 — Hiçbiri Gerçek Zamanlı Değil**
+OPC UA, Modbus, Ham TCP, MQTT — dördü de raporlama/komuta katmanıdır, kontrol değil. "MQTT ile motor senkronize edeyim" veya "Modbus ile servo kontrol" yanlıştır; gerçek-zaman senkron iş fieldbus'ın (EtherCAT/PROFINET, < 1ms) işidir. Bu sınırı bilmek, ağ protokolünden olmayacak bir performans beklememeyi sağlar (FrostyGoop gibi olaylar da bu katman karışıklığının güvenlik yüzüdür).
+
+**Sentez Notu 4 — Güvenlik Baştan, Test Sonrası Değil**
+En tehlikeli desen: "None"/anonymous/port 502/1883 ile test → unutma → üretim. Modbus'ta hiç güvenlik yok (ağ izolasyonu şart), OPC UA'da None bırakmak PLC'yi açık eder, MQTT'de 1883 açık metin. 2024 FrostyGoop saldırısı tam bu boşluğun fiziksel sonucudur. Güvenlik modu proje başında kararlaştırılmalı; test bitince "kapatmak" yerine üretimden önce "açmak" disiplini kurulmalı.
+
+**Sentez Notu 5 — Endüstride Kombinasyon Hakim**
+Tek protokol nadirdir. OPC UA + Modbus (legacy desteği), OPC UA + MQTT (fabrika-içi kontrol + fabrika-dışı bulut), OPC UA PubSub (MQTT transport) en yaygın çiftler. Her protokol kendi ekseninde en güçlü işi yapar; çakışmazlar çünkü farklı katmanlarda, farklı tüketicilere hizmet ederler. Uzman "tek doğru protokol" aramaz; her veri akışına ekseninde en uygun olanı atar.
 
 ---
 

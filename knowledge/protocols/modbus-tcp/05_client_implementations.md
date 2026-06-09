@@ -2,8 +2,8 @@
 KONU        : Modbus TCP İstemci Implementasyonları
 KATEGORİ    : protocols
 ALT_KATEGORI: modbus-tcp
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.pymodbus.org/docs/tcp-client"
     başlık: "PyModbus Docs — TCP Client"
@@ -940,6 +940,99 @@ while True:
     time.sleep(1)
 # Bağlantı kopsa da otomatik açıyor — reconnect kodu gerekmez.
 ```
+
+**Not 5 — pymodbus 2.x → 3.x Göçü: `unit` → `slave` ve Yapısal Kırılmalar**  
+Bir projeyi pymodbus 2.5'ten 3.x'e yükselttiğimizde tüm `client.read_holding_registers(0, 10, unit=1)` çağrıları sessizce kırıldı: 3.x'te parametre `slave=` oldu, `unit=` artık `TypeError` veriyor. Ayrıca `client.connect()` davranışı, exception sınıfları ve `ModbusTcpClient` import yolu (`pymodbus.client.sync` → `pymodbus.client`) değişti. pymodbus sürümleri arası kırıcı değişiklikler sıktır; production'da sürüm pinlenmeli (`pymodbus==3.6.*`) ve yükseltme öncesi changelog okunmalı.
+
+**Not 6 — Async ile Yanlış Paralellik: Tek Bağlantıda asyncio.gather Tuzağı**  
+Bir async uygulamada 5 farklı register bloğunu `asyncio.gather()` ile "paralel" okumaya çalıştık — aynı `AsyncModbusTcpClient` üzerinde. Sonuç bozuk yanıtlardı: Tek TCP bağlantısında eş zamanlı istekler MBAP Transaction ID ile teorik olarak ayrılabilir ama pymodbus bunu güvenli yapmaz, istekler serileşmeli. `gather` hız kazandırmadı (slave zaten seri işler) ama yarış doğurdu. Çözüm: Tek bağlantıda istekleri `await` ile sıralı yapmak; gerçek paralellik isteniyorsa **farklı slave'lere ayrı bağlantılar**.
+
+**Not 7 — `read_holding_registers` Yanıtının `.registers` Yoksa Çökmesi**  
+pymodbus 3.x'te hata yanıtı bir `ExceptionResponse` nesnesidir ve `.registers` özniteliği **yoktur**. `result.isError()` kontrolü atlanıp doğrudan `result.registers[0]` denildiğinde `AttributeError` ile çöker — bağlantı hatası değil, kod hatası gibi görünür ve yanlış yere bakılır. Her okuma `if result.isError()` ile başlamalı. Bunu bir decorator/wrapper'da merkezi yapmak tüm çağrı yerlerini korur.
+
+**Not 8 — Vendor/Kütüphane Farkı: pyModbusTCP'nin Sessiz None Dönüşü**  
+pyModbusTCP, hata durumunda exception fırlatmaz ve `isError()` de yoktur; `read_holding_registers()` doğrudan `None` döndürür. pymodbus'tan alışkın bir ekip `result.registers` yazınca `NoneType` hatası aldı. İki kütüphanenin hata semantiği taban tabana zıt: pymodbus → `isError()` kontrol et, pyModbusTCP → `if result is None` kontrol et. Kütüphane değiştirilirken tüm hata yolu gözden geçirilmeli.
+
+## Edge Case'ler ve Sistem Limitleri
+
+```
+EDGE CASE                          İSTEMCİ DAVRANIŞI               ÇÖZÜM
+─────────────────────────────────────────────────────────────────────────────
+count > 125 (FC03)                 pymodbus 3.x → Exception        Elle 125'lik blok
+Thread paylaşımlı client           Yarış, "invalid response"       threading.Lock
+Tek bağlantıda async gather        İstekler karışır                Sıralı await
+ExceptionResponse.registers        AttributeError                  isError() kontrol
+Half-open socket                   recv 60-120s donar              App watchdog + timeout
+Çok kısa timeout                   Yüklü ağda yanlış timeout       LAN 1s, WAN 5s
+Reconnect storm                    PLC'yi bunaltır                 Min 5s + backoff
+Nagle + delayed ACK                ~40ms gizli gecikme             TCP_NODELAY
+NaN/Inf float gelmesi              math.isnan kontrolü yoksa sızar isfinite() filtre
+```
+
+**Senkron client thread-safe değildir:**
+pymodbus `ModbusTcpClient` (ve çoğu istemci) bir TCP socket'i sarar; iki thread aynı anda `read`/`write` çağırırsa istekler iç içe girer, MBAP frame'leri karışır, "invalid response" veya yanlış register değeri döner. Tek client'ı çok thread'den kullanırken `threading.Lock` zorunludur — ya da her thread kendi client'ını açar (ama o zaman slave MaxConnections'a dikkat).
+
+**Timeout vs retries etkileşimi:**
+pymodbus `timeout` (yanıt bekleme) ve `retries` (başarısız sonrası tekrar) ayrı parametrelerdir. `timeout=3, retries=3` = en kötü durumda **9 saniye** bloklama (3×3). Polling döngüsünde bu, döngünün takılmasına yol açar. Hızlı döngülerde `retries` düşük (0–1) ve `timeout` makul (1s) tutulmalı; kurtarma, reconnect mantığına bırakılmalı.
+
+**Exponential backoff — reconnect storm önleme:**
+Sabit 5s reconnect yerine artan gecikme (1s, 2s, 4s, 8s... max 30s) hem hızlı kurtarmayı (kısa kesinti) hem PLC'yi korumayı (uzun kesinti) dengeler. PLC reboot'unda istemci 1s'de bir denemek yerine giderek seyrekleşir.
+
+## Optimizasyon
+
+```
+OPTİMİZASYON ÖNCELİĞİ (en yüksek kazanç → en düşük)
+─────────────────────────────────────────────────────────────────
+1. Batch read           : Bitişik registerları tek istekle al
+2. TCP_NODELAY          : Nagle'ı kapat (aşağıdaki kod) — 40ms→2ms
+3. Persistent client    : Döngü içinde connect/close YAPMA
+4. Polling katmanlama    : Değişmeyen veriyi seyrek oku
+5. retries düşük tut     : Hızlı döngüde takılmayı önle
+6. Paralel = ayrı bağlantı: Farklı slave'lere thread/async başına 1 client
+```
+
+**pymodbus'ta TCP_NODELAY:**
+```python
+import socket
+client = ModbusTcpClient('192.168.1.100', port=502, timeout=1)
+client.connect()
+# Underlying socket'e eriş ve Nagle'ı kapat
+if client.socket:
+    client.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    client.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+```
+Küçük Modbus PDU'ları için Nagle, round-trip'i 40ms'ye kadar şişirebilir (delayed ACK ile etkileşim). TCP_NODELAY tek satırla en büyük tekil performans kazancını sağlar.
+
+**Batch read planlama:**
+İstemci, okunacak tüm register adreslerini analiz edip bitişik olanları gruplamalı. 0–20 ve 100–105 iki ayrı isteğe, 0–20 ve 21–40 tek isteğe (0–40) birleşmeli. Aradaki küçük delikleri (örn. 5 register boşluk) tek istekte yutmak, ikinci round-trip'ten daha ucuzdur — kural: delik < ~10 register ise tek istekte birleştir.
+
+**Bağlantı ömrü yönetimi:**
+```python
+# ❌ Döngü içinde connect/close — her tur 1 RTT handshake israfı
+for _ in range(1000):
+    with ModbusTcpClient(host) as c:   # Her tur 3-way handshake
+        c.read_holding_registers(0, 10, slave=1)
+
+# ✅ Tek kalıcı bağlantı, döngü dışında aç
+with ModbusTcpClient(host, timeout=1) as c:
+    while running:
+        c.read_holding_registers(0, 10, slave=1)
+        time.sleep(0.2)
+```
+
+## Derin Teknik Detay
+
+**pymodbus sync vs async mimarisi:**
+Senkron `ModbusTcpClient`, bloklayan bir socket üzerinde istek gönderir ve yanıt gelene (veya timeout) kadar thread'i bloklar. Async `AsyncModbusTcpClient`, asyncio event loop'una entegre olur; `await` sırasında loop başka coroutine çalıştırabilir. Ancak **her iki durumda da tek bağlantı tek seferde tek transaction** işler — async, çok sayıda **farklı** bağlantıyı tek thread'de verimli yönetmek için faydalıdır (100 PLC'yi tek loop'ta poll'lamak), aynı bağlantıda paralellik için değil. Bu, Not 6'daki gather tuzağının kök sebebidir.
+
+**isError() neden exception fırlatmaz:**
+pymodbus, Modbus protokol exception'ını (sunucunun 0x80|FC yanıtı) bir **veri** olarak modeller, Python exception'ı olarak değil. Çünkü 0x02 (yanlış adres) gibi bir exception "program hatası" değil, "beklenen bir protokol yanıtı"dır — istemci buna göre adres düzeltir, akış devam eder. Python `ConnectionException`/`ModbusIOException` ise gerçek **transport** hatalarıdır (socket koptu, frame bozuldu). Bu ayrım kasıtlıdır: Protokol-seviyesi hata `isError()` ile, transport-seviyesi hata `try/except` ile yönetilir. İkisini karıştırmak yanlış kurtarma stratejisi doğurur.
+
+**Buffer/framer katmanı — TCP stream'i frame'e çevirmek:**
+İstemci kütüphanesi, TCP'den gelen byte stream'i MBAP Length alanına göre frame'lere böler (Framer katmanı). `ModbusTcpFramer` Length'i okuyup tam frame toplanana kadar bekler; `ModbusRtuFramer` ise CRC ve timing arar (RTU over TCP için — bkz. 01_protocol_basics.md). Kütüphane seçiminde framer'ın doğru olması, "bağlantı var ama veri parse edilemiyor" sorununun çözümüdür — yanlış framer, doğru byte'ları yanlış sınırlarla böler.
+
+**Connection pooling vs Modbus'un seri doğası:**
+Genel ağ programlamasında "connection pool" performans artırır (paralel istekler havuzdan bağlantı kapar). Modbus'ta bu **tek slave için geçerli değildir**: Slave istekleri seri işler, bir slave'e 5 paralel bağlantı açmak tur süresini bölmez (slave kuyruğa alır), hatta MaxConnections'ı zorlar. Pooling yalnızca **birden çok farklı slave** varken anlamlıdır — her slave'e ayrı kalıcı bağlantı + paralel I/O. Bu, Modbus'un master-poll/stateless tasarımının istemci mimarisine dayattığı temel kısıttır.
 
 ## İlgili Konular
 

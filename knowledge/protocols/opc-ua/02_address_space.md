@@ -2,8 +2,8 @@
 KONU        : OPC-UA Adres Uzayı Tasarımı
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://reference.opcfoundation.org/Core/Part3/v104/docs/4"
     başlık: "OPC Foundation — UA Part 3: Address Space Model"
@@ -457,6 +457,56 @@ B&R Automation üretici firmaya OPC UA DI (Device Integration) uyumlu PLC sattı
 
 **Not 3 — Method'ların Gücü**  
 Reset, Calibrate, StartRecipe gibi operasyonlar artık OPC UA Method ile istemciden çağrılıyor. Eskiden ayrı Modbus register'ları ile "komut register" protokolü tasarlamak gerekiyordu. Method'larla çok daha temiz ve belgeli bir arayüz elde ettik.
+
+**Not 4 — BrowseName vs DisplayName Karışıklığının Entegrasyon Bozması**  
+Bir SCADA entegratörü tag'leri DisplayName ("Motor 1 Hız") ile path'leyince entegrasyon başka bir lokalizasyon kurulumunda bozuldu — DisplayName lokalize (LocalizedText) ve değişebilir; BrowseName ise QualifiedName (namespace + sabit string) ve API kontratının parçasıdır. Çözüm: BrowsePath/RelativePath daima BrowseName ile kurulur, DisplayName yalnızca operatöre gösterilir. Bu ayrımı netleştirdikten sonra "Türkçe HMI'da çalışıyor, İngilizce'de bozuluyor" sınıfı hatalar bitti.
+
+**Not 5 — TranslateBrowsePathsToNodeIds ile NodeId Kırılganlığını Aşmak**  
+String NodeId'leri (`ns=4;s=...`) tüm istemcilere gömmek runtime adı değişince yüzlerce tag'i bozuyordu. Çözüm: istemci başlangıçta bilinen BrowsePath'lerden (`/Objects/PackagingLine1/ConveyorUnit/Speed`) `TranslateBrowsePathsToNodeIds` servisiyle NodeId'leri runtime'da çözüp cache'ledi. Path semantik olarak sabit; NodeId fiziksel olarak değişse de path aynı kalıyor. Bu, NodeId kırılganlığına karşı en sağlam endüstriyel desen oldu.
+
+**Not 6 — Struct (ExtensionObject) Okumada DataTypeDefinition Eksikliği**  
+Bir CODESYS struct'ı (MotorStatus) okurken eski bir istemci alanları çözemedi, ham byte aldı. Neden: istemci sunucudan tip tanımını (DataTypeDefinition / BSD/binary type description) almamıştı; struct'lar self-contained değildir, decode için tip şeması gerekir. asyncua'da `load_data_type_definitions()` çağrılınca alanlar isimleriyle geldi. Custom struct kullanan her projede tip yükleme adımı zorunlu kontrol listesine girdi.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Adres uzayının sınırları çoğunlukla "node sayısı" değil, "node'ların nasıl çözüldüğü ve serileştirildiği" ile ilgilidir:
+
+| Edge Case | Davranış | Risk | Önlem |
+|---|---|---|---|
+| Namespace index ≠ NodeId sabitliği | Index kuruluma/restart sırasına göre değişebilir | Hardcoded `ns=4` bozulur | URI'dan dinamik çöz |
+| NamespaceArray sırası | ns=0 sabit, geri kalan sunucu yüklemesine bağlı | İndeks kayması | NamespaceArray oku, eşle |
+| Symbol explosion | Binlerce node = devasa adres uzayı | Browse yavaş + saldırı yüzeyi | Yalnızca gerekli node'u yayınla |
+| Döngüsel referans (cyclic) | Browse sonsuz döngüye girebilir | İstemci asılır | Derinlik limiti + ziyaret seti |
+| ExtensionObject (struct) | Decode için DataTypeDefinition şart | Ham byte / `Bad` | Tip tanımı yükle |
+| String NodeId byte limiti | Çok uzun string NodeId reddedilir | `BadNodeIdInvalid` | NodeId'leri kısa tut |
+| Modelling rule (Mandatory/Optional) | Instance'da Optional üyeler eksik olabilir | Beklenen node yok | Tip yerine instance browse et |
+| AccessLevel vs UserAccessLevel | İlki tipsel, ikincisi kullanıcıya özel | Yazma "izin yok" döner | UserAccessLevel kontrol et |
+
+Kritik sınır davranışları:
+- **NodeId stabilitesi = API kontratı.** Bir NodeId yayımlandıktan sonra değiştirmek, REST API'de endpoint'i sessizce değiştirmek gibidir. String NodeId'ler CODESYS'te runtime adına bağlıdır; bu yüzden ya custom namespace kullanılır ya da BrowsePath ile çözülür.
+- **Property yaprak olmak zorunda.** Property'ye alt node bağlamak spec ihlalidir; bazı istemciler bunu tolere etmez. Hiyerarşi taşıyacak metadata DataVariable olmalıdır.
+- **Symbol explosion bir güvenlik konusudur.** Her açılan node hem keşif yüzeyi hem potansiyel yazma hedefidir; gereksiz iç değişkenleri yayınlamak bilgi sızıntısı ve saldırı yüzeyi yaratır.
+
+## Optimizasyon
+
+Adres uzayı optimizasyonu iki cephededir: tasarım-zamanı (model boyutu) ve çalışma-zamanı (erişim deseni). Öncelik sırası:
+
+1. **NodeId'yi BrowsePath ile bir kez çöz, sonra cache'le.** Her döngüde browse/translate yapmak ağır servis çağrısıdır. Başlangıçta çöz, `Node` nesnesini ve çözülmüş NodeId'yi sakla; sonraki tüm Read/Write doğrudan NodeId ile gider.
+2. **Toplu Read/Write.** Tek servis çağrısında onlarca node oku; round-trip maliyeti node sayısından bağımsız hale gelir.
+3. **Adres uzayını küçük tut.** Yalnızca gerçekten dışarıya gereken node'ları yayınla. Daha küçük adres uzayı = daha hızlı browse, daha az bellek, daha küçük saldırı yüzeyi. "Her ihtimale karşı her şeyi aç" anti-deseni hem performans hem güvenlik borcudur.
+4. **Tip tanımlarını (ObjectType) kullan.** Instance'ları tipten türetmek, istemcinin tek seferde tipi öğrenip tüm instance'lara uygulamasını sağlar; tekrarlı browse'u azaltır ve modeli kompaktlaştırır.
+5. **Derin hiyerarşi yerine dengeli hiyerarşi.** 10 seviye derin ağaç browse'u yavaşlatır; 3-4 seviye + anlamlı gruplama hem okunur hem hızlıdır.
+6. **DataType cache'leme.** Struct okurken DataTypeDefinition'ı bir kez yükle; her okumada tip şeması sorgulamak gereksizdir.
+
+## Derin Teknik Detay
+
+**NodeId neden bu kadar merkezi?** OPC UA'da her şey — node, tip, referans hedefi — bir NodeId ile adreslenir. NodeId, namespace index + identifier (numeric/string/guid/opaque) çiftidir. Numeric NodeId'ler en kompakt ve hızlı çözülenidir (sabit standart node'lar için ideal: `i=2253`); string NodeId'ler insan-okunur ama daha büyük ve genelde uygulama tarafından üretilir (CODESYS `s=|var|...`); GUID'ler global benzersizlik ister (cihazlar arası taşınabilir kimlik için). Bu çeşitlilik bilinçlidir: standart altyapı numeric ile sıkıştırılır, uygulama esnekliği string/guid ile sağlanır. Numeric NodeId çözümü sunucuda genelde hash/dizi araması iken string çözümü string karşılaştırması gerektirir — bu yüzden çok-erişilen node'lar için numeric tercih edilir.
+
+**Referanslar neden çift-yönlü tutulur?** Her Reference hem kaynağında (forward) hem hedefinde (inverse) saklanır: `Motor1 --HasComponent--> Speed` aynı zamanda `Speed --ComponentOf--> Motor1` olarak gezilebilir. Bu, adres uzayını gerçek bir graf yapar; istemci yukarı, aşağı veya yana gezebilir. Maliyeti bellek (her ilişki iki yerde), getirisi keşfedilebilirlik. ReferenceType'ların kendisi de adres uzayında node olarak tanımlıdır (ns=0 altında HierarchicalReferences ağacı), yani ilişki türleri de self-describing'dir.
+
+**HasTypeDefinition: instance ile tip arasındaki köprü.** Her Object/Variable instance'ı bir `HasTypeDefinition` referansıyla tipine (ObjectType/VariableType) bağlanır. İstemci bu referansı izleyerek "bu bir MotorType örneği" bilgisini alır ve tipte tanımlı tüm üye yapısını önceden bilir. Bu, nesne-yönelimli kalıtımın adres uzayı karşılığıdır ve companion specification'ların temelidir: bir robot, OPC 40010'daki standart tipe `HasTypeDefinition` ile bağlandığında, o spec'i bilen her istemci robotu otomatik anlar.
+
+**Modelling rules: tip neden instance'ı tam belirlemez?** ObjectType üyeleri `Mandatory` veya `Optional` modelling rule taşır. Bu yüzden tipte görünen bir üye, belirli bir instance'da olmayabilir. Tip-tabanlı kod yazmanın tuzağı budur: kod tipe göre yazılır ama gerçekte instance browse edilmeli. Bu esneklik, aynı tipin farklı donanım varyantlarında (opsiyonel sensörlü/sensörsüz) kullanılabilmesini sağlar — alternatifi her varyant için ayrı tip tanımlamak olurdu.
 
 ## İlgili Konular
 

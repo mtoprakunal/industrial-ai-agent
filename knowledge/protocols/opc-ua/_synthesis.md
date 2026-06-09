@@ -2,8 +2,8 @@
 KONU        : OPC UA — Sentez
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : Orta-İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/protocols/opc-ua/01_architecture.md"
     başlık: "OPC UA Mimari Yapısı"
@@ -55,6 +55,39 @@ BAĞLANTILAR :
 ## Özün Ne
 
 Bu sentez, "OPC UA'yı teoriden CODESYS server kurulumuna ve Python/JS client kullanımına kadar bir bütün olarak nasıl anlarım?" sorusuna yanıt verir. Altı belge bir zincir oluşturur: Mimari (nedir, neden), Adres Uzayı (veri nasıl temsil edilir), Güvenlik (kimler erişebilir, nasıl şifrelenir), Subscription (değişimler nasıl iletilir), CODESYS Server Config (sunucu nasıl kurulur), Client Implementasyonları (Python/JS/.NET ile nasıl bağlanılır). Bu zincir anlaşılmadan parçaları doğru uygulamak mümkün değildir; anlaşılınca endüstriyel entegrasyonların büyük çoğunluğu çözümlenir.
+
+### Birleştirici İlke: OPC UA Nedir, Ne Değildir
+
+Tüm altı belgenin altında yatan tek bir mühendislik kimliği vardır. OPC UA, **zengin, güvenli, iki yönlü bir raporlama/komut katmanıdır — gerçek zamanlı kontrol katmanı değildir.** Bu cümleyi kabul etmek, doğru kararların yarısını otomatik verir. Bu kimlik beş ilkeye dağılır ve her belge bu ilkelerin bir yüzüdür:
+
+```
+1. RAPORLAMA/KOMUT KATMANI, RT KONTROL DEĞİL  (01)
+   OPC UA PLC ile SCADA/MES/bulut arası anlamlı veri taşır.
+   Determinizm ve <1ms döngü EtherCAT/PROFINET'in işidir.
+   → "OPC UA'yı motion control için kullanma" buradan çıkar.
+
+2. SUBSCRIPTION > POLLING  (04)
+   Sunucu örnekler, biriktirir, değişimde iter; istemci sormaz.
+   Sampling (sunucu içi) ile Publishing (ağ teslimi) ayrı saatlerdir.
+   → İzleme = daima subscription; Read = anlık tek-okuma.
+
+3. NodeId STABİLİTESİ = API KONTRATI  (02, 05)
+   Yayımlanan bir NodeId değişmemeli; değişirse tüm istemci kırılır.
+   String NodeId runtime adına bağlı (kırılgan) → BrowsePath/custom NS ile çöz.
+   → Namespace index'i daima URI'dan dinamik al, hardcode etme.
+
+4. SERTİFİKA KARŞILIKLI GÜVEN  (03)
+   Güvenlik mesaj-seviyesidir (UASC), çift yönlü trust gerektirir.
+   SecureChannel (kripto) ≠ Session (uygulama) ≠ Subscription (veri).
+   → Üretim = SignAndEncrypt + kullanıcı kimliği + en az ayrıcalık.
+
+5. INFORMATION MODEL = ASIL DEĞER  (02)
+   Veri kendini tanımlar (DataType, birim, ilişki, tip adres uzayında).
+   Bu fark OPC UA'yı "pahalı Modbus"tan ayıran şeydir.
+   → Sembol patlaması hem keşif gücü hem saldırı yüzeyidir; dengele.
+```
+
+Bir tasarım kararı bu beş ilkeden biriyle çelişiyorsa neredeyse kesinlikle yanlıştır: OPC UA'yı RT kontrol için zorlamak (1), polling döngüsü kurmak (2), NodeId hardcode etmek (3), None mode bırakmak (4), her şeyi flat yayınlamak (5) — sahadaki hataların kök listesi budur.
 
 ## Nasıl Çalışır
 
@@ -269,6 +302,58 @@ Sensör / Aktüatör
 | Performans | Orta | Yüksek | En yüksek |
 | OPC Foundation sertifikasyon | Hayır | Hayır | Evet |
 | En iyi kullanım | Script, IoT, data analiz | Web HMI, Node-RED | Enterprise, WinForms |
+
+### F. Konsolide Edge-Case ve Limit Tablosu (Uzman)
+
+Altı belgenin edge-case bölümlerinin tek bakışta özeti. Saha hatalarının kök nedenleri katmanlara göre:
+
+| Katman | Edge Case | Belirti / Hata Kodu | Önlem | Belge |
+|---|---|---|---|---|
+| Transport | `MaxMessageSize`/`MaxChunkCount` | `BadEncodingLimitsExceeded` | Sayfalama + ContinuationPoint | 01 |
+| Transport | SecureChannel idle timeout | Uzun idle'da kopma | Periyodik read / keepalive | 01 |
+| Adres uzayı | Namespace index oynar | Hardcoded `ns=4` bozulur | URI'dan dinamik çöz | 02 |
+| Adres uzayı | RuntimeName NodeId'de | Platform değişince tag bozulur | Custom NS / BrowsePath | 02, 05 |
+| Adres uzayı | Struct decode (ExtensionObject) | Ham byte / `Bad` | DataTypeDefinition yükle | 02 |
+| Adres uzayı | BrowseName ≠ DisplayName | Lokalizasyonda bozulur | Path'te BrowseName kullan | 02 |
+| Güvenlik | ApplicationUri ≠ sertifika URI | `BadCertificateUriInvalid` | İkisini eşitle | 03 |
+| Güvenlik | Hostname ≠ SAN | `BadCertificateHostNameInvalid` | SAN'a ekle / checkDomain | 03 |
+| Güvenlik | Saat kayması | `BadCertificateTimeInvalid` | NTP senkronizasyonu | 03 |
+| Güvenlik | None endpoint açık | Anonim browse mümkün | `MinSecurityMode=2` | 03 |
+| Güvenlik | SP17+ anonymous kapalı | Eski istemci kopar | Kullanıcı kimliği geçir | 03 |
+| Subscription | Revised parametre | Zamanlama sapması | Revised* oku/kullan | 04 |
+| Subscription | Publish Request açlığı | Bildirim gecikmesi | Pipeline derinliği artır | 04 |
+| Subscription | Sampling=0 | CPU spike / watchdog | Daima açık değer | 04, 05 |
+| Subscription | Queue overflow sessiz | Veri kaybı | Overflow status izle | 04 |
+| Subscription | Yanlış DataChangeFilter Trigger | Sessiz veri kaybı | `StatusValue` kullan | 04 |
+| CODESYS sunucu | `MaxSessions=0` | DoS / kaynak tükenmesi | Sonlu limit | 05 |
+| CODESYS sunucu | Lisans node/session limiti | Sessiz eksik yayın | Lisansı doğrula | 05 |
+| CODESYS sunucu | OnlineChange + Symbol | Subscription `Bad`'a düşer | Planlı download + reconnect | 05 |
+| CODESYS sunucu | PKI klasör yolu sürümle değişti | Trust işe yaramaz | Doğru yolu doğrula | 05 |
+| Client | Handler'da blocking (asyncio) | Tüm istemci donar | queue + run_in_executor | 06 |
+| Client | Sync API + eşzamanlılık | Thread pool tükenir | Async + batch | 06 |
+| Client | Çift reconnect mantığı | Hayalet MonitoredItem | SDK reconnect'ine güven | 06 |
+| Client | Session/sub temizlenmez | Sunucu kotası dolar | Context manager + cleanup | 06 |
+
+### G. Uzman Optimizasyon Sıralaması (Bütünsel)
+
+Tüm katmanlarda en yüksek kazanç → en düşük. Sıra önemlidir: üsttekiler hem daha büyük etki yapar hem de alttakileri anlamsız kılabilir.
+
+```
+1. Polling yerine Subscription            (04) — en büyük tek kazanç; trafik %90 düşer
+2. Toplu Read/Write/CreateMonitoredItems  (06,02) — round-trip N→1
+3. SecureChannel + Session yeniden kullan (01,03) — asimetrik kripto bir kez
+4. Hıza göre subscription ayır (Fast/Med/Slow) (04) — gereksiz publishing yok
+5. DeadBand filtre (analog)               (04) — gürültü kaynaklı bildirimi keser
+6. Adres uzayını sadeleştir               (02,05) — browse hızı + saldırı yüzeyi
+7. NodeId'yi BrowsePath ile çöz + cache'le (02) — kırılganlık + overhead biter
+8. OPC UA task'ını CPU-pin et             (05) — kontrol jitter'ını korur
+9. MinSamplingInterval kelepçesi (sunucu) (05) — istemciye güvenme
+10. PubSub'a geç (çok-abone)              (01) — sunucu yükü istemciden bağımsız
+11. UA Binary kodlama bırak               (01,06) — JSON/XML 3-5x büyük
+12. Endpoint/Policy sadeleştir            (03) — saldırı yüzeyi + seçim hızı
+```
+
+Anti-optimizasyon: OPC UA'yı RT kontrol seviyesinde hızlandırmaya çalışmak (yanlış katman); handler'ı bloklamak (tüm pipeline durur); her işlemde connect/disconnect (kripto tekrarı); "her ihtimale karşı her şeyi yayınla" (performans + güvenlik borcu).
 
 ## Pratikte Nasıl Kullanılır
 
@@ -503,6 +588,12 @@ Robot OEM'i OPC 40010 (Robotics Companion Spec) uyumlu server sundu; SCADA istem
 
 **Not 7 — PubSub ile 50 PLC Yönetimi**
 50 PLC'nin her birini ayrı OPC UA client/server olarak yönetmek operasyonel yük oluşturuyordu. OPC UA PubSub (MQTT transport) eklendikten sonra tüm PLC'ler broker'a yayınladı, SCADA tek noktadan abone oldu. 50 farklı bağlantı yönetimi yerine 1 broker bağlantısı — bakım süresi %80 azaldı.
+
+**Not 8 — Üç Katmanın Bağımsızlığının Kesintiyi Kurtarması** *(01+04+06 kesişimi)*
+Bir hatta NAT timeout yüzünden TCP bağlantısı her ~10 dakikada bir kopuyordu; başlangıçta her kopma yeni session + yeni subscription üretiyor, dakikalar içinde `MaxSubscriptions` doluyordu. Çözüm üç katmanı (SecureChannel ≠ Session ≠ Subscription) doğru kullanmaktı: yeni SecureChannel aç → `ActivateSession` ile eski Session'a dön → subscription'lar yaşadığı için `Republish` ile eksik `sequenceNumber`'ları al. Veri kaybı sıfıra indi, kota dolması bitti. Bu, OPC UA'nın katmanlı dayanıklılığının pratik karşılığıydı (Birleştirici İlke 4'ün operasyonel yüzü).
+
+**Not 9 — ApplicationUri/Sertifika Eşleşmesinin Üç Tarafta da Tutarlı Olması** *(03+05+06 kesişimi)*
+Bağlantı kurulmuyordu (`BadCertificateUriInvalid`) ve sorun yalnızca istemcide sanıldı. Gerçekte tutarlılık üç yerde birden gerekiyordu: istemci sertifikasının SAN/URI'si, istemci uygulama konfigürasyonundaki ApplicationUri ve sunucunun trusted listesindeki kayıt. Üçü hizalanınca bağlandı. Ders: OPC UA güvenliği bir "zincir"dir; tek tarafı düzeltmek yetmez, kimlik tüm uçlarda aynı olmalı (Birleştirici İlke 4).
 
 ## İlgili Konular
 

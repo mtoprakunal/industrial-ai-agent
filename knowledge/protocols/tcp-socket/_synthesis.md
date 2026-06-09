@@ -2,8 +2,8 @@
 KONU        : TCP Socket — Sentez
 KATEGORİ    : protocols
 ALT_KATEGORI: tcp-socket
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/protocols/tcp-socket/01_basics.md"
     başlık: "TCP Socket Temelleri"
@@ -125,6 +125,31 @@ TCP socket programlama üç bağımsız soruya yanıt arar ve her belge bir soru
 
 Bu üç soruya aynı anda hakimsen çalışan, üretim ortamına hazır bir TCP iletişim katmanı yazabilirsin.
 
+### Birleştirici İlke: Ham TCP En Alt Katmandır
+
+Tüm bu klasörü tek bir cümleye indirgemek gerekirse: **Ham TCP, protokol yığınının en alt seviyesidir ve yalnızca standart protokoller (Modbus TCP, OPC UA, MQTT) probleme uymadığında inilmesi gereken yerdir.** Standart bir protokol konuşabiliyorsan onu kullan; ham TCP'ye inmek, hazır altyapının sana verdiği framing, hata tespiti ve araç ekosistemini (Modbus Poll, UaExpert) elinle yeniden inşa etmek demektir. Bu inşa dört zor problemi sırasıyla sana bırakır:
+
+```
+1. TCP bir byte STREAM'dir, mesaj değildir.
+   → "1 send ≠ 1 recv", "1 recv ≠ 1 mesaj". Framing'i SEN kurarsın
+     (SOH + LENGTH + CHECKSUM + akümülatör). Bu en temel ve en sık atlanan gerçektir.
+
+2. Blocking connect + state machine + handle yönetimi = en zor kısım.
+   → connect() PLC scan'ini dondurur (watchdog). Asenkron bağlantı yaşam döngüsünü
+     senkron scan'e bir durum makinesiyle sıkıştırırsın. Her handle sızıntısı
+     gömülü runtime'ı kademeli öldürür.
+
+3. Asenkron I/O, senkron scan'e sıkıştırılır.
+   → recv/accept non-blocking; her scan "yapabileceğin küçük adımı at, durumu kaydet,
+     dön" mantığıyla çalışır. Bekleme yok, döngü yok — sadece durum geçişleri.
+
+4. Bağlantının canlılığı yalan söyleyebilir.
+   → "connected" görünen half-open bağlantı; "send başarılı" ≠ "karşı taraf aldı".
+     Keep-alive + uygulama heartbeat ile gerçeği doğrularsın.
+```
+
+Bu dört problemi çözen disiplin (framing, state machine, handle yönetimi, canlılık doğrulama) ham TCP'nin tüm zorluğudur. Standart protokoller bunları senin yerine çözdüğü için "kolay" görünür; ham TCP'de hepsi yeniden senin sorumluluğundur.
+
 ## Hızlı Referans Tabloları
 
 ### A. CODESYS SysSock API — Fonksiyon Özeti
@@ -187,6 +212,60 @@ Değer: 0x01     1-255   tip      Hi     Lo     N byte     XOR
 | `= 0` | EOF: Karşı taraf bağlantıyı kapattı | `eState := eDisconnected` |
 | `< 0` (non-blocking) | Veri yok, döngüye devam et | Hiçbir şey yapma, bekle |
 | `< 0` (blocking) | Gerçek hata | `eState := eFault` |
+
+### F. Konsolide Edge-Case Tablosu (Üç Katman Birden)
+
+Bu tablo, üç belgenin sınır durumlarını tek yerde birleştirir; sahada "açıklanamayan" arızaların büyük kısmı burada listelidir.
+
+| Katman | Edge Case | Kök Neden | Doğru Davranış |
+|---|---|---|---|
+| TCP | `recv()` = 0 | Karşı taraf FIN gönderdi (graceful) | EOF → yeniden bağlan (hata değil) |
+| TCP | Kısmi recv / birleşik mesaj | Stream; segment ≠ mesaj sınırı | Akümülatör + framing zorunlu |
+| TCP | Kısmi `send()` | TX buffer doldu | Kalan byte için send-loop |
+| TCP | Half-open ("connected" yalanı) | Kablo/güç kesildi, FIN yok | Keep-alive + uygulama heartbeat |
+| TCP | TIME_WAIT (restart bind reddi) | 2×MSL kapanış beklemesi | `SO_REUSEADDR` (bind öncesi) |
+| TCP | Nagle + delayed-ACK gecikmesi | Küçük paket biriktirme | Komut-yanıtta `TCP_NODELAY` |
+| TCP | Listen backlog taşması | Eşzamanlı bağlantı fırtınası | backlog artır, scan'de çoklu accept |
+| CODESYS | connect() task'ı dondurdu | SysSockConnect her zaman blocking | Freewheeling/Background task |
+| CODESYS | recv ≤ 0 ile reconnect | -1 (veri yok) ≠ 0 (EOF) karıştırma | Üç durumu ayrı ele al |
+| CODESYS | "Create failed" / kademeli ölüm | Handle sızıntısı (havuz doldu) | Her yolda Close + `RTS_INVALID_HANDLE` |
+| CODESYS | Online change sonrası ölü handle | Handle persistent değil | Reset sonrası bağlantıyı yeniden kur |
+| Protokol | Data içinde SOH (0x01) | SOH data'da da geçebilir | SOH + header + checksum üçlü doğrulama |
+| Protokol | Saçma LENGTH (0xFFFF) → kilit | Bozuk byte / EMI | LENGTH > MAX_PAYLOAD → desync kurtarma |
+| Protokol | Checksum hatası | EMI / bit bozulması | SOH atla, yeniden senkronize et |
+| Protokol | Reconnect'te yarım frame | Eski buffer artığı | Akümülatörü temizle |
+| Protokol | Native endian kırılması | Mimari değişti | Her zaman big-endian serialize |
+
+## Optimizasyon — Uzman Önceliklendirmesi
+
+Ham TCP'de optimizasyon, mikro-ayarlardan önce **doğru stratejik kararlar** demektir. Etki büyüklüğüne göre, en yüksekten en düşüğe sıralı:
+
+```
+1. KALICI BAĞLANTI (en büyük kazanç):
+   Her mesajda connect/close yerine bir kez bağlan, sürekli kullan.
+   Mesaj başına 6 paket overhead → 0. Diğer her şeyden önce gelir.
+
+2. BLOCKING connect'i SCAN'DEN AYIR (PLC'de hayati):
+   connect() Freewheeling/Background'a. Watchdog'u önler, scan jitter'ını sıfırlar.
+   Performans değil, mimari doğruluk meselesi.
+
+3. TASK AYRIMI (GVL köprüsü):
+   TCP yönetimi Background, kontrol Task_Control. Kontrol socket gecikmesinden izole.
+
+4. TCP_NODELAY (komut-yanıt) — toplu transferde KAPATMA:
+   Küçük paketlerde 40-200ms delayed-ACK gecikmesini siler.
+
+5. DOĞRU FRAMING + KOMPAKT PAYLOAD:
+   Binary'de length-prefix; REAL yerine scaled-integer (×10/×100). Az byte, deterministik parse.
+
+6. SysSockSelect + BÜYÜK recv BUFFER:
+   Çok bağlantıda tek select; scan başına az sayıda büyük recv. Runtime geçişlerini düşürür.
+
+7. AKÜMÜLATÖR VERİMLİLİĞİ + CRC LUT:
+   Frame tüketince ring/offset (sürekli MEMCPY yerine); CRC-16 için tablo araması.
+```
+
+Kural: 1-3 her projede uygulanır (stratejik). 4-7 yük profiline göre (komut-yanıt mı, throughput mu, çok-istemci mi) seçilir.
 
 ## Pratikte Nasıl Kullanılır
 
@@ -429,7 +508,16 @@ Test aşamasında server PLC sık sık restart ediliyordu. Her restart'tan sonra
 V1 MSG_DATA 8 byte'tı; V2'de 12 byte'a çıktı. Eski V1 istemciler hâlâ bağlıydı. VER alanı sayesinde: V2 sunucu, VER=1 gelen istemcilere 8-byte yanıt, VER=2'ye 12-byte yanıt verdi. 6 ay boyunca iki versiyon aynı anda sorunsuz çalıştı. Versiyonsuz bir protokolde bu geçiş sistemi durdurmadan yapılamazdı.
 
 **Not 7 — CRC-16 Geçişinin Değeri**  
-Başlangıçta tek byte XOR checksum yeterliydi. EMI'dan etkilenen bir kablo hatalı veri gönderdi; XOR yakalamadı, hatalı komut işlendi. CRC-16'ya geçildi. Fabrika ortamında: Güçlü elektromanyetik gürültü kaynakları (motor sürücüler, kaynak makineleri) varsa CRC-16 tercih et.
+Başlangıçta tek byte XOR checksum yeterliydi. EMI'dan etkilenen bir kablo hatalı veri gönderdi; XOR yakalamadı, hatalı komut işlendi. CRC-16'ya geçildi. Fabrika ortamında: Güçlü elektromanyetik gürültü kaynakları (motor sürücüler, kaynak makineleri) varsa CRC-16 tercih et. XOR'un doğrusallığı, EMI'nin tipik burst (ardışık bit) bozulmasını birbirini götürerek sessizce kaçırır; CRC polinom bölmesi burst hatalarını yüksek olasılıkla yakalar (`03_custom_protocol_design.md` → Derin Teknik Detay).
+
+**Not 8 — Nagle/Delayed-ACK: Açıklanamayan 40ms Gecikme**  
+İki PLC arası küçük komut paketlerinde yanıt süresi LAN <1ms beklenirken 40-200ms'ye fırlıyordu. Suçlu, Nagle algoritmasının küçük paketleri biriktirmesi ile karşı tarafın delayed-ACK'i (40-200ms) arasındaki kilitlenmeydi. `TCP_NODELAY` (SysSockSetOption) ile Nagle kapatıldı; gecikme LAN seviyesine indi. Komut-yanıt (ping-pong) trafiğinde Nagle neredeyse her zaman kapatılmalı; yalnızca büyük binary throughput'ta açık bırakılır (`01_basics.md` → Not 4, Optimizasyon).
+
+**Not 9 — LENGTH Alanı Kendi Kendine DoS**  
+Bozuk bir byte LENGTH'i 0xFFFF okuttu; parser 65535 byte bekleyip kilitlendi, gerçek veri arkada birikti. Çözüm: LENGTH okunur okunmaz `> MAX_PAYLOAD` makullük kontrolü, aşılırsa SOH atla + desync kurtarma. LENGTH'e körlemesine güvenmek, saldırgan olmasa bile EMI nedeniyle parser kilidine yol açar (`03_custom_protocol_design.md` → Not 5, Edge Case'ler).
+
+**Not 10 — FIONBIO connect()'i Etkilemez Tuzağı**  
+"Socket'ı non-blocking yaptım, connect de non-blocking olur" varsayımıyla connect Task_Control'e kondu; erişilemeyen IP'de tüm task dondu. SysSockConnect, FIONBIO'dan bağımsız olarak senkron çalışır — altdaki RTOS'larda non-blocking connect'in taşınabilir olmamasının ürünü. "connect ayrı task" bir tavsiye değil mimari zorunluluktur (`02_codesys_implementation.md` → Not 4, Derin Teknik Detay).
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : Modbus TCP Protokol Temelleri
 KATEGORİ    : protocols
 ALT_KATEGORI: modbus-tcp
-SEVİYE      : Temel
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://flowfuse.com/blog/2026/02/modbus-tcp-vs-modbus-rtu/"
     başlık: "FlowFuse — Modbus TCP vs Modbus RTU: Reliability, Latency, and Failure Modes"
@@ -364,6 +364,121 @@ Bir enerji sayacı projemizde standart pymodbus Modbus TCP istemcisiyle bağland
 
 **Not 3 — Polling Döngüsünün Tasarımı**  
 Bir SCADA sisteminde 50 Modbus slave'i tek master'dan sorgulanıyordu. Her cihaz için 10 register, 50ms timeout = 500ms/cihaz × 50 cihaz = 25 saniye tam tur. Bazı kritik değerlerin güncellenmesi 25 saniye sürebiliyordu. Çözüm: Kritik cihazlar önce, az değişen cihazlar seyrek sorgulandı. Döngü 8 saniyeye indi.
+
+**Not 4 — Transaction ID Sıfır Gönderen İstemci**  
+Bir gateway arkasındaki cihaz tüm yanıtlarda Transaction ID = 0 döndürüyordu. Tek istek/tek yanıt senaryosunda sorun yoktu. Ancak iki Modbus isteğini pipeline (yanıt beklemeden) gönderen bir kütüphane kullanıldığında, gelen yanıtlar birbirine karıştı: TxID hep 0 olduğu için hangi yanıtın hangi isteğe ait olduğu ayırt edilemedi. Çözüm: İstemciyi strict-synchronous moda aldık (her zaman yanıt bekle, sonra gönder). TxID'ye güvenmek yerine sıralı senkron iletişim her zaman güvenli taraftır.
+
+**Not 5 — Nagle Algoritması ve Gecikme Tuzağı**  
+Bir Linux gateway üzerinde çalışan Python istemcisinde her Modbus istek-yanıtı ~40ms sürüyordu, oysa ağ ping'i <1ms idi. Sorun TCP Nagle algoritması + delayed ACK etkileşimiydi: Küçük Modbus PDU'ları (12 byte istek) tampona alınıp geç gönderiliyordu. `socket.setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)` ile Nagle kapatıldı; round-trip 40ms'den 2ms'ye düştü. Modbus gibi küçük-paket-yoğun protokollerde TCP_NODELAY neredeyse her zaman doğru tercihtir.
+
+**Not 6 — Yarı Açık Bağlantı (Half-Open Socket) Sessiz Donması**  
+Bir PLC'nin güç kaynağı dalgalanıp TCP bağlantısı düzgün kapanmadan koptuğunda (FIN/RST yok), SCADA istemcisi bağlantıyı hâlâ "açık" sanıyordu. İstekler gönderiliyor ama TCP retransmit timeout'u (default ~60-120s) dolana kadar hata dönmüyordu — veriler 2 dakika boyunca dondu. Çözüm: Uygulama seviyesinde watchdog (3sn yanıt gelmezse bağlantıyı zorla kapat + reconnect) ve `SO_KEEPALIVE` ile agresif keepalive (5sn). OS'in TCP timeout'una asla güvenme.
+
+**Not 7 — Vendor Farkı: Eş Zamanlı Bağlantı Limiti**  
+Üç farklı slave cihazda MaxConnections davranışı tamamen farklıydı: Bir Wago kontrolcü 8 eş zamanlı bağlantıyı kabul edip 9.'yu reddetti (TCP RST); bir enerji sayacı yalnızca 1 bağlantıya izin verip yeni bağlantı gelince en eskiyi sessizce düşürdü; ucuz bir Çin gateway'i sınırsız bağlantı kabul edip 4. bağlantıdan sonra tüm yanıt sürelerini 10× yavaşlattı. Birden fazla master/istemci tasarlarken slave'in bağlantı limiti mutlaka belgeden veya testle doğrulanmalıdır.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Modbus TCP'nin görünen basitliği, sınır koşullarında beklenmedik davranışları gizler. Aşağıdakiler saha pratiğinde tekrar tekrar görülen limitlerdir.
+
+```
+LİMİT / EDGE CASE                  DEĞER / DAVRANIŞ              SONUÇ
+─────────────────────────────────────────────────────────────────────────────
+MBAP Length alanı (16-bit)         maks 65535 byte PDU          Pratikte FC sınırı
+                                                                 önce dolar
+Transaction ID (16-bit)            0x0000–0xFFFF, wrap-around   65536 sonra başa
+                                                                 döner; uzun
+                                                                 oturumda çakışma
+Protocol ID                        her zaman 0x0000             ≠0 gelirse frame
+                                                                 reddedilmeli
+Unit ID                            0–255 (0xFF rezerve/broadcast)Gateway dışında
+                                                                 anlamı belirsiz
+TCP segment fragmentasyonu         1 MBAP frame ≠ 1 TCP paketi  Birden çok recv()
+                                                                 gerekebilir
+Tek TCP paketinde 2 frame          mümkün (TCP stream)          Length'e göre
+                                                                 parçalamak şart
+Port 502 standart                  bazı cihazlar 1502/5020      Doğrula
+Keepalive/idle timeout             vendor-spesifik (5–60s)      Sessiz disconnect
+```
+
+**TCP stream sınırı — en sık atlanan edge case:**
+Modbus TCP, mesaj-tabanlı değil **byte-stream** üzerine kuruludur. Tek bir `recv()` çağrısı yarım bir MBAP frame, tam bir frame veya **birden fazla** frame içerebilir. Doğru istemci, MBAP Length alanını okuyup tam olarak `7 + (Length - 1)` byte toplanana kadar okumaya devam etmelidir. Naif "tek recv = tek yanıt" varsayımı yüksek trafikte (ardışık hızlı istek) sessizce bozulur.
+
+```python
+# ❌ Naif okuma — fragmentasyonda kırılır
+data = sock.recv(1024)   # Yarım frame veya 2 frame gelebilir
+
+# ✅ Length-aware okuma
+header = recv_exact(sock, 6)          # MBAP'ın ilk 6 byte'ı
+length = int.from_bytes(header[4:6], 'big')
+rest   = recv_exact(sock, length)     # Unit ID + PDU
+frame  = header + rest
+```
+
+**Length alanı ile gerçek FC limiti:**
+MBAP Length 16-bit olduğundan teorik PDU 65535 byte. Ancak FC03/04 yanıtında byte count alanı 8-bit (maks 255 byte = 127 register), bu yüzden register başına 2 byte ile **okuma limiti 125 register**, yazma (FC16) **123 register**'da sabitlenir. Yani gerçek darboğaz MBAP değil, PDU içindeki byte-count alanlarıdır.
+
+**Unit ID = 0 belirsizliği:**
+Spesifikasyon Unit ID 0'ı "doğrudan bağlı cihaz" olarak tanımlar, 0xFF'i ise "Unit ID kullanılmıyor" anlamında önerir. Pratikte cihazların yarısı 0'ı broadcast sanır, diğer yarısı yok sayar. Doğrudan TCP bağlantılarında daima cihazın belgesindeki değeri kullan; tahmin etme.
+
+## Optimizasyon
+
+Modbus TCP'de performans, neredeyse tamamen **round-trip sayısını azaltmak** ve **TCP davranışını ayarlamak** ile ilgilidir. Bant genişliği nadiren darboğazdır; gecikme (latency) ve istek sayısı darboğazdır.
+
+```
+OPTİMİZASYON ÖNCELİĞİ (en yüksek kazanç → en düşük)
+─────────────────────────────────────────────────────────────────
+1. Batch read           : Bitişik registerları tek FC03 ile oku
+                          20 ayrı istek (40ms) → 1 istek (2ms)
+2. TCP_NODELAY          : Nagle'ı kapat → küçük PDU gecikmesini sıfırla
+                          40ms → 2ms round-trip (en dramatik tekil kazanç)
+3. Persistent connection: Her döngüde connect/disconnect YAPMA
+                          TCP 3-way handshake (1 RTT) her seferinde israf
+4. Polling frekansı     : Değişmeyen veriyi sık sorgulama
+                          Setpoint 5sn, ölçüm 200ms gibi katmanla
+5. Register haritası    : Sık okunanları bitişik yerleştir
+                          Tek bloğu tek istekte oku
+6. Eş zamanlı bağlantı  : Bağımsız cihazları paralel oku
+                          (tek slave'e değil, farklı IP'lere)
+```
+
+**Batch read'in matematiği:**
+LAN içinde tipik round-trip latency 1–3ms'dir; PDU iletim süresi (~12 byte @ 100Mbps) nanosaniye mertebesinde, ihmal edilebilir. Yani 20 değeri okumanın maliyeti, **20 × latency** veya **1 × latency** arasında seçimdir. Modbus'ta verimlilik = "kaç istek attın", "kaç byte gönderdin" değil.
+
+**Connection pooling vs tek bağlantı:**
+Tek slave için tek persistent bağlantı en iyisidir (Modbus zaten senkron). Birden fazla **farklı** slave için her birine ayrı kalıcı bağlantı + paralel I/O (thread/async) toplam tur süresini cihaz sayısına bölmez ama belirgin azaltır. Aynı slave'e paralel bağlantı genelde kazanç sağlamaz — slave istekleri yine seri işler.
+
+**Polling katmanlama örneği:**
+```
+Katman A (200ms) : Kritik proses değerleri (hız, sıcaklık, durum word)
+Katman B (1s)    : İkincil ölçümler (basınç, akış, sayaçlar)
+Katman C (5s)    : Setpoint geri okuma, diagnostik, firmware versiyonu
+→ Toplam ağ yükü, hepsini 200ms'de okumaya göre ~%70 azalır.
+```
+
+## Derin Teknik Detay
+
+**Neden MBAP header var ve CRC yok?**
+Seri Modbus RTU, byte-stream üzerinde frame sınırını "3.5 karakter sessizliği" ile belirler ve CRC-16 ile bütünlüğü korur — çünkü RS-485 fiziksel katmanı gürültülüdür ve mesaj sınırı yoktur. TCP ise zaten **sıralı, hatasız, akış-tabanlı** bir transport sağlar: Checksum (TCP), sıralama (sequence number) ve retransmit TCP katmanında halledilir. Dolayısıyla Modbus TCP tasarımcıları CRC'yi attı (gereksiz, TCP zaten doğruluyor) ve frame sınırını belirtmek için 7-byte MBAP header'daki **Length** alanını ekledi. MBAP, RTU'nun timing-tabanlı framing'ini açık bir byte-sayımıyla değiştirir.
+
+**Transaction ID neden var — RTU'da yokken?**
+Seri Modbus katı half-duplex senkrondur: Master bir istek atar, yanıtı bekler, başka istek atamaz. Dolayısıyla istek-yanıt eşleşmesi triviyaldir. TCP ise multiplexing'e izin verir — bir master birden fazla isteği yanıt beklemeden pipeline'layabilir. Transaction ID, gelen yanıtı doğru isteğe eşlemek için bu pipeline senaryosunu mümkün kılar. Ancak pratikte çoğu istemci yine senkron çalışır ve TxID'yi sadece bir sıra numarası olarak kullanır (Not 4'teki TxID=0 cihazı bu yüzden çoğu durumda sorun çıkarmaz).
+
+**vs alternatifler — neden Modbus TCP "yetersiz ama yenilmez":**
+```
+                Modbus TCP        OPC UA              EtherNet/IP
+──────────────────────────────────────────────────────────────────────
+Veri modeli     16-bit register   Zengin nesne tipi   CIP nesne modeli
+Keşif           Yok (belge şart)  Browse/Address Space EDS dosyası
+Güvenlik        Yok               X.509, şifreleme    CIP Security
+Push/event      Yok (poll-only)   Subscription        I/O connection
+Öğrenme eğrisi  Saatler           Haftalar            Günler
+Cihaz desteği   ~Evrensel         Artıyor             Rockwell ağırlıklı
+```
+Modbus TCP'nin kalıcılığının kökü: Veri modeli o kadar ilkel ki (16-bit kelimeler + 8 fonksiyon) **herhangi** bir mikrodenetleyici onu birkaç yüz satırla implemente edebilir. OPC UA bir gömülü stack için megabaytlarca kod ve sertifika altyapısı ister. "Yeterince iyi ve her yerde çalışıyor" özelliği, teknik üstünlükten daha güçlü bir ağ etkisi yaratır.
+
+**Stateless tasarımın bedeli:**
+Modbus sunucusu istemci durumu tutmaz — her istek bağımsızdır. Bu, sunucu implementasyonunu basitleştirir (oturum yönetimi yok) ama iki maliyet getirir: (1) Olay bildirimi imkânsız — istemci değişikliği ancak tekrar sorgulayarak öğrenir; (2) 32-bit değerlerin iki 16-bit register'a bölünmesi atomik değildir → "word tearing" (bkz. 02_register_model.md). Sunucu, bir 32-bit değeri tam yazmadan istemci yarısını okursa tutarsız değer alır. Bu, basitliğin doğrudan bedelidir ve protokol seviyesinde çözümü yoktur; uygulama seviyesinde (handshake biti, çift okuma) yönetilir.
 
 ## İlgili Konular
 

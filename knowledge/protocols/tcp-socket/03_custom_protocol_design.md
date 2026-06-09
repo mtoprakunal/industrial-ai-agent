@@ -2,8 +2,8 @@
 KONU        : TCP Üzerinde Özel Protokol Tasarımı
 KATEGORİ    : protocols
 ALT_KATEGORI: tcp-socket
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.codeproject.com/Articles/37496/TCP-IP-Protocol-Design-Message-Framing"
     başlık: "CodeProject — TCP/IP Protocol Design: Message Framing"
@@ -745,6 +745,128 @@ Tek byte XOR checksum başlangıçta yeterliydi. Bir noktada EMI'dan etkilenen b
 
 **Not 4 — Versiyon Geçişi**  
 V1'de MSG_DATA 8 byte'tı. V2'ye geçince 12 byte eklendi. Eski V1 istemciler hâlâ bağlıydı. Çözüm: VER alanı. V2 sunucu, VER=1 gelen istemcilere 8 byte yanıt verdi, VER=2 gelen istemcilere 12 byte. 6 ay boyunca iki versiyon aynı anda çalıştı, sorunsuz geçiş.
+
+**Not 5 — Saçma LENGTH Alanı DoS Etkisi Yarattı**  
+Bozuk bir byte, LENGTH alanını 0xFFFF (65535) olarak okuttu. Parser "tam mesaj için 65535 byte bekle" moduna girdi; akümülatör asla dolmadı, mesaj işlenemedi, gerçek veri arkada birikti. Bir bakıma kendi kendine DoS. Çözüm: LENGTH okunur okunmaz `IF nExpectedDataLen > MAX_PAYLOAD THEN` ile makullük kontrolü; sınır aşılırsa SOH atla + desync kurtarma. LENGTH alanına asla körlemesine güvenme — saldırgan olmasa bile EMI bunu üretir.
+
+**Not 6 — Endian Tuzağı: PLC↔PLC "Çalışıyordu", Sonra Çalışmadı**  
+İki aynı marka PLC arasında protokol little-endian yazılmıştı (CPU native, "kolay"). Aylarca sorunsuz. Sonra bir uç farklı mimaride bir gateway ile değiştirildi; sayılar anlamsız çıktı. Native endian'a güvenmek gizli bir bağımlılıktı. Big-endian (network byte order) standardına geçildi; her iki uçta da açık SHR/SHL ile serialize edildi. Kural: wire formatı her zaman açıkça big-endian serialize edilmeli, CPU native byte düzenine asla bırakılmamalı.
+
+**Not 7 — Heartbeat'i Veri Trafiğiyle Birleştirmek**  
+Ayrı heartbeat timer'ı sürekli veri akan bir bağlantıda gereksiz ping üretiyordu (zaten trafik vardı, bağlantı canlı). Daha kötüsü, yoğun trafikte heartbeat yanıtı kuyruğun arkasında gecikip yanlış timeout tetikledi. Çözüm: "son alınan herhangi bir geçerli frame" zamanını izle; bu süre eşiği aşarsa heartbeat gönder. Veri varken ping yok, sessizlikte ping var. Heartbeat'i mutlak timer değil, "sessizlik dedektörü" olarak tasarla.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Bir framing protokolü "mutlu yol"da (temiz bağlantı, tam mesaj) kolay görünür; gerçek dayanıklılık sınır durumlarında belli olur. Aşağıdakiler sahada parser'ı bozan klasik senaryolardır.
+
+### Parser Sınır Durumları
+
+| Edge Case | Belirti | Kök Neden | Doğru Davranış |
+|---|---|---|---|
+| Mesaj iki recv'e bölündü | Header tam, data yarım | TCP segmentasyonu | Akümülatörde bekle, parça birleştir |
+| İki mesaj tek recv'de | Bir frame sonrası fazla byte | TCP coalescing / Nagle | Frame tüketildikten sonra döngüde tekrar parse |
+| Data içinde SOH (0x01) | Yanlış senkron noktası | SOH data'da da geçebilir | SOH+geçerli header+checksum üçlü doğrulama |
+| Saçma LENGTH (0xFFFF) | Parser sonsuz bekler | Bozuk byte / EMI | LENGTH > MAX_PAYLOAD → desync kurtarma |
+| Checksum hatası | Frame reddedilir | EMI / bit bozulması | SOH atla, yeniden senkronize et |
+| Bağlantı ortasında kopma | Yarım frame buffer'da kalır | Disconnect | Reconnect'te akümülatörü temizle |
+| Akümülatör taşması | Buffer dolu, mesaj gelmiyor | Sürekli çöp veri / yanlış LENGTH | Buffer sıfırla, desync varsay, reconnect |
+| Sürekli SOH bulunamıyor | İşlenen mesaj yok | Tam desync / yanlış protokol | N byte sonra reconnect (sonsuz döngü önle) |
+
+### Sayısal Sınırlar ve Tasarım Eşikleri
+
+```
+LENGTH alanı (2 byte):   Maks data 65535 byte. Pratik MAX_PAYLOAD çok daha düşük
+                         tutulmalı (ör. 512-4096) → akümülatör boyutunu sınırlar.
+Akümülatör boyutu:       En az: en büyük frame × 2 (bir tam + bir kısmi mesaj).
+                         Çok büyük tutmak desync'te uzun MEMCPY maliyeti getirir.
+XOR checksum gücü:       Tek byte → ~1/256 çarpışma; çift bit-flip aynı pozisyonda
+                         kaçabilir. CRC-16 ~1/65536 ve burst hatada çok üstün.
+Desync byte eşiği:       SOH aranırken N (ör. 100-1024) byte sonra hâlâ geçerli
+                         frame yoksa → bağlantı bütünlüğü yok → reconnect.
+Versiyon alanı (1 byte): 255 protokol sürümü; pratikte yeter.
+```
+
+### Tehlikeli Tasarım Hataları
+
+```
+1. LENGTH'e körlemesine güven → tek bozuk byte parser'ı kilitler (Not 5).
+2. Delimiter framing + binary data → data içindeki delimiter parser'ı böler;
+   escape gerekir, karmaşıklaşır. Binary'de length-prefix tek doğru seçim.
+3. Checksum'ı yalnız DATA üzerinden hesapla → header bozulması yakalanmaz.
+4. Reconnect'te akümülatörü temizlememe → yarım eski frame yeni veriyle karışır.
+5. Native endian'a güven → mimari değişince sessizce bozulur (Not 6).
+```
+
+## Optimizasyon
+
+Özel protokolde optimizasyon, "wire'da daha az byte" ile "parser'da daha az CPU" arasındaki dengedir. Endüstriyel önceliklendirme:
+
+```
+ÖNCELİK 1 — Doğru framing seçimi (en büyük etki):
+  Binary için length-prefix; ASCII sabit-format için delimiter.
+  Yanlış seçim escape/yeniden senkron maliyeti olarak sürekli geri ödenir.
+
+ÖNCELİK 2 — Kompakt payload (scaled-integer):
+  REAL yerine ×10/×100 ölçekli UINT16 (hız_x10, sıcaklık_x10).
+  Float serialization yok, yarı yarıya byte, deterministik parse.
+
+ÖNCELİK 3 — Akümülatörü ucuz yönet:
+  Frame tüketince başa MEMCPY yerine okuma-indeksi (ring/offset) kullan;
+  yüksek frekansta sürekli MEMCPY scan yükü yaratır.
+
+ÖNCELİK 4 — Checksum'ı tek geçişte hesapla:
+  Encode sırasında byte yazarken XOR/CRC'yi aynı döngüde biriktir;
+  ayrı ikinci tarama (build sonrası tekrar tüm frame'i gez) gereksizdir.
+
+ÖNCELİK 5 — Batching (uygulama katmanı):
+  Çok sayıda küçük değeri tek MSG_DATA frame'inde paketle → daha az
+  frame, daha az checksum/parse, daha az TCP segment.
+
+ÖNCELİK 6 — CRC tablo araması:
+  CRC-16 kullanılıyorsa bit-bit hesap yerine 256-girişli tablo (LUT);
+  scan başına çok frame işleniyorsa CPU'yu belirgin düşürür.
+```
+
+| Hedef | Teknik | Takas |
+|---|---|---|
+| Düşük bant genişliği | Scaled-integer + batching | Hassasiyet ölçeğe bağlı |
+| Düşük CPU/scan | Tek-geçiş checksum + ring buffer | Kod biraz karmaşıklaşır |
+| Güçlü hata tespiti | CRC-16 (LUT'lu) | XOR'dan daha fazla CPU/kod |
+| Esnek evrim | VER alanı + LENGTH tabanlı padding | 1+ byte ek başlık |
+
+## Derin Teknik Detay
+
+### Neden SOH + LENGTH + CHECKSUM Üçlüsü — Tek Başına Hiçbiri Yetmez?
+
+Üç alan, üç farklı bağımsız problemi çözer ve hiçbiri diğerinin yerini tutamaz:
+
+```
+SOH      → "Mesaj NEREDE başlıyor?"   (desync sonrası yeniden senkronizasyon)
+LENGTH   → "Mesaj NEREDE bitiyor?"    (stream'den frame'i kesip çıkarma)
+CHECKSUM → "Mesaj BOZULDU mu?"        (bütünlük doğrulama)
+```
+
+Yalnızca SOH ile: nerede bittiğini bilemezsin (delimiter'a düşersin → binary'de escape sorunu). Yalnızca LENGTH ile: bağlantı yarıdan koptuğunda nereden başlayacağını bulamazsın (desync). Yalnızca CHECKSUM ile: çerçeveyi hiç ayıramazsın. Üçü birlikte **savunmada derinlik** (defense in depth) sağlar: SOH yanlış noktada tetiklense bile LENGTH saçma çıkar veya CHECKSUM tutmaz → frame reddedilir, yeniden senkron başlar. Bu yüzden Modbus (length alanı + CRC), DNP3 (start byte + length + CRC), HDLC (flag + FCS) gibi olgun endüstriyel protokollerin hepsi aynı üçlüyü farklı isimlerle taşır.
+
+### State Machine Parser Neden Akümülatör Şart?
+
+TCP byte stream olduğu için bir mesaj birden çok recv()'e yayılabilir veya birden çok mesaj tek recv()'de gelebilir. Parser, scan başına eline geçen rastgele büyüklükteki parçayı bir kalıcı akümülatöre eklemeli ve "şu ana kadar tam bir frame oluştu mu?" sorusunu her seferinde yeniden değerlendirmelidir. Durum (`eWaitSOH/eReadHeader/eReadData`) scan'ler arası korunmalıdır çünkü tek bir scan'de tam frame gelmeyebilir:
+
+```
+recv parçası:  [01 01 10 00]            → eReadHeader: LENGTH için 1 byte eksik, bekle
+recv parçası:  [0A 12 34 ...]           → header tamam (LEN=10), data toplanıyor
+recv parçası:  [... 9F]                 → data+checksum tamam → frame hazır → eWaitSOH
+```
+
+Bu, `02_codesys_implementation.md`'deki TCP state machine ile **iki katmanlı** çalışır: alt katman (SysSock FB) "byte aldım"ı yönetir, üst katman (decoder FB) "mesaj oluştu"yu yönetir. İki kaygının ayrılması (transport vs framing) protokolü test edilebilir ve yeniden kullanılabilir kılar.
+
+### Big-Endian Neden Standart — Little-Endian "Daha Hızlı" Olsa Bile?
+
+Network byte order tarihsel olarak big-endian'dır (IP/TCP başlıkları böyle); 1980'lerin baskın ağ donanımı big-endian'dı ve standart oradan miras kaldı. Bugünkü gerçek gerekçe **performans değil, belirsizlik giderme**: wire formatı tek bir kanonik düzene sabitlenirse, iki uç farklı CPU mimarisinde (x86 LE, ARM BE/LE, eski PLC) olsa bile herkes aynı baytı aynı şekilde yorumlar. "Native endian kullan, hızlı olsun" yaklaşımı her iki ucun aynı mimaride kalacağı **gizli varsayımına** bağlıdır — donanım değişince sessizce bozulur (Not 6). Açık SHR/SHL ile serialize, CPU'dan bağımsızdır ve modern PLC'lerde bu birkaç bit kaydırmanın maliyeti ölçülemez kadar küçüktür. Yani "yavaş ama taşınabilir" tercihi, "hızlı ama kırılgan"a her zaman üstündür.
+
+### XOR vs CRC — Neden Fabrikada CRC?
+
+XOR checksum doğrusaldır: aynı bit pozisyonunda çift hata (ör. EMI'nin tipik burst bozulması) birbirini götürür ve checksum değişmeden kalır → hata sessizce geçer (Not 3, dosya genelinde). CRC-16 polinom bölmesine dayanır; burst hataları (ardışık bozuk bitler — elektromanyetik gürültünün karakteristik imzası) yüksek olasılıkla yakalar ve tek byte yerine 16 bitlik bir imza taşır (~1/65536 çarpışma). Motor sürücüleri, kaynak makineleri, kontaktörler gibi yoğun EMI kaynaklarının olduğu fabrika ortamında XOR'un "boşluk"ları gerçek hatalara denk gelir. Maliyet (LUT ile birkaç tablo araması) ihmal edilebilir; bu yüzden ciddi endüstriyel protokol CRC-16 (veya üstü) kullanır, XOR yalnızca prototip/laboratuvar içindir.
 
 ## İlgili Konular
 

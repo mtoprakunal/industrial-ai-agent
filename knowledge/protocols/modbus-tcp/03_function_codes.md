@@ -2,8 +2,8 @@
 KONU        : Modbus Fonksiyon Kodları
 KATEGORİ    : protocols
 ALT_KATEGORI: modbus-tcp
-SEVİYE      : Temel
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://industrialmonitordirect.com/blogs/knowledgebase/modbus-function-codes-implementation-guide-for-device-developers"
     başlık: "Industrial Monitor Direct — Modbus Function Codes Implementation Guide"
@@ -490,6 +490,96 @@ client.write_registers(10, [hw, lw], slave=1)
 
 **Not 3 — FC05 Sonrası Echo Kontrolü**  
 FC05 yanıtı istek frame'in echo'sudur. Eğer echo yanlışsa (farklı adres veya değer) — bu cihaz arızasını işaret edebilir. pymodbus bunu otomatik kontrol etmez; kritik sistemlerde yanıtın doğrulanması önerilir.
+
+**Not 4 — 125 Sınırını Aşan Sessiz Hata**  
+Bir cihazda 200 register'ı tek FC03 ile okuma denendi (`count=200`). Bir kütüphane Exception 0x03 döndürdü, bir diğeri sessizce yalnızca 125 register döndürüp gerisini eski tampondan doldurdu — bu en tehlikelisiydi çünkü hata gözükmedi, veri "vardı" ama son 75 register çöptü. >125 register gerektiğinde **kütüphaneye güvenme**, isteği elle 125'lik bloklara böl. pymodbus 3.x bunu otomatik bölmez, hata döndürür.
+
+**Not 5 — Mask Write (FC22) ile Yarış Koşulunu Çözmek**  
+Çoklu-master bir sistemde iki SCADA aynı komut word'üne farklı bitler yazıyordu. Her biri read-modify-write yapıyordu (FC03 oku → bit değiştir → FC16 yaz) ve aralarında diğerinin yazması araya giriyordu → bitler kayboluyordu. Çözüm: FC22 (Mask Write Register). Cihaz desteklediği için tek atomik istekte yalnızca hedef bit değiştirildi (`result = (current AND andMask) OR (orMask AND (NOT andMask))`), diğer bitlere dokunulmadı. FC22 az bilinir ama register-içi bit yarışlarının doğru çözümüdür.
+
+**Not 6 — FC16 Geri-Okuması Echo Değildir**  
+Bir mühendis FC16 yanıtının yazdığı değerleri echo'layacağını varsaydı (FC06 gibi). FC16 yanıtı yalnızca başlangıç adresi + register sayısını döndürür, **değerleri değil**. "Yazma başarılı mı?" doğrulaması için yanıttaki count'un istenen count'a eşitliği kontrol edilmeli; değer doğrulaması ayrı bir FC03 okuması gerektirir. Kritik setpoint yazmalarında write-then-read-back deseni uygulandı.
+
+**Not 7 — Vendor Farkı: FC23 ile Tek İstekte Oku+Yaz**  
+Yüksek-frekanslı bir kontrol döngüsünde her turda setpoint yazıp ölçüm okumak iki round-trip gerektiriyordu. Cihaz FC23 (Read/Write Multiple Registers) destekliyordu: Tek istekte hem yazma hem okuma yapılır, tur süresi yarıya indi. Ancak ikinci bir vendor'un cihazı FC23'e 0x01 (Illegal Function) döndürdü — FC23 standart ama yaygın desteklenmez. Önce yetenek testi yapıp, desteklenmiyorsa ayrı FC16+FC03'e düşen bir fallback yazıldı.
+
+## Edge Case'ler ve Sistem Limitleri
+
+```
+FC      MAKS COUNT     SINIR KAYNAĞI              EDGE CASE
+─────────────────────────────────────────────────────────────────────────────
+FC01/02 2000 bit       Byte count 8-bit (250 byte) 2000 coil = 250 byte
+FC03/04 125 register   Byte count 8-bit (255 byte) 125×2=250 byte
+FC05    tek coil       —                           Value yalnız 0xFF00/0x0000
+FC06    tek register   —                           Echo döner
+FC15    1968 coil      Byte count 8-bit            246 byte coil verisi
+FC16    123 register   Byte count 8-bit            123×2=246 byte
+FC22    tek register   —                           AND/OR mask, atomik bit
+FC23    125 oku/121 yaz iki ayrı byte count        Yaygın desteklenmez
+```
+
+**count=0 davranışı:** Spesifikasyon count ≥ 1 ister. count=0 gönderildiğinde cihazların bir kısmı Exception 0x03, bir kısmı boş yanıt, bir kısmı çöker. Asla 0 gönderme.
+
+**Aralık sınırını taşan count:** `read_holding_registers(120, 10)` — son register 129. Cihazda yalnızca 125 register varsa, **başlangıç geçerli ama son geçersiz** olduğundan Exception 0x02 döner. Yani 0x02 her zaman "başlangıç adresi yanlış" demek değildir; `start + count - 1` taşması da olabilir.
+
+**Exception vs timeout ayrımı:**
+```
+Exception 0x06 (Busy)      → Cihaz yanıt verdi, "meşgulüm" dedi → tekrar dene
+Timeout (yanıt yok)        → Frame kayboldu veya cihaz dondu → reconnect düşün
+Exception 0x0B (Gateway)   → Gateway'in arkasındaki cihaz yanıt vermedi
+                             → Unit ID veya seri hat sorunu, gateway değil
+```
+0x06 ile timeout'u karıştırmak yanlış kurtarma stratejisine yol açar: 0x06'da cihaz canlıdır (bekle), timeout'ta bağlantı şüphelidir (yenile).
+
+**Broadcast (Unit ID = 0) yazma:** Seri Modbus'ta yazma fonksiyonları (FC05/06/15/16) Unit ID=0 ile broadcast edilebilir ve **yanıt beklenmez**. Modbus TCP'de broadcast pratikte anlamsızdır (TCP point-to-point) ve çoğu cihaz yine yanıt verir; broadcast davranışına TCP üzerinde güvenilmemelidir.
+
+## Optimizasyon
+
+```
+OPTİMİZASYON                       FC KARARI / KAZANÇ
+─────────────────────────────────────────────────────────────────
+Batch read                         Tek FC03(count=N) ≫ N×FC03(count=1)
+Atomik çoklu yazma                  FC16 ile float/recipe tek istekte
+Oku+yaz birleştirme                 FC23 destekleniyorsa 2 RTT → 1 RTT
+Atomik bit set/clear                FC22 ile read-modify-write'tan kaçın
+Coil bloğu okuma                    16 motor durumu tek FC01 (1 istek, 2 byte)
+Yazma doğrulama maliyeti            Kritik değilse read-back yapma
+```
+
+**FC seçiminin latency etkisi:**
+```
+Senaryo: Setpoint yaz + ölçüm oku, her döngü, LAN 2ms RTT
+  FC16 + FC03 ayrı     : 2 RTT = 4ms/döngü
+  FC23 (oku+yaz)       : 1 RTT = 2ms/döngü → %50 kazanç
+  500ms döngüde fark önemsiz, 10ms döngüde kritik.
+```
+
+**read-modify-write'tan kaçınma (FC22):**
+Bir komut word'ünde tek bit değiştirmek normalde FC03(oku) + FC16(yaz) = 2 RTT + yarış riski. FC22 tek istekte (1 RTT, atomik) yapar. Cihaz FC22 destekliyorsa register-içi bit manipülasyonunda daima tercih edilmeli — hem hızlı hem yarış-güvenli.
+
+**Yazma doğrulama bütçesi:**
+Her FC06/FC16 sonrası read-back yapmak round-trip'i ikiye katlar. Kural: Emniyet-kritik komutlar (motor start, vana) read-back ile doğrulanır; sık güncellenen, kendiliğinden tekrar yazılan setpointler (hız trim) doğrulanmaz — bir sonraki döngü zaten düzeltir.
+
+## Derin Teknik Detay
+
+**Function code'un PDU'daki rolü:**
+PDU = `[Function Code (1 byte)][Data (N byte)]`. FC, hem **hangi register alanına** (coil/DI/HR/IR) hem **hangi işleme** (oku/yaz/tek/çoklu) erişileceğini tek byte'ta kodlar. Bu, adres alanlarının protokolde ayrı olmayıp FC ile seçilmesinin nedenidir: Adres her zaman 0x0000'dan başlar, FC "hangi 0x0000" sorusunu yanıtlar. 8-bit FC alanı 0x80 (128) altındaki değerleri normal fonksiyon, üst biti set (≥0x80) olanları exception olarak ayırır — bu yüzden geçerli FC'ler 1–127 aralığındadır.
+
+**Exception kodlamasının zarafeti:**
+Hata yanıtında FC, orijinal FC ile **0x80 OR'lanır** (FC03 → 0x83). Tek bitlik bu işaret, istemcinin yanıtı parse etmeden önce "bu başarı mı hata mı" sorusunu PDU'nun ilk byte'ının en yüksek bitine bakarak anında cevaplamasını sağlar. Ardından gelen tek byte exception code'dur. Tüm hata mekanizması 2 byte'a sığar — yine radikal basitlik.
+
+**8-bit byte count'un dayattığı sınır:**
+FC03/04 yanıtı `[FC][Byte Count (1 byte)][Data]` yapısındadır. Byte Count 8-bit olduğundan en fazla 255 byte veri taşıyabilir → 127 register. Ancak spesifikasyon güvenli pay için **125** register'da sabitler (250 byte). FC16'da istek tarafında da byte count vardır ve frame yapısı gereği **123** register limiti gelir. Bu sınırların kökü MBAP Length (65535) değil, PDU içindeki tek-byte sayaçlardır — yani limit RTU'dan miras kalmıştır, TCP'nin getirdiği bir kısıt değildir.
+
+**FC22 Mask Write mekanizması:**
+FC22 iki maske alır: AND mask ve OR mask. Sonuç register şu formülle hesaplanır:
+```
+Result = (Current AND And_Mask) OR (Or_Mask AND (NOT And_Mask))
+```
+- Bir biti **set** etmek için: And_Mask'ta o bit 0, Or_Mask'ta 1.
+- Bir biti **clear** etmek için: And_Mask'ta o bit 0, Or_Mask'ta 0.
+- Bir biti **korumak** için: And_Mask'ta o bit 1, Or_Mask'ta 0.
+Cihaz bu işlemi tek scan'de atomik yapar; araya başka master'ın yazması giremez. Bu, register-içi bayrak yönetiminde read-modify-write yarışının protokol-seviyesi çözümüdür ve neden FC16 + manuel bit hesabından üstün olduğunu açıklar.
 
 ## İlgili Konular
 

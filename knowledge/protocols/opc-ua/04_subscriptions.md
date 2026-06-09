@@ -2,8 +2,8 @@
 KONU        : OPC-UA Subscription Mekanizması
 KATEGORİ    : protocols
 ALT_KATEGORI: opc-ua
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://reference.opcfoundation.org/Core/Part4/v104/docs/5.12.1/"
     başlık: "OPC Foundation — UA Part 4: Services — MonitoredItem Model"
@@ -479,6 +479,58 @@ Raspberry Pi üzerinde CODESYS, 200 MonitoredItem ile sampling=0 ayarıyla başl
 
 **Not 3 — Alarm Queue Tasarımı**  
 Üretim makinesinde alarm subscription queue=1 ile başlangıçta kuruldu. Hızlı alarm-reset-alarm döngüsünde bazı alarm geçişleri kaçırıldı. Queue=5'e çıkarıldı; alarm geçişleri eksiksiz yakalandı. Queue size, alarm sayacını etkiliyor: Hiçbir alarm geçişi kaçırılamayacaksa Queue büyük tutulmalı.
+
+**Not 4 — PublishingInterval'in "Revised" Değerle Geri Dönmesi**  
+İstemci 50 ms publishing interval istedi ama sunucu (Raspberry Pi CODESYS) `RevisedPublishingInterval=250ms` döndürdü. İstemci kodu istenen değeri kullandığını varsaydığından zamanlama hesapları yanlış çıktı, "veriler geç geliyor" sanıldı. Gerçek: OPC UA'da sunucu istenen tüm subscription parametrelerini *revize edebilir* ve gerçek kullanılan değeri yanıtta döndürür. Çözüm: her zaman Revised* değerlerini oku ve onları kullan. İstenen ≠ verilen.
+
+**Not 5 — Tek Publish Request Kuyruğunun Tükenmesi**  
+Çok sayıda subscription'a sahip bir istemci, az sayıda Publish Request açık tutuyordu (default 1). Yük altında sunucunun gönderecek bildirimi vardı ama bekleyen Publish Request yoktu; bildirimler sunucu kuyruğunda biriktirilip geç teslim edildi. Çözüm: istemci SDK'sının "publishing pipeline" derinliğini artırmak (birden çok Publish Request'i önceden uçuşta tutmak). asyncua bunu otomatik yönetir; ham SDK'da elle ayarlandı. Ders: Publish modeli pull tabanlıdır — sunucu, istemcinin verdiği Publish Request "kredisi" olmadan veri itemez.
+
+**Not 6 — DataChangeFilter Trigger=Status ile Kaçan Değerler**  
+Bir analog sinyalde DataChangeFilter `Trigger=Status` ile kuruldu (yalnızca StatusCode değişince raporla). Değer sürekli değişiyordu ama status hep `Good` kaldığından hiç bildirim gelmedi; ekip "subscription çalışmıyor" sandı. Doğru ayar `Trigger=StatusValue` (status veya değer değişince) idi. Trigger semantiği: `Status` < `StatusValue` < `StatusValueTimestamp`. Yanlış trigger sessizce veri kaybettirir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Subscription mekanizmasının sınırları çoğunlukla "istenen ≠ verilen" ve "pull tabanlı teslim" gerçeklerinden doğar:
+
+| Edge Case | Davranış | Belirti | Önlem |
+|---|---|---|---|
+| Revised parametreler | Sunucu istenen değeri revize eder | Zamanlama sapması | Revised* oku ve kullan |
+| MinSamplingInterval kelepçesi | Sunucu daha hızlı örneklemeyi reddeder | "Değer yeterince hızlı gelmiyor" | Revised sampling'i kabul et |
+| Publish Request açlığı | İstemci az PublishRequest tutuyor | Bildirim gecikmesi/birikme | Pipeline derinliğini artır |
+| MaxNotificationsPerPublish | Tek pakette bildirim tavanı | Bildirimler bölünür | Değeri yükselt veya kabul et |
+| MaxMonitoredItems aşımı | Yeni item reddedilir | `BadTooManyMonitoredItems` | Sunucu limitini ayarla |
+| Queue overflow göstergesi | Overflow bit set edilir | Sessiz değer kaybı | Overflow status'u izle |
+| LifetimeCount < 3×KeepAlive | Spec ihlali, sunucu düzeltir | Beklenmedik subscription iptali | Oranı koru |
+| Sampling=0 | "Mümkün olan en hızlı" | CPU spike | Daima açık değer ver |
+| MonitoringMode=Sampling | Örnekler ama raporlamaz | "Veri gelmiyor" | Reporting moduna al |
+
+Kritik sınır davranışları:
+- **Publish pull tabanlıdır, push değil.** Sunucu bildirimi ancak istemcinin gönderdiği açık Publish Request'e cevap olarak iletir. Yeterli Publish Request uçuşta yoksa veri sunucuda bekler. "Subscription = anlık push" zihinsel modeli yanlıştır; doğrusu "sunucu biriktirir, istemcinin kredisiyle teslim eder".
+- **Queue overflow sessizdir.** Queue dolup DiscardOldest devreye girdiğinde veri kaybı bir StatusCode overflow bit'iyle işaretlenir; istemci bunu kontrol etmezse kayıptan habersiz kalır.
+- **Sampling sunucuda, publishing istemciye doğru.** Sampling sunucunun iç işidir (kaynağı kontrol); publishing ağ teslimidir. Sampling > publishing anlamsızdır (örnekleyemediğini gönderemez).
+
+## Optimizasyon
+
+Subscription optimizasyonu = ağ trafiğini ve sunucu CPU'sunu minimize ederken hiçbir kritik değişimi kaçırmamak. Öncelik (en yüksek kazanç → en düşük):
+
+1. **Hıza göre subscription ayır.** Tüm node'ları tek hızlı subscription'a koymak en yaygın hatadır. Fast/Medium/Slow grupları (100ms/1s/10s) gereksiz trafiği elimine eder — en büyük kazanç budur.
+2. **DeadBand filtre uygula (analog).** Gürültülü sensörde DeadBand olmadan saniyede yüzlerce gereksiz bildirim üretilir. Mutlak/yüzde eşik, ağ ve CPU'yu dramatik düşürür.
+3. **Sampling'i kaynak döngüsüne hizala.** PLC task'ı 10ms ise sampling'i 5ms yapmak boş yüktür; kaynak zaten o hızda güncellenir. Sampling ≥ task cycle.
+4. **Queue'yu amaca göre boyutlandır.** HMI: 1 (en son yeterli). Historian/alarm: hiçbir geçiş kaçmasın → büyük queue + DiscardOldest=False (kritikse).
+5. **Tek subscription'da çok MonitoredItem topla.** Aynı hızdaki node'ları bir subscription altında birleştirmek, subscription sayısını ve KeepAlive trafiğini azaltır; sunucu subscription tablosunu yormaz.
+6. **MaxNotificationsPerPublish'i ayarla.** Çok item aynı anda değişiyorsa bu tavan paketleri böler ve ekstra round-trip yaratır; toplu senaryoda yükselt.
+7. **Handler'ı asla bloklama.** Optimizasyonun en pratik kuralı: handler değeri queue'ya atıp anında döner, ağır işi ayrı thread/task yapar. Bloklayan handler tüm publishing'i durdurur.
+
+## Derin Teknik Detay
+
+**Neden sampling ve publishing ayrı iki saat?** OPC UA, "veri ne sıklıkta yakalanır" (sampling) ile "ağa ne sıklıkta verilir" (publishing) arasını bilinçle ayırır. Sebep verimlilik: sunucu hızlı örnekleyip (örn. 100ms) değişimleri queue'da biriktirir, sonra publishing interval'de (örn. 1s) hepsini *tek pakette* gönderir. Böylece her örnekleme için ağ paketi üretilmez — N örnekleme, 1 ağ round-trip'ine sıkışır. Bu, polling'in temel israfını (her okuma = bir round-trip) ortadan kaldıran tasarım kararıdır. Sampling sunucunun iç döngüsüne, publishing istemcinin tolere ettiği gecikmeye göre ayarlanır; ikisi farklı kısıtlara optimize edilir.
+
+**MonitoredItem kuyruğu neden var?** Sampling > publishing olduğunda iki örnekleme arasında birden fazla değişim olabilir. Queue, publishing'e kadar bu ara değerleri saklar. Queue=1 ise yalnızca son değer korunur (HMI için yeterli, ara değerler kaybolur); queue=N ise N ara değer iletilir (historian/alarm için kritik). DiscardOldest, queue dolunca en eskiyi atar (en güncel öncelikli) veya en yeniyi reddeder (kronolojik bütünlük öncelikli). Bu mekanizma, "hızlı değişen sinyalde ara değerleri kaçırma" problemini istemcinin ihtiyacına göre çözmeyi sağlar.
+
+**Publish neden pull (istemci-talepli)?** Klasik push modelinde sunucu istediği an istemciye veri iter; ama TCP üzerinde istemci yavaşsa veya kopmuşsa sunucu kör şekilde gönderir ve veri kaybolur. OPC UA bunun yerine istemcinin önceden Publish Request "kredisi" yatırmasını ister; sunucu yalnızca bekleyen bir Publish Request'e yanıt olarak teslim eder. Bu sayede: (1) sunucu istemcinin hazır olduğunu bilir (flow control), (2) bağlantı koparsa istemci geri bağlanıp eksik bildirimleri `sequenceNumber` ile yeniden talep edebilir (republish), (3) yavaş istemci sunucuyu boğmaz. Bedeli: istemcinin yeterli Publish Request'i uçuşta tutması gerekir (Not 5). Bu, güvenilir teslim ile akış kontrolünü birleştiren ince bir tasarımdır.
+
+**KeepAlive ve Lifetime neden gerekli?** Değişim olmadığında sunucu boş KeepAlive gönderir (`MaxKeepAliveCount` publishing interval'de bir) — istemci "sunucu yaşıyor ve subscription geçerli" bilgisini alır. Tersine `LifetimeCount`, istemci hiç Publish Request göndermezse subscription'ın ne zaman silineceğini belirler (terk edilmiş subscription'ları temizler). Spec'in `LifetimeCount ≥ 3×MaxKeepAliveCount` kuralı, en az üç KeepAlive fırsatı tanımadan subscription'ı öldürmemeyi garanti eder — geçici gecikmelerde yanlış-pozitif iptali önler. Bu iki sayaç birlikte, bağlantı sağlığı izleme ve kaynak temizliğini tek mekanizmada toplar.
 
 ## İlgili Konular
 

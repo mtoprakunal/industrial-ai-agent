@@ -2,8 +2,8 @@
 KONU        : MQTT Endüstriyel Otomasyon Kullanımı
 KATEGORİ    : protocols
 ALT_KATEGORI: mqtt
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.hivemq.com/resources/iiot-protocols-opc-ua-mqtt-sparkplug-comparison/"
     başlık: "HiveMQ — OPC UA and MQTT Sparkplug Comparison"
@@ -646,6 +646,170 @@ Bir projede SCADA ile OPC UA, analitik platform ile MQTT kullanıldı. İlk baş
 Ham MQTT ile bir PLC entegrasyonu: Topic yapısını anla, payload formatını çöz, birimleri belgele, InfluxDB tag'lerini tanımla, Grafana dashboard'u konfigure et → 2-3 gün.
 
 Sparkplug B ile: NBIRTH mesajındaki metadata her şeyi anlatıyor. Otomasyon araçları (Ignition, HiveMQ Sparkplug Extension) bunu okuyup otomatik tag yapısı oluşturuyor → 2-3 saat.
+
+**Not 5 — Sparkplug "Stale Birth" / Sequence Number Karmaşası**  
+Sparkplug B'de her edge node mesajı artan bir `seq` numarası taşır (NBIRTH'te 0, sonra her mesajda +1, 255'ten sonra 0'a döner). SCADA (Ignition) bir mesajda seq atlaması görürse "veri kaybım var, yeniden senkronize et" der ve **Rebirth** komutu (NCMD) gönderir. Bir projede CODESYS edge node'u yeniden bağlandığında seq'i sıfırlamayı unutuyordu; SCADA sürekli Rebirth istiyor, edge node tüm NBIRTH'i tekrar tekrar yolluyor, trafik patlıyordu. Ayrıca broker'da NBIRTH retain=False olduğu için geç bağlanan bir SCADA, edge node yeniden doğmadıkça tag metadata'yı hiç görmüyordu. Ders: Sparkplug'da seq yönetimi ve Rebirth akışı protokolün kalbidir, ham MQTT alışkanlığıyla yaklaşılamaz.
+
+**Not 6 — MQTT 5.0'a Geçişte "Shared Subscription" ile Yük Dağıtımı**  
+Tek bir InfluxDB-yazıcı subscriber, yoğun fabrikada `factory/#` trafiğine yetişemiyor, kuyruk birikiyordu. MQTT 3.1.1'de bir topic'in tüm subscriber'ları mesajın KOPYASINI alır — paralel tüketici kuramazsınız. MQTT 5.0 **shared subscription** (`$share/group/factory/#`) ile aynı gruba abone N tüketiciye mesajları broker'ın load-balance etmesini sağladı: 3 yazıcı instance kuruldu, her mesaj yalnızca birine gitti, kuyruk eridi. Tuzak: Mosquitto eski sürümleri ve bazı 3.1.1 istemcileri shared subscription'ı desteklemez — broker ve tüm istemcilerin 5.0 yeteneği doğrulanmalı.
+
+**Not 7 — `clean_session=True` Yüzünden Kaybolan Offline Komutlar**  
+Aralıklı (4G) bağlantılı bir saha cihazı `clean_session=True` ile bağlanıyordu. Cihaz offline'ken SCADA QoS 1 ile komut gönderdi; broker oturum durumu tutmadığı için komutları kuyruklamadı — cihaz geri geldiğinde komutlar yoktu, sessizce kayboldu. Çözüm: `clean_session=False` (MQTT 5.0'da `Clean Start=False` + `Session Expiry Interval`) + sabit Client ID. Böylece broker offline süresince QoS 1/2 mesajları cihaz için saklar. Karşı tuzak: persistent session'ı süresiz tutmak, hiç geri dönmeyen cihazlar için broker'da sonsuz büyüyen kuyruk demektir — Session Expiry ile sınırla.
+
+**Not 8 — Sürüm Farkı: MQTT 5.0 Reason Code'ları Sessiz Hataları Görünür Kıldı**  
+MQTT 3.1.1'de bir PUBLISH ACL tarafından reddedildiğinde broker çoğu zaman bağlantıyı sessizce kapatıyor veya hiçbir şey söylemiyordu — geliştirici "neden veri gelmiyor?" diye saatlerce uğraşıyordu. MQTT 5.0'da broker PUBACK/SUBACK içinde **reason code** döndürür (örn. `0x87 Not Authorized`, `0x97 Quota Exceeded`). Aynı ACL hatası artık istemci log'unda net görünüyor. Production'da mümkünse 5.0 broker + 5.0 istemci kullan; reason code'lar saha hata ayıklamasını günlerden dakikalara indirir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+Endüstriyel MQTT dağıtımlarında "küçük ölçekte çalışan" yapı, üretim ölçeğinde aşağıdaki sınır koşullarında çöker.
+
+```
+1. Broker SPOF ve Failover Sırasında Mesaj Sırası
+   ───────────────────────────────────────────────
+   Tek node Mosquitto durunca tüm UNS durur. HA cluster'da bile failover
+   anında inflight QoS 1/2 mesajların bir kısmı duplike olabilir veya
+   sırası bozulabilir (node'lar arası session replikasyonu anlık değil).
+   Cluster ≠ "sıfır kayıp" garantisi; idempotent subscriber tasarla.
+
+2. Retained Komut Zombisi (Üretim Güvenliği Riski)
+   ────────────────────────────────────────────────
+   command/ topic'inde retain=True → PLC reset sonrası subscribe olunca
+   eski START komutu anında teslim → makine kendiliğinden çalışır.
+   Komut topic'leri ASLA retained olmamalı. Güvenlik kritik tuzaktır.
+
+3. Sparkplug Seq/Rebirth Fırtınası (bkz. Not 5)
+   ─────────────────────────────────────────────
+   Yanlış seq yönetimi → sürekli Rebirth → NBIRTH trafik patlaması.
+   Edge node reconnect'te seq sıfırlama disiplini şarttır.
+
+4. Topic Kardinalitesi Patlaması
+   ──────────────────────────────
+   Her sensör + her datapoint ayrı topic. 12 PLC × 200 tag = 2400 topic;
+   her biri retained ise broker açılışta hepsini belleğe yükler.
+   Wildcard subscribe açılışta binlerce retained mesajı tek anda alır.
+
+5. ACL Sessiz Reddi (MQTT 3.1.1)
+   ──────────────────────────────
+   Yetkisiz topic'e publish 3.1.1'de sessizce yutulur — veri kaybolur,
+   hata görünmez. 5.0 reason code bunu çözer (bkz. Not 8).
+
+6. TLS Handshake Maliyeti ve Sertifika Süresi
+   ───────────────────────────────────────────
+   Binlerce cihaz aynı anda yeniden bağlanırsa (broker restart sonrası)
+   eş zamanlı TLS handshake "thundering herd" → CPU darboğazı.
+   Ayrıca sertifika süresi dolunca TÜM cihazlar aynı anda düşer —
+   sertifika rotasyon planı olmadan deploy etme.
+
+7. Shared Subscription Yokluğunda Tek Tüketici Darboğazı
+   ──────────────────────────────────────────────────────
+   MQTT 3.1.1'de bir topic'in tüm aboneleri kopya alır → tüketiciyi
+   yatay ölçekleyemezsin. Yüksek hacimde MQTT 5.0 $share gerekir.
+
+8. Köprü (Bridge) Döngüsü
+   ──────────────────────
+   İki broker birbirine bridge edilip aynı topic iki yönlü forward
+   edilirse mesaj döngüsü (sonsuz çoğalma) oluşur. Bridge topic
+   yönlerini (in/out/both) ve döngü önleyici filtreleri dikkatle ayarla.
+```
+
+## Optimizasyon
+
+Endüstriyel MQTT optimizasyonu, tek bir PLC'den çok tüm UNS pipeline'ının throughput ve dayanıklılığını hedefler. Uzman öncelik sırası:
+
+```
+ÖNCELİK 1 — Report-by-exception / Sparkplug NDATA
+  Periyodik "her değeri her saniye" yayını yerine yalnızca değişeni
+  (deadband ile) yayınla. UNS trafiğinin %70-90'ı buradan düşer.
+  Sparkplug B bunu standartlaştırır; ham MQTT'de deadband mantığını
+  edge node (CODESYS) içinde elle kur.
+
+ÖNCELİK 2 — Payload formatını sıkıştır
+  JSON → Protobuf/Sparkplug. 4G/uydu üzerinden faturayı doğrudan düşürür.
+  Metadata'yı her mesajda tekrarlama; NBIRTH'de bir kez tanımla.
+
+ÖNCELİK 3 — QoS disiplinini katmana göre uygula
+  Telemetri QoS 0 (kayıp tolere). Alarm/komut/durum QoS 1.
+  Sayaç/batch QoS 2 (yalnızca gerçekten gerektiğinde).
+  Tüm UNS'i QoS 2 yapmak broker CPU'sunu birkaç kat artırır.
+
+ÖNCELİK 4 — Subscriber tarafını yatay ölçekle (MQTT 5.0 shared sub)
+  Tek InfluxDB-yazıcı yetişemiyorsa $share/group/factory/# ile
+  N paralel tüketici. Broker load-balance eder, kuyruk erir.
+
+ÖNCELİK 5 — Broker kural motorunu (EMQX/HiveMQ) edge'de kullan
+  Alarm filtreleme, downsampling, format dönüşümünü broker içinde yap;
+  her mesajı buluta forward etmek yerine kuralla seç → bulut maliyeti düşer.
+
+ÖNCELİK 6 — Persistent session'ı bilinçli yönet
+  Offline mesaj gereken saha cihazı: clean_session=False + Session Expiry.
+  Geçici dashboard/test istemcisi: clean_session=True (broker'ı şişirme).
+
+ÖNCELİK 7 — Cluster ve donanım (en son)
+  Yukarıdakiler tükendiğinde HiveMQ/EMQX cluster + node ekleme.
+  Mimari ve mesaj tasarımı düzeltilmeden cluster atmak pahalı yanılgıdır.
+
+Genel kural: UNS'te en ucuz mesaj, gönderilmeyen mesajdır. Önce
+report-by-exception, sonra sıkıştırma, en son donanım.
+```
+
+## Derin Teknik Detay
+
+Endüstriyel MQTT'nin neden bu mimariyle çalıştığını anlamak, Sparkplug B ve UNS gibi kavramların neden ortaya çıktığını açıklar.
+
+```
+1. Neden UNS (Unified Namespace)? — N×M Entegrasyonun Çöküşü
+   ──────────────────────────────────────────────────────────
+   Point-to-point entegrasyonda N kaynak × M tüketici = N×M bağlantı
+   ve her birinin ayrı protokol/format/yaşam döngüsü vardır. Bir kaynak
+   değişince ona bağlı tüm tüketiciler kırılır. MQTT broker'ı tek bir
+   "tek doğruluk kaynağı" (single source of truth) topic ağacına çevirince
+   N+M'ye düşer: herkes broker'la konuşur, birbiriyle değil. Bu, pub/sub
+   decoupling'in fabrika ölçeğindeki doğrudan sonucudur. Topic ağacı
+   ISA-95 ile hizalanınca namespace hem makine hem insan tarafından
+   gezilebilir bir "canlı fabrika modeli" olur.
+
+2. Neden Sparkplug B? — Ham MQTT'nin Üç Eksiği
+   ────────────────────────────────────────────
+   MQTT bilinçli olarak payload'a ve topic'e ANLAM yüklemez (transport).
+   Endüstride bu üç boşluk yaratır:
+     (a) Durum belirsizliği: Cihaz online mı, veri taze mi, bilinmez.
+         → Sparkplug Birth/Death sertifikaları + seq numarası ile çözülür.
+     (b) Keşfedilemezlik: Yeni gelen tag'leri/birimleri bilmez.
+         → NBIRTH'te tüm metric metadata bir kez yayınlanır.
+     (c) Verimsizlik: Tüm değerler her seferinde gönderilir.
+         → NDATA report-by-exception + Protobuf ile çözülür.
+   Sparkplug, MQTT'yi değiştirmez; üstüne "endüstriyel state machine"
+   katmanı kurar. Bu yüzden herhangi bir MQTT broker'ında çalışır.
+
+3. Neden Katmanlı Mimari (OPC UA cihazda, MQTT bulutta)?
+   ──────────────────────────────────────────────────────
+   OPC UA istek-yanıt + semantik + browse + güvenli metod çağrısı verir:
+   SCADA'nın PLC'ye setpoint yazması, alarm onaylaması için ideal —
+   ama broker'sız, noktadan noktaya ve görece ağırdır. MQTT push + çok
+   alıcı + ölçek verir: aynı veriyi InfluxDB, Grafana, bulut ve MES'e
+   eş zamanlı dağıtmak için ideal — ama kontrol semantiği yoktur.
+   İkisi rakip değil tamamlayıcıdır çünkü FARKLI problemleri çözerler:
+   kontrol (deterministik, iki yönlü) vs gözlemlenebilirlik (dağıtım,
+   ölçek). OPC UA PubSub spesifikasyonu MQTT'yi transport olarak
+   kullanabilir — yani sınır da bulanıktır.
+
+4. Neden Broker Kural Motoru (EMQX/HiveMQ) Edge'de Önemli?
+   ────────────────────────────────────────────────────────
+   Her mesajı buluta forward etmek bant genişliği ve bulut işlem maliyeti
+   demektir. Broker'daki SQL-benzeri kural motoru (EMQX) edge'de filtreleme,
+   eşik kontrolü ve format dönüşümü yapar: "yalnızca alarm eşiğini aşan
+   sıcaklıkları Kafka'ya yaz" gibi. Bu, MQTT'nin "dumb pipe" olmaktan
+   çıkıp edge-computing düğümüne dönüştüğü noktadır.
+
+5. Endüstriyel Güvenlik: Neden TLS + ACL Yeterli Değil, Ama Zorunlu
+   ─────────────────────────────────────────────────────────────────
+   MQTT'nin kendi güvenlik modeli yoktur; TLS (8883) transport şifreleme +
+   username/password kimlik + topic ACL yetkilendirme katmanları dışarıdan
+   eklenir. Bu, OPC UA'nın yerleşik sertifikalı güvenlik modelinin (IEC
+   62541) tersine "kütüphane/broker sorumluluğu"dur. IEC 62443 uyumu için
+   broker seçimi (HiveMQ) ve sertifika yaşam döngüsü yönetimi kritik olur;
+   protokol tek başına uyumluluk vermez.
+```
 
 ## İlgili Konular
 

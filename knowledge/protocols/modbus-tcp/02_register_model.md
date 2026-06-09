@@ -2,8 +2,8 @@
 KONU        : Modbus Register Modeli ve Adresleme
 KATEGORİ    : protocols
 ALT_KATEGORI: modbus-tcp
-SEVİYE      : Temel
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://modbussimulator.com/blog/modbus-register-types-explained"
     başlık: "ModbusSimulator — Modbus Register Types Explained (2026)"
@@ -521,6 +521,91 @@ Bir frekans konvertörü belgesi "32-bit float, IEEE 754" yazıyordu, byte order
 
 **Not 3 — Tüm Veriyi Holding Register'a Koyan Cihazlar**  
 Çoğu Çin üretimi cihaz Input Register kullanmıyor; hem ölçümleri hem parametreleri Holding Register'a (4x) koyuyor. Belge "HR 40001-40100" ve FC03 kullan diyor. Bu Modbus standardını çiğniyor ama pratikte çok yaygın. CODESYS'te slave tasarlarken bu baskıyı bilmek faydalı.
+
+**Not 4 — Word Tearing: Sayaç 1.5M'de Anlık Sıçradı**  
+Bir üretim sayacı (UINT32, 2 register) okunurken trend grafiğinde rastgele anlık sıçramalar görülüyordu: 1.499.999 → 98.304 → 1.500.001. Sebep word tearing: PLC sayacı High word'ü artırırken (0x0016 → 0x0017) tam o anda Low word henüz dönmemişti, master ise iki register'ı PLC güncellemesinin ortasında okudu. Modbus 32-bit okumayı atomik garanti etmez. Çözüm: PLC tarafında değeri "shadow" değişkene kopyalayıp iki register'ı aynı scan'de yazmak; master tarafında ise iki ardışık okuma yapıp High word değişmediyse kabul etmek.
+
+**Not 5 — INT16 Negatif Değerin "Dev Sayı" Görünmesi**  
+Bir sıcaklık probu -5.0°C okuduğunda HMI 6549.1°C gösterdi. Register ham değeri 65486 idi. Cihaz INT16 (işaretli) kullanıyordu (-50 ×10 ölçek), HMI ise UINT16 olarak yorumladı: -50'nin iki'nin tamamlayıcısı 65486. Negatif sıcaklık/değer ihtimali olan her register'da işaretli/işaretsiz yorumlama belgeden netleştirilmeli; aksi halde sıfırın altına inince "dev pozitif sayı" tuzağına düşülür.
+
+**Not 6 — String'de Byte Swap ve Boş Karakter Kirliliği**  
+Bir cihazın "Cihaz Adı" string register bloğu okunduğunda "PMU1P" yerine "MPU11P\x00\x07" gibi karışık geldi. İki sorun vardı: (1) cihaz string'i byte-swapped depoluyordu (her register içinde high/low byte ters), (2) string sonu null değil çöp byte ile dolduruluyordu. Çözüm: Her register içinde byte swap uygulandı ve `[A-Za-z0-9 ]` dışı tüm karakterler kırpıldı. String için ASCII byte sırası asla varsayılmamalı, mutlaka bilinen bir değerle (cihaz seri no) test edilmeli.
+
+**Not 7 — Vendor Farkı: Bit Numaralandırma Tersliği**  
+Bir Schneider VFD'nin durum word'ünde "bit 0 = çalışıyor" belgelenmişti ama gerçekte bit 15'ti. Üretici "bit 0"ı MSB'den sayıyordu (büyük-endian bit numaralandırma), kod ise LSB'den (`value & 0x0001`). Modbus register'ı içinde bit anlamı verirken üreticiler bazen MSB-first, bazen LSB-first numaralandırır. Bir durum bitini ezberlemek yerine bilinen bir durumu (cihazı çalıştır, hangi bit değişiyor gör) gözlemlemek en güvenli yoldur.
+
+## Edge Case'ler ve Sistem Limitleri
+
+```
+EDGE CASE                          DAVRANIŞ                       SONUÇ / ÇÖZÜM
+─────────────────────────────────────────────────────────────────────────────
+UINT16 taşması                     65535 + 1 → 0 (wrap)           Sayaçta DWORD kullan
+INT16 / UINT16 belirsizliği        65486 = -50 veya 65486?        Belgeden işaret oku
+32-bit word tearing                Atomik değil, ortada okunabilir İki okuma / shadow
+Float NaN / Inf register'da        0x7FC00000 vb. ham gelir        struct anlamlandırır
+                                                                   ama NaN kontrolü şart
+Float subnormal/denormal           çok küçük değer → 0'a yakın     Tipik ölçümde sorun yok
+Tek-tek mı blok mu okuma           HR[5] ile HR[6] ayrı okunursa  Çift değerde tutarsızlık
+Coil/DI bit paketleme              8 bit/byte, son byte padding   Padding bitleri 0
+Endian + word swap kombinasyonu    4 farklı float varyantı        Test zorunlu
+String tek/çift uzunluk            tek karakterde son byte padding Trailing \x00 kırp
+```
+
+**Word tearing — derinlemesine:**
+Bir 32-bit değer (REAL veya DWORD) iki ardışık 16-bit register'a yayılır. Modbus, bir FC03 isteğinde bu iki register'ı **tek atomik snapshot** olarak okumayı garanti **etmez** — özellikle sunucu (PLC), değeri scan döngüsünün ortasında güncelliyorsa. Sonuç: High word yeni, Low word eski (veya tersi) → tamamen anlamsız bir ara değer.
+
+```
+Senaryo (DWORD sayaç, 0x0015FFFF → 0x00160000 geçişi):
+  PLC scan N:   HR[10]=0x0015, HR[11]=0xFFFF   (1.441.791)
+  PLC günceller HR[11]=0x0000 ... (HR[10] henüz değişmedi)
+  Master okur:  HR[10]=0x0015, HR[11]=0x0000   (1.376.256) ← YANLIŞ!
+  PLC günceller HR[10]=0x0016
+  PLC scan N+1: HR[10]=0x0016, HR[11]=0x0000   (1.441.792) ← Doğru
+```
+
+**Çözüm desenleri:**
+- **PLC tarafı (önerilen):** Değeri yerel shadow değişkene kopyala, iki register'ı aynı scan'de I/O image'a yaz. Bus Cycle Task tek scan'de tutarlı yazar.
+- **Master tarafı:** İki ardışık okuma; High word her iki okumada aynıysa değeri kabul et, farklıysa üçüncü kez oku.
+- **Handshake biti:** PLC yazmayı bitirince "valid" bitini set eder, master yalnızca bit set iken okur.
+
+**NaN/Inf riski:** Float register'lar başlatılmamışsa (0xFFFFFFFF veya 0x7F800000) `struct.unpack('>f', ...)` `nan`/`inf` döndürür. Okuma sonrası `math.isfinite()` kontrolü, çöp veriyi proses mantığına sızdırmamak için şarttır.
+
+## Optimizasyon
+
+Register modeli düzeyinde optimizasyon, **haritanın fiziksel düzeni** ile ilgilidir. Doğru düzen, function code seviyesindeki batch read'i mümkün kılar.
+
+```
+OPTİMİZASYON                       KAZANÇ
+─────────────────────────────────────────────────────────────────
+Sık okunanları bitişik yerleştir   Tek FC03 ile tüm blok → 1 round-trip
+Tipe göre grupla (tüm UINT16 bir    Maskeleme/scaling döngüsü
+araya, float'lar başka blok)        basitleşir, hata azalır
+32-bit değerleri çift-hizala        Word swap mantığı tek noktada
+(çift offset'e koy)
+Boşlukları minimize et              Bitişik 0-50 bloğu, 0-5 + 90-95'ten
+ama anlamlı rezerv bırak            daha verimli okunur
+Az değişeni ayrı bloğa al           Setpoint bloğunu seyrek sorgula
+```
+
+**Bitişiklik vs delik (gap) trade-off'u:**
+FC03 max 125 register okuyabilir. Eğer ilgili 30 değer 0–500 aralığına dağılmışsa, master ya 500 register'ı tek istekte okur (çoğu boş, israf) ya da birden çok küçük istek atar (latency artar). En iyi tasarım: **aktif** okunan registerları dar, bitişik bir bloğa (örn. 0–40) toplamak; rezervleri bloğun **sonuna** koymak. Böylece tek `read_holding_registers(0, 40)` tüm canlı veriyi getirir.
+
+**Scaling'i kimde yap:**
+Ölçek faktörünü (×10, ×100) PLC'de değil, **mümkünse master/SCADA tarafında** uygulamak register'ı integer tutar (atomik, word tearing yok) ve hassasiyeti istemcide float'a taşır. PLC'de float yazmak word tearing riskini geri getirir. Pratik kural: Tam sayı + ölçek faktörü, mümkün olduğunda IEEE float'a tercih edilir — hem atomiktir hem bant verimlidir (1 register vs 2).
+
+## Derin Teknik Detay
+
+**Neden her şey 16-bit?**
+1979'da Modicon 084 PLC'si 16-bit kelime mimarisine sahipti; "register" doğrudan PLC'nin dahili hafıza kelimesiydi. Coil/Discrete Input ise tek-bit I/O noktalarıydı. Yani Modbus veri modeli soyut bir tasarım değil, **belirli bir 1979 PLC'sinin hafıza haritasının doğrudan dışa açılmasıdır.** 16-bit register, float veya 32-bit gibi modern tiplerin neden "iki register'a sıkıştırma" hilesiyle taşındığını açıklar: Protokol bu tipleri hiç tanımlamadı, kullanıcılar onları register çiftlerine kodlamak zorunda kaldı. Standart bu kodlamayı (byte/word order) **belirtmediği** için her vendor kendi kararını verdi → endianness kaosu.
+
+**4 ayrı adres alanı — neden örtüşür?**
+Coil, Discrete Input, Holding Register ve Input Register'ın **dördü de** protokolde 0x0000'dan başlar. "40001/30001" gibi 5-haneli notasyon yalnızca **insan okuması için** bir konvansiyondur (ilk hane tipi gösterir), wire'da gönderilmez. Dört ayrı alan, 1979 PLC'sindeki dört fiziksel hafıza bölgesini (çıkış bitleri, giriş bitleri, tutma kelimeleri, giriş kelimeleri) yansıtır. Bu yüzden FC03 ile okunan "adres 0" ile FC04 ile okunan "adres 0" tamamen farklı hafıza hücreleridir — function code, hangi alana bakılacağını belirler.
+
+**Endianness neden çözülemedi:**
+IEEE 754 byte sırası tek (big-endian: 0x40490FDB), ama bu 4 byte'ı iki 16-bit register'a yerleştirmenin iki ekseni var: (1) byte order register **içinde**, (2) word order iki register **arasında**. 2×2 = 4 kombinasyon (AB CD, CD AB, DC BA, BA DC). Standart hiçbirini zorunlu kılmadığı için her vendor donanım mimarisinin doğal sırasını kullandı (big-endian CPU → AB CD, little-endian CPU → genelde word-swapped). Bu, modern Modbus istemcilerinin neden 4 varyantı da desteklemek ve "test ederek tespit" stratejisi sunmak zorunda olduğunun kök sebebidir.
+
+**Bit-in-register vs ayrı coil — tasarım gerilimi:**
+Bir boolean'ı ya ayrı Coil/DI olarak ya da Holding Register içinde bir bit olarak sunabilirsin. Coil avantajı: FC05 ile tek bit atomik yazılır. Register-içi bit avantajı: 16 bool tek register'da, tek FC03 ile okunur (read-modify-write gerektirir yazmada). Çoğu modern cihaz "durum word"/"komut word" yaklaşımını seçer (register-içi bit) çünkü 16 bayrağı tek okumayla taşır — ama bu, bir biti değiştirmek için tüm word'ü read-modify-write etmeyi gerektirir ve çoklu-master senaryosunda yarış koşulu (race) doğurur.
 
 ## İlgili Konular
 

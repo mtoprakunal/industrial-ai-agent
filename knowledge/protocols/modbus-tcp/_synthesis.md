@@ -2,8 +2,8 @@
 KONU        : Modbus TCP — Sentez
 KATEGORİ    : protocols
 ALT_KATEGORI: modbus-tcp
-SEVİYE      : Temel–Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/protocols/modbus-tcp/01_protocol_basics.md"
     başlık: "Modbus TCP Protokol Temelleri"
@@ -61,6 +61,38 @@ BAĞLANTILAR :
 ## Özün Ne
 
 Modbus TCP, 1979'dan beri kullanılan ve bugün de dünyanın en yaygın endüstriyel iletişim protokolü olan Modbus'un Ethernet/TCP-IP üzerindeki versiyonudur. Güvenlik, otomatik keşif veya zengin veri tipleri gibi modern özellikleri yoktur; buna karşın basitliği, lisanssızlığı ve evrensel cihaz desteği onu vazgeçilmez kılar. Bu sentez, beş belgeyi tek bir bütün olarak bağlar: protokol çerçeve yapısından register modeline, function code'lardan CODESYS slave yapılandırmasına ve Python/JavaScript istemcilerine kadar tüm zinciri kavramsal olarak örgüler.
+
+### Birleştirici İlke: Radikal Basitlik ve Bedeli
+
+Modbus TCP'nin tüm davranışı tek bir tasarım felsefesinden türer: **radikal basitlik.** Protokolün tamamı şu üç ilkeye indirgenebilir:
+
+```
+1. SADECE 4 VERİ TİPİ        : Coil, Discrete Input, Holding Reg, Input Reg
+                               → Hepsi 16-bit kelime veya tek bit
+2. SADECE ~8 FONKSİYON KODU  : Oku/yaz × tek/çoklu × bit/word
+                               → Tek byte'a sığar, herhangi bir MCU implemente eder
+3. STATELESS POLL-RESPONSE   : Master sorar, slave yanıtlar; sunucu durum tutmaz
+                               → 1979 PLC hafıza haritasının doğrudan dışa açılması
+```
+
+Bu basitlik Modbus'u 47 yıldır yenilmez kılar (her cihaz destekler, saatlerde öğrenilir, birkaç yüz satırla implemente edilir). Ama her tasarım kararının doğrudan bir **bedeli** vardır — ve uzman seviyesi tam olarak bu bedelleri tanımak ve yönetmektir:
+
+```
+BASİTLİK KARARI            →  BEDELİ                          →  YÖNETİMİ
+──────────────────────────────────────────────────────────────────────────────
+Güvenlik mekanizması yok      Herkes okur/yazar; FrostyGoop      Ağ segmentasyonu,
+                              (2024) fiziksel hasar              VPN, firewall
+16-bit kelime dünyası         32-bit değer 2 register'a          Endian test, atomik
+                              bölünür → endianness kaosu         yazma deseni
+Stateless, atomik-değil       Word tearing (32-bit yarım okuma)  Shadow/handshake/çift
+                                                                 okuma
+Master-poll, push yok         Olay bildirimi imkânsız;           Batch read, polling
+                              her şey periyodik sorgu            katmanlama
+Otomatik keşif yok            Register anlamı belgeden öğrenilir Register haritası
+                                                                 standardizasyonu
+```
+
+> **Tek cümlelik uzman özeti:** Modbus TCP'yi öğrenmek bir gün sürer; Modbus TCP'nin *bedellerini* yönetmek (endianness, word tearing, güvenlik, polling verimliliği) bir mühendislik disiplinidir — ve bu beş belgenin asıl konusu odur.
 
 ## Nasıl Çalışır
 
@@ -277,6 +309,52 @@ Test yöntemi: Bilinen değer yaz (örn. 1.0 = 0x3F800000),
 | jsmodbus | Node.js | Evet | Promise | Web dashboard, Node-RED entegrasyonu |
 | modbus-serial | Node.js | Evet | Callback | Hem TCP hem RS485 serial |
 
+### G. Konsolide Edge-Case ve Limit Tablosu
+
+Beş belgenin sınır koşulları tek tabloda. Her satır, "basitliğin bedeli" ilkesinin somut bir tezahürüdür.
+
+| Edge Case | Limit / Davranış | Katman | Çözüm | Detay |
+|---|---|---|---|---|
+| FC03/04 okuma limiti | 125 register | Protokol (byte count 8-bit) | Elle blokla | 03 |
+| FC16 yazma limiti | 123 register | Protokol | Elle blokla | 03 |
+| Word tearing (32-bit) | Atomik değil | Register modeli | Shadow / handshake / çift okuma | 02, 04 |
+| Endianness | 4 varyant (AB CD…) | Veri tipi | Bilinen değerle test | 02, 05 |
+| INT16 / UINT16 | -50 = 65486 belirsizliği | Veri tipi | Belgeden işaret oku | 02 |
+| TCP stream framing | recv ≠ 1 frame | Transport | Length-aware okuma | 01, 05 |
+| Transaction ID wrap | 65536'da başa döner | Protokol | Senkron iletişim | 01 |
+| Half-open socket | 60-120s sessiz donma | Transport | App watchdog + timeout | 01, 05 |
+| Nagle + delayed ACK | ~40ms gizli gecikme | Transport | TCP_NODELAY | 01, 05 |
+| MaxConnections aşımı | RST veya sessiz drop | Slave | Tek aggregator istemci | 04, 05 |
+| Bağlantı koptu, komut kaldı | Register donar | CODESYS slave | Watchdog + güvenli durum | 04 |
+| Bus Cycle Task atanmamış | I/O güncellenmez | CODESYS slave | Task_Slow seç | 04 |
+| HR'ı PLC kodu ezer | Master yazması silinir | CODESYS slave | Tek-yön konvansiyonu | 04 |
+| count > 125 sessiz | Kütüphaneye göre değişir | İstemci | İsteği böl, doğrula | 03, 05 |
+| ExceptionResponse.registers | AttributeError | İstemci | isError() kontrol | 05 |
+| Thread paylaşımlı client | Yarış, bozuk yanıt | İstemci | threading.Lock | 05 |
+| Async gather tek bağlantı | İstekler karışır | İstemci | Sıralı await | 05 |
+| NaN/Inf float | Proses mantığına sızar | Veri tipi | isfinite() filtre | 02, 05 |
+| Port 502 internete açık | FrostyGoop tarzı saldırı | Güvenlik | Ağ izolasyonu | 01 |
+
+### H. Uzman Optimizasyon Sıralaması
+
+Modbus TCP performansı neredeyse tamamen **round-trip sayısı** ve **TCP davranışı** ile ilgilidir; bant genişliği nadiren darboğazdır. Kazanç sırasıyla:
+
+```
+ÖNCELİK  OPTİMİZASYON          KAZANÇ                           KATMAN
+──────────────────────────────────────────────────────────────────────────
+1 (en üst) Batch read           20 istek (40ms) → 1 (2ms)        İstemci + harita
+2          TCP_NODELAY          40ms → 2ms (en büyük tekil)      İstemci/transport
+3          Persistent connection Her döngü 1 RTT handshake israfı İstemci
+4          Polling katmanlama    Değişmeyeni seyrek sorgula (~%70) İstemci
+5          Register düzeni       Sık okunanı bitişik maple        CODESYS slave
+6          retries düşük tut     Hızlı döngüde takılma önle        İstemci
+7          FC23 (oku+yaz)        2 RTT → 1 RTT (destekleniyorsa)  Protokol/cihaz
+8          FC22 (mask write)     Atomik bit, RMW yarışını çöz     Protokol/cihaz
+9 (en alt) Paralel = ayrı bağlantı Farklı slave'lere 1 client/her İstemci mimarisi
+```
+
+**Anahtar içgörü:** İlk iki madde (batch read + TCP_NODELAY) tipik bir sistemde performansın %90'ını belirler. Tek slave'e paralel bağlantı (9. madde) çoğu zaman **kazanç sağlamaz** — slave istekleri zaten seri işler. Modbus'ta "hızlı" demek, "az istek at" demektir.
+
 ## Pratikte Nasıl Kullanılır
 
 ### "İlk CODESYS Slave + Python Client" Kontrol Listesi
@@ -466,6 +544,18 @@ Modbus slave Bus Cycle Task'ı yanlışlıkla Task_Control (10ms, Prio:2) seçil
 
 **Not 7 — Thread Lock'un Önemi**
 Monitoring scriptinde her sensör için ayrı thread, hepsi aynı `client` nesnesini kullanıyordu. Rastgele "invalid response" hataları geliyordu. Threading.Lock eklendikten sonra tüm hatalar kalktı. pymodbus istemci nesneleri thread-safe değildir.
+
+**Not 8 — Word Tearing: Basitliğin En Sinsi Bedeli (bkz. 02, 04)**
+Bir DWORD üretim sayacının trendinde rastgele sıçramalar (1.499.999 → 98.304) görüldü. Sebep word tearing: Master, PLC iki register'ı güncellerken ortada okudu (High yeni, Low eski). Modbus 32-bit okumayı atomik garanti etmez — bu stateless tasarımın doğrudan sonucudur. Çözüm üç katmanlı: PLC tarafında shadow değişkenle tek scan'de yazma (04), master tarafında çift okuma doğrulaması (02), ya da handshake biti. Hiçbiri protokol seviyesinde değil; hepsi uygulama disiplini.
+
+**Not 9 — TCP_NODELAY: Tek Satırla 40ms → 2ms (bkz. 01, 05)**
+Bir Linux gateway'inde her Modbus round-trip ~40ms sürüyordu, ağ ping'i <1ms iken. Sebep Nagle algoritması + delayed ACK etkileşimi: Küçük PDU'lar (12 byte) tamponlanıp geç gönderiliyordu. `TCP_NODELAY=1` ile 2ms'ye düştü. Modbus gibi küçük-paket-yoğun, senkron protokollerde TCP_NODELAY neredeyse her zaman doğrudur ve batch read'den sonra en büyük tekil performans kazancıdır.
+
+**Not 10 — Watchdog Olmadan: SCADA Öldü, Motor Döndü (bkz. 04)**
+SCADA komut register'ı ile motoru başlattı, sonra çöktü. TCP koptu ama CODESYS slave'in son yazdığı Start=1 değeri hafızada kaldı; motor durmadı. Stateless slave "istemci gitti → komutu geri al" kavramını bilmez. Emniyet, uygulama katmanında watchdog (X saniye yazma yoksa güvenli duruma zorla) ile inşa edilmek zorundadır. OPC UA session keepalive'ın çözdüğü problem tam budur; Modbus'ta bedeli manuel watchdog kodudur.
+
+**Not 11 — pymodbus 2.x → 3.x Sessiz Kırılması (bkz. 05)**
+Sürüm yükseltmesinde tüm `unit=1` parametreleri `slave=1` oldu, import yolları değişti, exception sınıfları yeniden adlandırıldı. Çağrılar `TypeError` ile kırıldı. pymodbus sürümleri arası kırıcı değişiklik sıktır; production'da sürüm pinlenmeli (`pymodbus==3.6.*`) ve yükseltme öncesi changelog okunmalı. Kütüphane değişiminde (pymodbus ↔ pyModbusTCP) hata semantiği bile tersine döner: biri `isError()`, diğeri `None` kontrolü.
 
 ## İlgili Konular
 

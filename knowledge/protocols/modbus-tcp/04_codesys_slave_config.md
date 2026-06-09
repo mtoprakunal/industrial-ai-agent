@@ -2,8 +2,8 @@
 KONU        : CODESYS Modbus TCP Slave Yapılandırması
 KATEGORİ    : protocols
 ALT_KATEGORI: modbus-tcp
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Modbus/_mod_edt_slave_com_channel.html"
     başlık: "CODESYS Online Help — Modbus Server Channel Configuration"
@@ -570,6 +570,78 @@ GVL_Modbus.wCommandRegister := GVL_Modbus.wCommandRegister AND (NOT 16#0001);
 
 **Not 4 — Adresleme Karışıklığı ile Kayıp Bir Gün**  
 HMI belgesi "HR 40011 = Akış Hızı" yazıyordu. HMI yazılımcısı register adresine 40011 girdi, pymodbus testi `address=40011` kullandı. İki taraf da yanlıştı: Doğrusu `address=10`. Gün boyunca her iki taraf "bizim yazılımımız doğru, karşı taraf hatalı" dedi. Wireshark ile frame analizi: Request `address=40011 (0x9C6B)` — aralık dışı → Exception 0x02. Belge standardizasyonu: Register haritasında hem 1-tabanlı belge referansı hem 0-tabanlı protokol adresi gösterildi.
+
+**Not 5 — Bus Cycle Task Jitter'ı ve "Geç Gelen" Veri**  
+Modbus slave I/O güncellemesi Bus Cycle Task'a bağlıdır. Task_Slow (100ms) seçilen bir projede, master 50ms'de bir sorgulasa bile PLC değerleri ancak 100ms'de bir tazeleniyordu — master ardışık iki okumada aynı değeri görüyordu. Üstelik Task_Slow başka ağır kodla yüklenince jitter 100ms'den 180ms'ye çıktı. Master tarafındaki polling periyodu, slave'in Bus Cycle Task periyodundan **kısa** olmamalı; aksi halde aynı snapshot tekrar tekrar okunur (gereksiz trafik). Master polling = Bus Cycle Task periyodu (veya biraz uzun) ayarlandı.
+
+**Not 6 — Watchdog'un Olmayışı: PLC Çalışıyor, SCADA Öldü, Motor Döndü**  
+Bir kurulumda SCADA komut register'ı üzerinden motor başlattı. SCADA bilgisayarı çöktü; TCP bağlantısı koptu ama CODESYS slave'in son yazdığı register değerleri (Start=1) hafızada kaldı. PLC kodu "son komutu" uygulamaya devam etti, motor durmadı. Modbus slave kendiliğinden "bağlantı koptu → güvenli değer" yapmaz. Çözüm: PRG_ModbusHealth ile master aktivitesini izleyen bir watchdog; X saniye yazma gelmezse komut registerlarını güvenli duruma (Stop) zorlamak. Emniyet-kritik komutlar asla "kalıcı register değeri"ne bırakılmamalı.
+
+**Not 7 — REAL Mapping: %QW Çiftinde Word Sırası Sürprizi**  
+CODESYS'te bir REAL değişkeni doğrudan iki ardışık Holding Register offset'ine mapledik (uConv UNION ile). Master Big-Endian okudu ama değer ters geldi. Sebep: CODESYS'in çalıştığı hedef (ARM, little-endian Raspberry Pi) REAL'i bellekte little-endian word sırasıyla tutuyordu; aynı proje x86 yerine ARM'de farklı word sırası verdi. Çözüm: REAL'i iki WORD'e bölerken platform-bağımsız açık dönüşüm (SHR/AND ile manuel) kullanmak, UNION'a güvenmemek. CODESYS Modbus mapping'inde 32-bit değerlerde hedef CPU endian'ı mutlaka test edilmeli.
+
+**Not 8 — Holding Register Sayısını Az Tutmanın Bedeli**  
+Hafıza tasarrufu için HR Count = 50 ayarlandı (tam ihtiyaç). Sonradan 8 register'lık yeni bir özellik eklenince master `address=52` istedi → Exception 0x02. SCADA tarafında "cihaz arızalı" alarmı çıktı, saatlerce yanlış yerde arandı. Slave register sayısı her zaman ihtiyacın ~1.5 katı ayarlanmalı; CODESYS'te register hafızası ucuzdur, sonradan büyütmek download + duruş gerektirir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+```
+EDGE CASE                          CODESYS DAVRANIŞI               SONUÇ
+─────────────────────────────────────────────────────────────────────────────
+Register Count yetersiz            Aralık dışı isteğe Exception   0x02 döner
+                                   0x02                            (cihaz arızası değil)
+Bus Cycle Task atanmamış           I/O image güncellenmez          Değerler donar
+Bus Cycle Task çok hızlı           CPU yükü + kontrol jitter'ı     Task_Control yavaşlar
+MaxConnections aşımı               Yeni TCP bağlantısı reddedilir  RST veya sessiz drop
+Bağlantı koptu                     Son register değerleri kalır    Watchdog şart
+Aynı HR'a PLC + master yazar       Master'ın yazdığı her scan ezilir HR tek-yön olmalı
+REAL/DWORD word sırası             Hedef CPU endian'ına bağlı      Platformda test et
+Çoklu master aynı register         Son yazan kazanır               Blok bölümle
+Download sırasında bağlantı        TCP koparılır, master timeout   Beklenen davranış
+```
+
+**Bus Cycle Task — I/O image senkronizasyonu:**
+CODESYS'te Modbus slave register'ları, atanan Bus Cycle Task'ın **başında** GVL'den okunur ve **sonunda** GVL'ye yazılır (I/O image güncelleme). Yani master'ın yazdığı bir HR değeri, PLC koduna ancak bir sonraki task döngüsünde görünür; PLC'nin yazdığı bir IR değeri, master'a ancak task döngüsü tamamlandıktan sonra ulaşır. Bu, master polling'i task periyodundan hızlı yapıldığında neden "bayat snapshot" okunduğunu açıklar.
+
+**Atomiklik garantisi — task içi:**
+Bir 32-bit değerin iki register'ı **aynı Bus Cycle Task scan'inde** GVL'ye yazılırsa, I/O image güncellemesi tek seferde olduğundan o iki register tutarlı bir snapshot oluşturur. Word tearing riski, PLC değeri **scan'ler arasında** parça parça güncellediğinde doğar. Bu yüzden 32-bit değerleri tek atama bloğunda yazmak (shadow değişken deseni) CODESYS slave'de word tearing'i kaynağında çözer.
+
+**MaxConnections aşımı:**
+`CODESYSControl.cfg` içindeki `MaxConnections` aşıldığında runtime davranışı platforma göre değişir: Bazıları yeni bağlantıya TCP RST gönderir (istemci anında "connection refused" alır), bazıları bağlantıyı kabul edip ilk istekte düşürür. Çok sayıda istemci (her biri kendi bağlantısını açan) varsa bu limit hızla dolar; tek bir gateway/aggregator istemci tasarımı tercih edilmeli.
+
+## Optimizasyon
+
+```
+OPTİMİZASYON                       KAZANÇ / GEREKÇE
+─────────────────────────────────────────────────────────────────
+Doğru Bus Cycle Task (Task_Slow)   Kontrol döngüsü jitter'ını korur
+Register'ları bitişik maple         Master tek FC03 ile tüm bloğu okur
+Tek-yön veri akışı (HR↔IR ayrımı)  Ezme/race önlenir, mantık netleşir
+PRG_ModbusUpdate'i hafif tut        Task_Slow exec time düşük kalır
+Değişmeyen IR'ları her scan         Gereksiz; ama maliyet düşük —
+güncellemeyebilirsin                netlik için güncellemek tercih edilir
+32-bit değerde shadow deseni        Word tearing'i kaynağında çözer
+```
+
+**Task periyodu seçimi — kontrol vs Modbus:**
+Modbus I/O güncellemesi gerçek zamanlı kontrol döngüsünün (Task_Control, 10ms) içinde **olmamalıdır**. Modbus güncellemesini ayrı, daha yavaş bir task'a (Task_Slow, 100ms) koymak iki kazanç sağlar: (1) Kontrol döngüsü jitter'ı korunur — Modbus I/O, kontrol scan'ine yük bindirmez; (2) Master tipik olarak 100ms–1s periyodla sorgular, daha hızlı I/O güncellemesi zaten boşa gider. Modbus güncelleme periyodu, master'ın en hızlı polling periyoduna eşit veya biraz altında tutulmalıdır.
+
+**Register düzeni master verimliliğini belirler:**
+CODESYS I/O Mapping'de offset'leri **mantıksal olarak değil, master'ın okuma deseni**ne göre düzenle. Master her döngüde HR 0–20'yi okuyorsa, sık okunan tüm değerler 0–20 aralığında bitişik olmalı; rezerv ve nadir kullanılan registerlar bloğun sonuna. Böylece master tek `read_holding_registers(0, 21)` ile tüm canlı veriyi alır — slave tarafındaki düzen, master tarafındaki round-trip sayısını doğrudan belirler.
+
+**PRG_ModbusUpdate hafifliği:**
+Bu PRG her Bus Cycle Task scan'inde çalışır. İçine ağır hesap (PID, filtre, döngü) koymak Task_Slow exec time'ını şişirir ve I/O güncellemesini geciktirir. Sadece veri kopyalama/ölçekleme/bit-maskeleme yapmalı; iş mantığı kendi task'ında kalmalı.
+
+## Derin Teknik Detay
+
+**CODESYS Modbus slave neden "I/O cihazı" gibi modellenir?**
+CODESYS, Modbus slave register'larını Device Tree'de bir fieldbus I/O modülü gibi sunar çünkü altta yatan mekanizma gerçekten I/O image güncellemesidir. EtherCAT/PROFINET I/O modülleriyle **aynı** Bus Cycle Task mekanizmasını kullanır: Task başında girişler (master'ın yazdığı HR/Coil) GVL'ye kopyalanır, task sonunda çıkışlar (PLC'nin yazdığı IR/DI) register'lara yazılır. Bu birleşik model, Modbus register'larının neden doğrudan PLC değişkenlerine maplenip senkron tutulduğunu açıklar — Modbus, CODESYS'in genel fieldbus soyutlamasına oturtulmuştur.
+
+**Veri yönü neden donanımla zorlanmaz, konvansiyonla yönetilir:**
+Modbus protokolü Holding Register'ı R/W tanımlar — hem master yazabilir hem (teorik olarak) okunabilir. CODESYS bunu donanımsal olarak tek-yön yapmaz; mapping'de HR hücresi hem master'dan yazılabilir hem PLC kodundan değiştirilebilir. "HR = master yazar, PLC okur; IR = PLC yazar, master okur" kuralı bir **konvansiyondur**, protokol veya runtime zorlamaz. Bu yüzden "PLC HR'ı eziyor" hatası bu kadar yaygındır: Hiçbir mekanizma yanlış yönü engellemez, yalnızca disiplin engeller.
+
+**Bağlantısız (stateless) slave'in emniyet boşluğu:**
+Modbus slave, master'ın "hâlâ orada mı" olduğunu protokol seviyesinde bilmez. TCP bağlantısı koptuğunda runtime bunu algılayabilir ama register değerlerini **otomatik temizlemez** — son yazılan komut hafızada kalır. Bu, stateless poll-response tasarımının doğrudan sonucudur: Sunucu istemci durumu tutmadığı için "istemci gitti, komutu geri al" diye bir kavram yoktur. Emniyet, uygulama katmanında (watchdog timer + güvenli-durum fallback) inşa edilmek zorundadır. OPC UA'nın session/subscription keepalive mekanizmasının çözdüğü problem tam olarak budur; Modbus'ta bedeli manuel watchdog kodudur.
 
 ## İlgili Konular
 

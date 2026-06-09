@@ -2,8 +2,8 @@
 KONU        : CODESYS SysSock ile TCP Programlama
 KATEGORİ    : protocols
 ALT_KATEGORI: tcp-socket
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://forge.codesys.com/forge/talk/Runtime/thread/1bd5690115/"
     başlık: "CODESYS Forge — TCP Socket Communication"
@@ -746,6 +746,130 @@ Server uygulaması test aşamasında sık sık restart ediliyordu. Her restart't
 
 **Not 3 — Heartbeat ile Phantom Bağlantı Tespiti**  
 SCADA bağlantısı sabahları "connected" görünüyor ama veri gelmiyor ve gönderilemiyor. Nedeni: Gece boyunca NAT gateway session'ı kapsamış; TCP phantom bağlantı. recv() = -1 (non-blocking, veri yok) ve send() = -1 (gerçek hata) arasındaki fark net değildi. Heartbeat eklendi: 30 saniyede bir 2-byte ping, 5 saniyede yanıt gelmezse disconnect. Sabah bağlantı sorunu tamamen çözüldü.
+
+**Not 4 — FIONBIO'nun connect()'i Etkilememesi Sürprizi**  
+Yeni bir geliştirici, "socket'ı non-blocking yaptım, artık connect de non-blocking olur" varsayımıyla connect()'i Task_Control'e koydu. SysSockCreate hemen ardından FIONBIO=1 ayarlanmıştı. Yine de connect, erişilemeyen IP'de tüm task'ı dondurdu. CODESYS SysSock'ta SysSockConnect, FIONBIO'dan bağımsız olarak senkron tamamlanmaya çalışır — bu POSIX'teki "EINPROGRESS dönüp select ile bekle" davranışından farklıdır. Çözüm: connect mutlaka düşük öncelikli/Freewheeling task'ta. Bu davranış runtime/platforma göre değişebildiği için "non-blocking connect" varsayımına asla güvenme.
+
+**Not 5 — RTS_INVALID_HANDLE ile 0 Karıştırma ve Sızıntı**  
+Bir FB, hata yolunda `hSocket := 0` yapıyordu, `RTS_INVALID_HANDLE` değil. Bazı CODESYS runtime'larında geçerli bir handle değeri 0 olabilir; bu yüzden "0 ise kapatma" kontrolü gerçek bir açık socket'ı atladı → handle sızıntısı. Birkaç gün çalıştıktan sonra "SysSockCreate failed" ile tüm haberleşme durdu, restart geçici çözdü. Ders: handle kontrolünü her zaman `<> RTS_INVALID_HANDLE` ile yap, sihirli 0 ile değil; ve kapatınca tekrar `RTS_INVALID_HANDLE` ata (çifte close'u önler).
+
+**Not 6 — SysSockSelect ile Scan Verimliliği**  
+İlk tasarımda her client socket için ayrı non-blocking recv() çağrılıyordu; 8 bağlantıda scan süresi şişti çünkü her recv bir runtime/kernel geçişi. SysSockSelect ile tek çağrıda "hangi socket'larda veri var" sorgulanıp yalnızca hazır olanlarda recv yapıldı. Çok-bağlantılı server'da scan yükü belirgin düştü. Tek bağlantıda fark yok; çok-istemcili PLC server'da Select neredeyse zorunlu.
+
+## Edge Case'ler ve Sistem Limitleri
+
+PLC bağlamı, PC socket programlamasından iki kritik noktada ayrılır: (1) blocking bir çağrı tüm scan'i ve dolayısıyla kontrol mantığını dondurur (watchdog riski), (2) runtime'ın handle/buffer havuzu PC'ye göre çok daha kısıtlıdır. SysSock'un edge case'leri bu iki gerçeğin etrafında döner.
+
+### SysSock Çağrı Davranışları — Sınır Durumları
+
+| Durum | recv/connect/send davranışı | Doğru Tepki |
+|---|---|---|
+| `SysSockConnect`, erişilemez IP | Senkron bloke (saniyelerce) | Yalnızca Freewheeling/düşük-prio task |
+| `SysSockRecv` = 0 | Karşı taraf FIN gönderdi (EOF) | Socket kapat, `eDisconnected` |
+| `SysSockRecv` < 0 (non-blocking) | Veri yok | Normal — hiçbir şey yapma, devam et |
+| `SysSockRecv` < 0 (blocking) | Gerçek hata / timeout | `eFault`, socket kapat |
+| `SysSockSend` < istenen | TX buffer doldu (kısmi yazım) | Kalan byte için send-loop / tekrar dene |
+| `SysSockSend` < 0 | Bağlantı koptu (RST/FIN) | `eDisconnected` |
+| `SysSockAccept` = INVALID (non-blocking) | Bekleyen bağlantı yok | Normal — listening'de kal |
+| `SysSockBind` hata (restart) | TIME_WAIT, port meşgul | `SO_REUSEADDR` (Create sonrası, Bind öncesi) |
+| `SysSockCreate` = INVALID | Handle havuzu doldu (sızıntı!) | Sızıntıyı ara; her yolda Close çağrıldığını doğrula |
+
+### Gömülü Runtime Limitleri
+
+```
+Eşzamanlı socket:    Genellikle onlarla sınırlı (16-64 tipik). PC değil bu.
+                     Her açık handle havuzdan düşer; sızıntı = kademeli ölüm.
+Socket buffer:       PC'ye göre küçük (8-32 KB olabilir). Büyük blok = kısmi send.
+Scan etkileşimi:     Her SysSock çağrısı runtime geçişi; scan başına çok sayıda
+                     çağrı scan süresini şişirir → jitter, watchdog riski.
+String/Pointer:      ADR() ile geçilen buffer FB ömrü boyunca geçerli olmalı;
+                     VAR_TEMP buffer'ın adresini send/recv'e geçirmek = bellek hatası.
+```
+
+### Tehlikeli PLC-Özel Senaryolar
+
+```
+1. connect() yüksek-prio task'ta → watchdog → motorlar durur (en sık felaket).
+2. recv() <= 0 ile birleştirme → her boş non-blocking recv'de yanlışlıkla reconnect.
+3. Online change sonrası socket handle'ları persistent değil → "connected" sanılan
+   ölü handle; online change/reset sonrası bağlantıyı yeniden kurmaya zorla.
+4. İki task aynı socket'a erişiyor → yarış durumu, bozuk buffer. Socket sahibi tek task olmalı.
+```
+
+## Optimizasyon
+
+CODESYS'te TCP optimizasyonu öncelikle **scan'i temiz tutmak** ve **runtime kaynaklarını korumak** üzerinedir; ham throughput ikincildir. Etki sırasına göre:
+
+```
+ÖNCELİK 1 — Blocking connect'i scan'den ayır:
+  connect()'i Freewheeling/Task_Background'a al. Tek başına en kritik karar:
+  hem watchdog'u önler hem scan jitter'ını sıfırlar.
+
+ÖNCELİK 2 — Task ayrımı (GVL köprüsü):
+  TCP yönetimi Task_Background'da, kontrol Task_Control'de.
+  Veri GVL üzerinden paylaşılır → kontrol mantığı socket gecikmesinden izole.
+
+ÖNCELİK 3 — SysSockSelect ile çoklu socket:
+  Birden çok bağlantıda her socket'a ayrı recv yerine tek Select çağrısı.
+  Scan başına runtime geçiş sayısını düşürür.
+
+ÖNCELİK 4 — Buffer'ı bir kerede oku:
+  recv()'e büyük buffer (1-4 KB) ver; scan başına tek recv ile mümkün
+  olduğunca çok byte al. Çok sayıda küçük recv = çok sayıda runtime geçişi.
+
+ÖNCELİK 5 — TCP_NODELAY (komut-yanıt) / SO_SNDBUF (toplu transfer):
+  SysSockSetOption ile. Küçük komutlarda Nagle kapat; büyük binary'de buffer büyüt.
+
+ÖNCELİK 6 — Akümülatörü verimli yönet:
+  Tüketilen frame'i MEMCPY ile başa kaydırmak yerine, mümkünse ring buffer /
+  okuma-indeksi kullan; büyük buffer'da sürekli MEMCPY scan yükü yaratır.
+```
+
+| Hedef | Birincil Ayar | Task Yerleşimi |
+|---|---|---|
+| Watchdog'u önle | connect ayrı task | Freewheeling / Background |
+| Düşük komut gecikmesi | TCP_NODELAY | Background (recv/send), Control (kullanım) |
+| Yüksek throughput | SO_SNDBUF/RCVBUF büyük | Background, büyük recv buffer |
+| Çok istemci | SysSockSelect | Background, tek select döngüsü |
+
+## Derin Teknik Detay
+
+### SysSock Neden POSIX'e Benzer Ama Aynı Değil?
+
+SysSock, CODESYS runtime'ının altındaki işletim sisteminin (Linux, VxWorks, Windows CE, özel RTOS) socket API'sini soyutlayan ince bir sarmalayıcıdır. Amaç **platform bağımsızlığı**: aynı IEC kodu farklı PLC donanımlarında çalışsın. Bu soyutlama POSIX'e benzer isimler (`SysSockCreate`, `Bind`, `Recv`) kullanır ama bire bir değildir — örneğin handle tipi `RTS_IEC_HANDLE`'dır (ham int değil) ve hata kodları `RTS_IEC_RESULT` üzerinden taşınır. Bu yüzden POSIX/Python alışkanlıklarını (`select` ile non-blocking connect, errno yorumu) doğrudan taşımak hatalıdır.
+
+```
+Uygulama (IEC ST)
+      │  SysSockCreate / Connect / Recv ...
+      ▼
+SysSocket bileşeni  (platform-bağımsız IEC arayüzü)
+      │  runtime sistem çağrısı
+      ▼
+OS socket API  (Linux: socket()/connect()/recv(); VxWorks: kendi yığını)
+      │
+      ▼
+TCP/IP yığını + NIC sürücüsü
+```
+
+connect()'in blocking kalması, bu sarmalayıcının altındaki bazı RTOS'larda non-blocking connect'in (EINPROGRESS + select) güvenilir/taşınabilir olmamasından kaynaklanır; CODESYS güvenli ortak payda olarak senkron connect sunar. Bu yüzden "connect ayrı task" kuralı bir tavsiye değil, mimari zorunluluktur.
+
+### Neden State Machine — Doğrusal Kod Değil?
+
+PLC scan modeli **kooperatif** çalışır: her FB, scan başına bir kez çağrılır ve hızla geri dönmek zorundadır; içeride bekleyemez (`WHILE recv...` yasak). Bir TCP bağlantısı ise doğası gereği **uzun ömürlü ve asenkron** bir süreçtir (bağlan → veri al/gönder → kopunca yeniden bağlan). Bu iki modeli uzlaştırmanın tek yolu, asenkron süreci bir durum makinesine bölmektir: her scan'de mevcut durumda yapılabilecek küçük adımı at, durumu kaydet, geri dön.
+
+```
+Scan N   : eConnecting → connect denendi, henüz dönmedi (Freewheeling'de bekliyor)
+Scan N+1 : eConnecting → connect OK → eConnected
+Scan N+2 : eConnected  → recv: -1 (veri yok) → durumda kal
+Scan N+3 : eConnected  → recv: 37 byte → akümülatöre ekle
+...
+```
+
+Bu, "asenkron I/O'yu senkron scan'e sıkıştırma" probleminin kanonik çözümüdür. Aynı desen Modbus/OPC UA client FB'lerinde de görülür. Doğrusal/blocking yazım PC'de çalışır ama PLC'de watchdog'a yol açar — bu nedenle endüstriyel socket kodu her zaman explicit state machine'dir.
+
+### Handle Yönetimi — Neden Bu Kadar Disiplin Gerekir?
+
+Her `SysSockCreate` runtime'ın sınırlı handle havuzundan bir slot ayırır. PC'de binlerce socket açılabildiği için bir sızıntı fark edilmeyebilir; gömülü PLC'de havuz onlarla sınırlı olduğundan **sızıntı kesin ölümdür** — sadece zaman meselesidir. Bu yüzden her çıkış yolu (hata, timeout, EOF, disable) socket'ı kapatmalı ve handle'ı `RTS_INVALID_HANDLE`'a sıfırlamalıdır. State machine'in `eFault` ve `eClosing` durumlarının kapanışı garanti etmesi tesadüf değil, tasarım gereğidir: tek bir kaçış yolu bile saatler/günler içinde sistemi durdurur.
 
 ## İlgili Konular
 
