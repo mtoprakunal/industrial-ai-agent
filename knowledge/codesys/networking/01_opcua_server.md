@@ -2,8 +2,8 @@
 KONU        : CODESYS OPC UA Sunucu Kurulumu
 KATEGORİ    : codesys
 ALT_KATEGORI: networking
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Communication/_cds_runtime_opc_ua_server.html"
     başlık: "CODESYS Online Help — OPC UA Server"
@@ -399,6 +399,104 @@ Bir SCADA sistemi 500 değişkeni 100ms'de polling yapıyordu; CPU yükü %15'ti
 
 **Not 4 — Güvenlik Politikası "None" ile Üretim**  
 Bir makine üreticisi test esnasında "None" güvenlik politikasıyla bıraktı. Fabrikada ağ taraması yapan bir güvenlik aracı PLC'ye erişim sağladı. Kötü niyetli değildi ama alarm verdi. Tüm makineler SignAndEncrypt'e alındı. Ders: Test bittiğinde güvenlik politikası şifreli olarak güncellenmeli.
+
+**Not 5 — Sembol Sayısı Patlaması ve Bootapp Şişmesi**  
+Symbol Configuration'da "tüm değişkenleri dahil et" işaretlendi; 12.000 sembol oluştu. Bootapp 3× büyüdü, indirme süresi uzadı, runtime başlangıcı yavaşladı ve UaExpert'te address space taraması 40 saniye sürdü. Daha kötüsü: iç durum değişkenleri (GVL_State, FB iç VAR'ları) dışarıdan yazılabilir hale geldi — güvenlik açığı. Çözüm: yalnızca GVL_HMI (yaz) + GVL_Diagnostics (oku) sembol setine alındı, ~300 sembole indi. Ders: sembol seti = saldırı yüzeyi + bellek + hız; minimum tut (bkz. programming/02 Symbol Configuration daraltma).
+
+**Not 6 — Subscription Sampling vs Task Cycle Uyumsuzluğu**  
+SCADA 50ms sampling interval istedi, ama OPC UA değişkenlerini güncelleyen task 200ms'de çalışıyordu. SCADA'da değerler "kademeli" (4 örnekte bir değişen) göründü; mühendis ağ sorunu sandı. Gerçekte sunucu, task'ın güncellemediği değeri yeniden örnekliyordu. Ders: Subscription sampling interval, kaynağı besleyen task cycle'ından **küçük olamaz** — daha hızlı örnekleme aynı değeri tekrar verir. SCADA sampling ≥ task cycle olmalı; gerçek hız task'ta belirlenir.
+
+**Not 7 — Sertifika Süresi Dolması (10 Yıl Sonra Değil, Yarın)**  
+Bir sistemde OPC UA bağlantıları bir sabah toptan koptu. Neden: sunucu sertifikası 1 yıllık üretilmişti ve süresi doldu; istemciler süresi geçmiş sertifikayı reddetti. Üstelik bazı istemci sertifikaları da expire olmuştu. Ders: Sertifika `Valid Days`'i bilinçli seç (10 yıl = 3650), expire tarihini bakım takvimine ekle; hem sunucu hem istemci sertifikaları izlenmeli. RTC pili bitikse (fundamentals/01) sistem yanlış tarihe düşüp geçerli sertifikayı bile "expired/not-yet-valid" sayabilir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Sistem Limitleri
+
+```
+Kaynak                    Pratik Limit            Aşıldığında
+─────────────────────────────────────────────────────────────────
+MaxSessions               10-50 (cihaza bağlı)    Yeni bağlantı reddedilir
+Monitored items / session ~1000-10000             Sunucu CPU/bellek baskısı
+Sembol sayısı             ~birkaç bin pratik       Bootapp şişer, tarama yavaşlar
+Publish interval min      ~task cycle / 50ms       Altına inmek anlamsız (kaynak hızı)
+Sertifika geçerlilik      Valid Days ile sabit     Expire → toptan red
+NodeId string uzunluğu    Pratik sınır yok         Uzun path → bant genişliği
+```
+
+### NodeId Kararlılığı Edge Case'leri
+
+```
+Değişiklik                          NodeId Etkisi              Sonuç
+─────────────────────────────────────────────────────────────────────
+Değişken yeniden adlandırma         String NodeId değişir     SCADA tag kaybı
+GVL yeniden adlandırma              Tüm alt NodeId'ler değişir Toplu kayıp
+Application adı değişimi            Tüm NodeId prefix değişir  Tam kopuş
+Runtime/device adı değişimi         NodeId prefix değişir      Tam kopuş
+Değişken tipi değişimi (REAL→DINT)  NodeId aynı, tip değişir   İstemci tip hatası
+```
+
+String NodeId değişken yoluna bağlı olduğu için, dışa açılan her isim "API sözleşmesi"dir (bkz. programming/04 semver). Kararlı entegrasyon için numeric NodeId veya custom Information Model (Communication Manager) daha sağlamdır.
+
+### Güvenlik Edge Case'leri
+
+- **GDS (Global Discovery Server) olmadan sertifika dağıtımı** manueldir; her istemci-sunucu çifti karşılıklı trust gerektirir. 50 istemcili bir sistemde bu yönetilemez hale gelir.
+- **Self-signed vs CA-signed:** CODESYS varsayılan self-signed üretir; kurumsal PKI ortamında CA-signed gerekir, aksi halde IT politikası bağlantıyı reddeder.
+- **Anonymous + None birlikte:** İkisi açıksa sunucu tamamen korumasızdır — ağdaki herkes okur/yazar.
+
+## Optimizasyon
+
+### CPU ve Ağ: Subscription > Polling
+
+```
+Polling (kötü):    İstemci her 100ms tüm değişkenleri okur → sabit yük, ağ trafiği yüksek
+Subscription (iyi): Sunucu yalnızca DEĞİŞEN değeri push eder → CPU ↓ %80, ağ ↓ %80 (gerçek ölçüm)
+```
+
+500 değişkende polling %15 CPU, subscription %3 CPU (Not 3). Subscription'da `Sampling Interval` (sunucu ne sıklıkta kontrol eder) ve `Publishing Interval` (ne sıklıkta gönderir) ayrı ayarlanır; ikisini de task cycle'a hizalayın.
+
+### Sembol Setini Daraltma
+
+```
+- Yalnızca dışa açılan GVL'leri sembol setine al (GVL_HMI, GVL_Diagnostics)
+- GVL_State, FB iç VAR'ları, GVL_Config → sembol setinden HARİÇ
+- Access Level'i doğru ayarla: read-only değişkeni ReadWrite yapma (güvenlik+hız)
+→ Sonuç: küçük bootapp, hızlı address space tarama, küçük saldırı yüzeyi
+```
+
+### Veri Tipi ve Yapı Optimizasyonu
+
+- Çok sayıda ayrı node yerine **STRUCT node** sunmak (tek subscription ile tüm struct), monitored item sayısını ve overhead'i düşürür.
+- BOOL'ları bir DWORD'a paketleyip tek node sunmak, 32 ayrı node yerine 1 node = daha az subscription kaynağı.
+
+## Derin Teknik Detay
+
+### Symbol Configuration vs Communication Manager: İki Mimari
+
+```
+Symbol Configuration (IEC Symbol):
+  → IEC değişkenlerini doğrudan node'a yansıtır (otomatik address space)
+  → Kod yok, hızlı; ama information model'i sen tasarlamazsın
+  → NodeId değişken yoluna bağlı (kırılgan)
+
+Communication Manager + OPC UA Server:
+  → Custom Information Model, type definition, method tanımlama
+  → Numeric NodeId, kararlı API; ama daha fazla yapılandırma
+  → Companion Specification (ör. PackML, Euromap) uyumu mümkün
+```
+
+Basit monitörleme için Symbol Configuration; standartlaşmış, kararlı, method-içeren entegrasyon için Communication Manager. İkisi arasındaki fark "değişkenlerimi otomatik aç" ile "bir OPC UA information model'i tasarla" arasındaki farktır.
+
+### OPC UA Neden Real-Time Değil?
+
+OPC UA TCP üzerinde çalışır (client-server), broker/subscription katmanı ek gecikme ekler; sunucu IEC task'larıyla ayrı bir bileşen olarak (CmpOPCUAServer) çalışır ve değişkenleri task cycle'da örnekler. Bu yüzden:
+- Veri tazeliği task cycle + sampling + ağ gecikmesi kadardır.
+- Determinizm garantisi yoktur (fundamentals/01 felsefesi: kontrol determinizmi ≠ raporlama).
+- Bu kasıtlıdır: OPC UA **raporlama/komuta** katmanıdır, kontrol döngüsü değil. Gerçek zamanlı senkronizasyon için OPC UA PubSub (UDP, TSN) ayrı bir teknolojidir; klasik client-server OPC UA değildir.
+
+### Sertifika Güven Modeli: Karşılıklı Doğrulama
+
+OPC UA güvenliği TLS'e benzer ama **karşılıklı**dır: hem istemci sunucuyu, hem sunucu istemciyi sertifikayla doğrular. İlk bağlantıda her iki taraf da diğerinin sertifikasını "rejected" klasörüne koyar; manuel olarak "trusted"a taşınması gerekir (UaExpert'te Trust, CODESYS'te Security Screen). Bu "Trust On First Use" benzeri model, GDS olmadan ölçeklenmez — bu yüzden büyük kurulumlarda merkezi sertifika yönetimi (GDS/PKI) gerekir. Sertifikanın RTC'ye bağlı geçerlilik penceresi (Not 7), runtime'ın doğru saate sahip olmasını (NTP) güvenliğin önkoşulu yapar.
 
 ## İlgili Konular
 

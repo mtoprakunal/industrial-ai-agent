@@ -2,8 +2,8 @@
 KONU        : CODESYS MQTT Client Kurulumu
 KATEGORİ    : codesys
 ALT_KATEGORI: networking
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/libs/MQTT%20Client%20SL/Current/index.html"
     başlık: "CODESYS Online Help — MQTT Client SL Library Documentation"
@@ -488,6 +488,108 @@ PLC ağ bağlantısı kesildiğinde dashboard "PLC Online: true" göstermeye dev
 
 **Not 4 — MQTT ile OPC UA Birlikte**  
 Bir projede OPC UA (SCADA → PLC kontrolü) ve MQTT (PLC → Bulut veri analizi) birlikte kullanıldı. OPC UA güvenli, iki yönlü SCADA iletişimi için; MQTT sadece gönderi (publish only) bulut veri akışı için. İki protokol çakışmadı; her biri kendi gücünde kullanıldı. Bu kombinasyon endüstride giderek yaygınlaşıyor.
+
+**Not 5 — Broker Erişilemezken Bloke Eden Publish ve Mesaj Birikimi**  
+Broker bakıma alındığında, MQTT publish FB'si bağlantı kurmaya çalışırken Task_Slow'da gecikmeler yarattı; ayrıca offline süre boyunca üretilen telemetri "birikti" ve broker dönünce 5 dakikalık eski veri sel gibi gönderildi (yanıltıcı grafikler). Ders: MQTT mantığını **Freewheeling/düşük öncelikli task**'a koy (TCP gibi bloke edebilir); offline'da telemetri biriktirme — ya en son değeri tut (retained mantığı) ya da timestamp'li gönder. Broker erişilebilirliğini bir bağlantı-durumu bayrağıyla izle, publish'i ona bağla.
+
+**Not 6 — QoS 1 Duplikasyonu ve Idempotency**  
+Alarm mesajları QoS 1 (at-least-once) ile gönderildi; ağ tıkanınca PUBACK gecikti, FB yeniden gönderdi — broker aynı alarmı iki kez aldı, SCADA çift alarm kaydı oluşturdu. Ders: QoS 1 **duplikasyon** üretebilir; alıcı tarafı **idempotent** olmalı (her mesaja benzersiz ID/timestamp koy, alıcı tekrarı filtrele). "Tam olarak bir kez" için QoS 2 vardır ama overhead yüksek ve bazı kütüphanelerde stabil değil — pratikte QoS 1 + idempotency tercih edilir.
+
+**Not 7 — Retained Mesaj "Hayalet Değer" Tuzağı**  
+Bir setpoint komutu `commands/setpoint` topic'ine retained gönderildi. Aylar sonra yeni bir PLC aynı topic'e subscribe olunca broker'daki **eski retained komutu** anında teslim etti — makine beklenmedik bir setpoint'e atladı. Ders: Komut (command) topic'lerini ASLA retained gönderme (retained yalnızca durum/state için anlamlı: "son bilinen değer"). Komutlar anlıktır; retained komut "zombi komut" olarak geri gelir. Retained = durum bildirimi (online, son setpoint okuması), retained ≠ komut.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### MQTT Davranış Edge Case'leri
+
+```
+Edge Case                          Sonuç                     Koruma
+─────────────────────────────────────────────────────────────────────
+Aynı Client ID iki istemci         Sürekli bağlan-kop        benzersiz Client ID
+QoS 1 PUBACK gecikmesi             Duplikasyon               idempotency (mesaj ID)
+Retained komut topic'i             Zombi komut geri gelir    komut retained DEĞİL
+Broker offline + biriken telemetri Sel + eski veri           offline biriktirme yok
+Kablo koptu, keepalive yok         Geç offline tespiti       keepalive/LWT
+JSON locale (98,5 vs 98.5)         Parse hatası              REPLACE ',' → '.'
+Topic'te boşluk/Türkçe karakter    Bazı broker reddeder      ASCII + tire/slash
+Payload çok büyük                  Broker max packet sınırı  parçala veya küçült
+```
+
+### MQTT'in Garanti Etmedikleri
+
+```
+- Gerçek zamanlı teslimat: broker gecikmesi + ağ + QoS handshake değişken
+- Sıralama: farklı topic'ler arası sıra garantisi yok (aynı topic+QoS1 içinde var)
+- Bağlantı sürekliliği: keepalive aşımı → broker bağlantıyı düşürür
+- Mesaj kalıcılığı: QoS 0 kaybolabilir; retained yalnızca SON mesajı tutar (geçmiş yok)
+```
+
+### Güvenlik Sınırları
+
+```
+Port 1883 (şifresiz)   → açık metin; internet üzerinden ASLA
+Port 8883 (TLS)        → sertifika gerekir; ücretli IIoT SL veya TLS-destekli lib
+anonymous broker        → ağdaki herkes publish/subscribe edebilir
+ACL (topic yetkisi)     → broker tarafında; PLC değil broker zorlar
+```
+
+## Optimizasyon
+
+### Bant Genişliği: MQTT'in Asıl Gücü
+
+```
+- Yalnızca DEĞİŞENİ yayınla (report-by-exception), her döngü değil → ağ ↓
+- Telemetriyi grupla: 10 ayrı topic yerine tek JSON payload → daha az overhead
+- QoS 0 sürekli sensör verisi için (kayıp 1 değer önemsiz), QoS 1 alarm için
+- Retained ile durum: yeni subscriber broker'dan son değeri alır, PLC tekrar yayınlamaz
+- Publish'i timer ile sınırla (Hata 3): 4G/LTE'de her saniye publish veri planını yer
+```
+
+### Task ve Bağlantı Yönetimi
+
+MQTT FB'leri (özellikle bağlantı kurma) bloke edebilir — TCP gibi **Freewheeling/düşük öncelik** task'ta. Publish'i Task_Slow'da timer ile sınırla; bağlantı yönetimi + subscribe Task_Background'da. Ana kontrol task'ına MQTT koyma.
+
+### Payload Formatı
+
+```
+JSON: okunabilir, evrensel, ama verbose (büyük) + parse maliyeti
+SparkplugB (protobuf): kompakt, tipli, ama kütüphane + karmaşıklık
+→ Düşük bant/çok cihaz → SparkplugB; basit/az cihaz → JSON
+Locale tuzağı: REAL_TO_STRING ',' üretebilir → her sayısalda REPLACE ',' '.'
+```
+
+## Derin Teknik Detay
+
+### Pub/Sub Neden Poll'dan Farklı? — Broker Aracılığı
+
+Modbus/OPC UA client-server (PLC ↔ tüketici doğrudan), MQTT ise **broker-aracılı** pub/sub'tır: PLC broker'a yayınlar, broker ilgilenen tüm subscriber'lara dağıtır. Bu mimari decoupling sağlar:
+- PLC, kim dinlediğini bilmez (1 veya 1000 subscriber, fark etmez — broker dağıtır).
+- Subscriber, PLC online mı bilmez (broker retained/LWT ile durumu tutar).
+- Yeni tüketici eklemek PLC'yi değiştirmez (broker'a subscribe olur).
+
+Bu, "tek PLC → çok tüketici" senaryosunda Modbus/OPC UA'nın çoklu-bağlantı yükünü broker'a devreder. Bedeli: broker bir SPOF (tek hata noktası) ve ek gecikme katmanıdır. PLC'nin proaktif veri gönderebilmesi (Modbus'ın yapamadığı, Modbus derin-teknik-detay) MQTT'i bulut/telemetri için doğal kılar.
+
+### Retained ve LWT: Broker'ın Durum Hafızası
+
+MQTT'in iki "durum" mekanizması, broker'ı sadece mesaj dağıtıcı değil, **durum hafızası** yapar:
+- **Retained:** Broker, bir topic'in son retained mesajını saklar; yeni subscriber bağlanınca anında alır. "Son bilinen durum" semantiği — online bayrağı, son setpoint okuması için ideal. Komut için DEĞİL (Not 7: zombi komut).
+- **LWT (Last Will & Testament):** İstemci bağlanırken broker'a "ben aniden kopalarsam şu mesajı yayınla" der. Broker keepalive aşımını/kopuşu tespit edince LWT'yi yayınlar — PLC kendi offline'ını bildiremez (kopmuştur!), broker onun adına bildirir. Retained LWT = "online: false" → dashboard güvenilir offline tespiti (Not 3).
+
+İkisi birlikte, bağlantısız (disconnected) bir PLC'nin durumunu bile sisteme yansıtır — Modbus/OPC UA'da olmayan bir yetenek.
+
+### QoS: Teslimat Garantisi ile Overhead Ödünleşimi
+
+```
+QoS 0: PUBLISH (tek paket, fire-and-forget) → kayıp mümkün, en hızlı
+QoS 1: PUBLISH → PUBACK (yeniden-gönderim PUBACK gelene dek) → duplikasyon mümkün
+QoS 2: PUBLISH→PUBREC→PUBREL→PUBCOMP (4-yön) → tam-bir-kez, en yavaş
+```
+
+QoS, dağıtık sistemlerdeki klasik "at-most-once / at-least-once / exactly-once" teslimat semantiğidir. Exactly-once (QoS 2) teorik olarak ideal ama 4-yönlü handshake hem yavaş hem kütüphane-kırılgan; pratik endüstri çözümü **QoS 1 + uygulama-katmanı idempotency** (her mesaja benzersiz ID, alıcı tekrarı eler). Bu, "tam-bir-kez işleme"yi protokol yerine uygulamada çözer — dağıtık sistemlerde yaygın, sağlam bir desendir. QoS seçimi = "kayıp mı, duplikasyon mu, yoksa overhead mı kabul edilebilir?" sorusudur.
+
+### MQTT Neden Yerleşik Değil? — Kütüphane Ekosistemi
+
+CODESYS, Modbus/OPC UA'yı yerleşik sunar ama MQTT'i sunmaz (kütüphane gerekir). Çünkü MQTT, endüstriyel otomasyonun çekirdeğinden çok IoT/IT dünyasından gelir; CODESYS onu sonradan kütüphane (IIoT SL / topluluk) olarak ekledi. Bu, programming/04'teki kütüphane-sürüm-kilidi disiplinini gerektirir: hangi MQTT kütüphanesi (resmi TLS'li mi, topluluk mu), hangi sürüm, hangi QoS desteği — proje başında sabitlenmeli. TLS gereken (internet/bulut) projelerde ücretsiz topluluk kütüphaneleri yetersiz kalabilir; resmi IIoT SL'in TLS'i bu yüzden önemlidir.
 
 ## İlgili Konular
 

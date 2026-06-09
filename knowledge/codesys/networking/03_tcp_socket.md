@@ -2,8 +2,8 @@
 KONU        : CODESYS SysSock ile TCP Socket Programlama
 KATEGORİ    : codesys
 ALT_KATEGORI: networking
-SEVİYE      : İleri
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://brightersidetech.com/tcp-socket-client-implementation-in-codesys/"
     başlık: "BrighterSideTech — TCP Socket Client in CODESYS"
@@ -611,6 +611,82 @@ Her PLC restart'ında server socket 2 dakika bind olamıyordu (TIME_WAIT). Produ
 
 **Not 4 — Multi-Client Server Karmaşıklığı**  
 Birden fazla SCADA bağlantısı için multi-client TCP server yazılmaya çalışıldı. `fd_set` / `SysSockSelect` ile seçici bekleme implementasyonu çok karmaşık oldu ve hatalı davrandı. Alternatif çözüm: OPC UA'ya geçildi — built-in multi-client desteği ile sorun ortadan kalktı. Ders: Multi-client TCP server CODESYS'te gerçekten zor; standart protokol kullan.
+
+**Not 5 — TCP "Mesaj" Değil "Akış" — Yarım Paket Tuzağı**  
+Bir cihaz 100 byte'lık mesajlar gönderiyordu; geliştirici her `SysSockRecv`'in tam bir mesaj döndüreceğini varsaydı. Çoğu zaman çalıştı, ama yoğun anlarda recv bazen 60, bazen 140 byte döndürdü (iki mesajın parçası). Neden: TCP bir **byte akışıdır**, mesaj sınırı korumaz — gönderenin "bir send"i alıcıda birden fazla recv'e bölünebilir veya iki send tek recv'de birleşebilir (Nagle + TCP segmentasyon). Ders: Uygulama katmanında **framing** (uzunluk öneki veya terminatör) ile mesaj sınırını kendin belirle ve bir **birikim buffer'ı** (accumulator) tut; recv'leri buffer'a ekle, tam frame oluşunca işle. "1 recv = 1 mesaj" varsayımı en sinsi TCP hatasıdır.
+
+**Not 6 — Nagle Algoritması ve Küçük Mesaj Gecikmesi**  
+Küçük komut paketleri (birkaç byte) gönderilirken ~40ms gecikme gözlendi. Neden: TCP Nagle algoritması küçük paketleri biriktirip birleştirir (bant verimi için), bu da düşük-latency için gecikme yaratır. Çözüm: `TCP_NODELAY` socket option (`SysSockSetOption`) ile Nagle kapatıldı — küçük paketler anında gitti. Ders: İnteraktif/düşük-latency protokollerde TCP_NODELAY; yüksek-verim toplu transferde Nagle açık kalsın.
+
+**Not 7 — Yarı-Açık Bağlantı (Half-Open) Tespiti**  
+Karşı cihazın güç kablosu çekildiğinde PLC'nin socket'i "bağlı" kaldı — `recv` veri vermedi ama hata da dönmedi (FIN/RST gelmedi, kablo koptu). PLC saatlerce ölü bir bağlantıyı canlı sandı. Ders: TCP kendisi yarı-açık bağlantıyı hemen tespit etmez. Uygulama katmanında **heartbeat/keepalive** (periyodik ping + yanıt timeout) veya `SO_KEEPALIVE` socket option ekleyin; veri-yokluğu timeout'u ile ölü bağlantıyı proaktif kapatın.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### TCP Akış Semantiği Edge Case'leri
+
+```
+Edge Case                          Davranış                  Koruma
+─────────────────────────────────────────────────────────────────────
+recv yarım mesaj döndürür          TCP akış, mesaj değil     framing + accumulator
+iki mesaj tek recv'de birleşir     TCP segmentasyon          framing ile ayır
+recv = 0                           karşı taraf düzgün kapattı bağlantıyı kapat
+recv = -1 (non-blocking)           veri yok — NORMAL         devam et (hata değil)
+recv = -1 + gerçek hata            iecResult kontrol et      bağlantıyı kapat
+kablo koptu (FIN/RST yok)          yarı-açık, recv sessiz    heartbeat/keepalive
+connect erişilemez IP'ye           OS timeout 20-75sn BLOCK  düşük öncelik task + timeout
+```
+
+### SysSock Handle ve Kaynak Sınırları
+
+```
+- Socket handle sızıntısı: her açılan socket kapatılmazsa OS fd limiti dolar →
+  yeni socket açılamaz (genelde ~1024 fd). Her hata dalında SysSockClose şart.
+- TIME_WAIT: kapatılan server socket portu ~2dk meşgul kalır → SO_REUSEADDR ile aş.
+- Büyük buffer stack'te: 64KB+ lokal array stack overflow → FB/global VAR'da tut.
+- Blocking connect: non-blocking socket'ta bile connect blocking (SP/platform farkı olabilir).
+```
+
+### Endian ve Hizalama
+
+Ham byte buffer'dan struct'a `MEMCPY` ile veri çekerken: gönderen sistemin endian'ı ve struct padding'i (bkz. fundamentals/02 pack_mode) eşleşmeli. Network protokolleri genelde big-endian (network byte order); `SysSockHtons`/`Ntohs` ile dönüştür. `pack_mode 1` ile hizasız struct kullanırken bazı ARM platformlarında hizasız erişim exception'ı riski vardır.
+
+## Optimizasyon
+
+### Framing ve Buffer Yönetimi
+
+```
+- Birikim buffer'ı (accumulator): recv'leri ekle, tam frame oluşunca parse et,
+  kalan kısmı buffer'da bırak. "1 recv = 1 mesaj" varsayma (Not 5).
+- Uzunluk-önekli framing (length-prefixed), terminatör-tabanlıdan (newline) daha
+  sağlam ve hızlıdır — payload'da terminatör çakışması olmaz.
+- MEMCPY ile blok kopyala, byte-byte döngüden kat kat hızlı.
+```
+
+### Latency vs Verim: TCP_NODELAY
+
+```
+Küçük, sık, interaktif paketler   → TCP_NODELAY açık (Nagle kapalı) → düşük latency
+Büyük, toplu veri transferi        → Nagle açık (varsayılan) → yüksek verim
+```
+
+### Task Yerleşimi (Blocking Yönetimi)
+
+`SysSockConnect` blocking olduğu için (OS timeout'una kadar task'ı dondurur), TCP istemci/sunucu mantığı **Freewheeling veya en düşük öncelikli task**'ta olmalı (Not 1, task-structure/01 bloke-I/O kuralı). Ana kontrol task'ında asla socket çağrısı yapılmamalı — watchdog tetikler.
+
+## Derin Teknik Detay
+
+### TCP Akış Modeli: Neden Mesaj Sınırı Yok?
+
+TCP, OSI taşıma katmanında **güvenilir, sıralı bir byte akışı** sunar — mesaj/datagram değil. Gönderenin `send(100 byte)` çağrısı, TCP tarafından segmentlere bölünebilir, ağda birleşebilir, alıcıda farklı boyutlarda `recv` ile teslim edilir. TCP yalnızca "byte'lar sırayla ve eksiksiz gelir" garantisi verir, "send sınırları korunur" garantisi vermez. Bu yüzden her TCP uygulaması kendi **mesaj çerçeveleme (framing)** katmanını kurmak zorundadır — uzunluk öneki, terminatör veya sabit boyut. Bu, Modbus/OPC UA gibi protokollerin neden kendi framing'lerini taşıdığının ve ham socket kullanırken neden bunu sıfırdan yazmak gerektiğinin (belgedeki SOH+Length+Payload+Checksum örneği) köküdür. UDP datagram (mesaj sınırlı) sunar ama güvenilirlik vermez; TCP tersini yapar.
+
+### Blocking vs Non-Blocking: İşletim Sistemi Çağrı Modeli
+
+`SysSock*` fonksiyonları OS'in Berkeley socket API'sine ince bir sarmalayıcıdır. Blocking modda `recv`, kernel'de veri gelene kadar thread'i uyutur (sleep) — PLC bağlamında bu, IEC task'ının (bir pthread, task-structure/01) o süre boyunca CPU bırakması demektir. `SysSockConnect`'in non-blocking ayara rağmen blocking kalması, CODESYS sarmalayıcısının bu özel çağrıyı senkron tutmasındandır — bu yüzden connect'in OS timeout'u (TCP SYN retry, 20-75sn) task'ı bloke eder. Non-blocking mod (`FIONBIO`), recv/send/accept'in "veri yoksa hemen -1 dön" davranışını açar; bu, PLC'nin scan-cycle modeline (her scan kısa sürmeli) uymak için zorunludur. Bloke eden socket çağrısı = scan cycle'ı kıran şey = watchdog tetikleyici.
+
+### State Machine Zorunluluğu: Asenkron I/O'yu Senkron Scan'e Sığdırmak
+
+TCP bağlantısı doğası gereği asenkron ve çok-adımlıdır (connect → send → recv → close), her adım zaman alabilir. PLC scan cycle ise her döngüde kısa ve deterministik olmalı (fundamentals/01). Bu gerilimi çözmenin tek yolu, bağlantıyı bir **state machine**'e bölmektir: her scan bir adım ilerlet, bloke etme. `eDisconnected→eConnecting→eConnected→...` her durumda non-blocking bir işlem yapıp hemen döner. Bu, programming/03'teki "her scan koşulsuz çağır + durum makinesi" deseninin networking'e uygulanmış halidir — asenkron dünyayı senkron scan modeline sığdırmanın CODESYS yolu. Bu yüzden ham TCP, Modbus/OPC UA'dan çok daha zordur: framing + state machine + handle yönetimi + endian'ı elle yazarsın.
 
 ## İlgili Konular
 

@@ -2,8 +2,8 @@
 KONU        : CODESYS Modbus TCP Slave Kurulumu
 KATEGORİ    : codesys
 ALT_KATEGORI: networking
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-01
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://content.helpme-codesys.com/en/CODESYS%20Modbus/_mod_edt_slave_com_channel.html"
     başlık: "CODESYS Online Help — Modbus Server Channel Configuration"
@@ -481,6 +481,89 @@ REAL değer iki WORD olarak gönderildi. Python istemci saçma değer okudu (ör
 
 **Not 4 — Register Haritası Olmadan Devreye Alma**  
 Bir projede register haritası dokümante edilmeden PLC geliştiricisi ile SCADA entegratörü ayrı çalıştı. Devreye alma günü SCADA'nın register beklentisi ile PLC haritası uyuşmadı; 2 günlük düzeltme. Sonraki projelerde register haritası, proje başında tek sayfalık tablo olarak hazırlandı ve her iki tarafın onayına sunuldu.
+
+**Not 5 — DWORD'un İki WORD'a Bölünmesinde Tutarsızlık (Word Tearing)**  
+Üretim sayacı (DWORD) iki register'a `_L` ve `_H` olarak bölündü. SCADA bazen saçma değerler okudu: sayaç 65535→65536 geçişinde Low=0 ama High henüz güncellenmemişti — master, Low'u yeni High'ı eski okudu (ör. 0 yerine 4294901760). Neden: master iki register'ı iki ayrı FC03 ile okudu, arada PLC güncelledi. Çözüm: ikisini **tek FC03 isteğinde** (count=2) oku — Modbus tek istek içindeki register'ları atomik döndürür. Ya da bayrak/çift-okuma ile tutarlılık doğrula. Ders: çok-register değerlerde "word tearing" gerçek bir risktir.
+
+**Not 6 — Bus Cycle Task ve REAL Ölçek Gecikmesi**  
+Modbus slave'in bus cycle task'ı Task_Slow'a (100ms) atanmıştı, ama register'ları güncelleyen `PRG_ModbusUpdate` Task_Control'de (10ms) çalışıyordu. Sonuç: GVL değişkeni 10ms'de güncelleniyor ama Modbus image'i 100ms'de senkronize oluyordu — master bazen 90ms eski veri okudu. Ders: Modbus image güncellemesi (bus cycle task) ile register'ları besleyen kod aynı/uyumlu task'ta olmalı; bus cycle task seçimi veri tazeliğini belirler.
+
+**Not 7 — Coil Polarite ve Fail-Safe Belirsizliği**  
+Master "Stop" komutunu Coil'e FALSE yazarak verdi (aktif-düşük mantık), ama PLC TRUE=stop bekliyordu. Bağlantı koptuğunda coil son değerinde kaldı — ne master yeni komut verebildi ne de PLC güvenli duruma geçti. Ders: Komut coil'lerinde polariteyi netleştir (tercihen aktif-yüksek + edge), ve **bağlantı timeout** (master N saniyedir poll etmiyorsa) ile fail-safe'e geç. Modbus'ta bağlantı denetimi yoktur; uygulama katmanında watchdog gerekir.
+
+## Edge Case'ler ve Sistem Limitleri
+
+### Modbus Protokol Sınırları
+
+```
+Sınır                              Değer                    Not
+─────────────────────────────────────────────────────────────────────
+Tek istekte register (FC03/04)     125 register             Aşılırsa istek reddedilir
+Tek istekte register yazma (FC16)  123 register
+Tek istekte coil (FC01/02)         2000 coil
+Register boyutu                    16-bit (0-65535)         32-bit için 2 register
+Unit ID (TCP)                      genelde yok sayılır       ama bazı master zorunlu kılar
+Eşzamanlı bağlantı                 cihaza bağlı (~birkaç)   aşılırsa yeni bağlantı red
+Bağlantı denetimi                  YOK (protokol seviyesi)   uygulama watchdog şart
+```
+
+### Veri Bütünlüğü Edge Case'leri
+
+```
+Word tearing (çok-register değer)   → tek FC isteğinde oku (atomik) veya çift-okuma doğrula
+Endian (REAL/DWORD byte sırası)     → big/little/word-swap; test değeriyle doğrula
+Signed vs unsigned register         → -1 mi 65535 mi? master yorumuna bağlı, belgele
+Coil bağlantı kopunca               → son değerde kalır; fail-safe otomatik değil
+0 vs 1 tabanlı adres                → 40001=offset 0 mı 1 mi? test ile doğrula
+```
+
+### Güvenlik: Modbus'ta Hiçbir Şey Yok
+
+Modbus TCP'de **kimlik doğrulama, şifreleme, yetkilendirme yoktur**. Ağa erişen herkes register okuyup yazabilir — start coil'ine TRUE yazıp makineyi başlatabilir. Bu protokolün doğasıdır, bir bug değil. Korunma tamamen ağ seviyesindedir: izole VLAN, firewall, sadece güvenilen master IP'lerine izin. Güvenlik gereken yerde Modbus değil OPC UA kullanılmalı (bkz. _synthesis karar tablosu).
+
+## Optimizasyon
+
+### Register Haritası Düzeni: Bloklama
+
+Master genelde ardışık register'ları tek istekte okur. Haritayı **mantıksal bloklar** halinde ve **boşluksuz** düzenlemek, master'ın tek FC03 ile çok veri okumasını sağlar:
+
+```
+✅ İyi: Telemetri IR 0-9 ardışık → tek FC04(0,10) ile hepsi
+❌ Kötü: Telemetri IR 0, 50, 120, 200'e dağınık → 4 ayrı istek
+
+Boşluk bırakma (rezerve) iyi; ama ilgili veriyi aynı blokta tut.
+```
+
+### REAL Ölçekleme vs İki Register
+
+```
+Düşük precision yeterli (±0.1)  → REAL×10 → tek WORD (ör. 98.7→987). Basit, atomik, az bant.
+Tam precision gerekli           → IEEE754 iki WORD (UNION). Endian dikkat + word tearing riski.
+```
+
+Çoğu endüstriyel değer (sıcaklık, hız, basınç) için ölçeklenmiş tek WORD hem daha verimli hem word-tearing'den bağışıktır.
+
+### Bus Cycle Task Seçimi
+
+Modbus image, atanan **bus cycle task** her çalıştığında senkronize olur. Veri tazeliği bu task'ın cycle'ıdır. Çok hızlı task (1ms) gereksiz CPU yer; çok yavaş task (1s) eski veri sunar. Tipik: register besleyen kod ile aynı task (10-100ms). Bus cycle task atanmazsa I/O mapping hiç güncellenmez (Hata 5).
+
+## Derin Teknik Detay
+
+### Neden Slave = Sunucu, Master = İstemci?
+
+Modbus terminolojisi kafa karıştırır: PLC genelde "üstün" gibi düşünülür ama Modbus'ta **Slave**'dir (pasif, yanıtlayan). Çünkü Modbus master-poll mimarisidir: master sorar, slave yanıtlar; slave kendiliğinden veri gönderemez. Bu, 1979'un seri hat (RS-485) dünyasından gelir — tek master, çok slave, master sırayla yoklar (polling). TCP'ye taşındığında isimler korundu ama "master=client, slave=server" eşlemesi eklendi. PLC'nin "yanıtlayan" rolde olması, kendi durumunu proaktif bildiremeyeceği anlamına gelir — bu yüzden MQTT (push) bulut için, Modbus (poll) SCADA için tercih edilir.
+
+### Word Tearing: Atomiklik Probleminin Modbus Yüzü
+
+DWORD/REAL'in iki register'a bölünmesindeki tutarsızlık (Not 5), task-structure/03 ve programming/02'deki **atomiklik** probleminin protokol seviyesindeki tezahürüdür. PLC içinde 32-bit değer atomik olsa bile, Modbus master onu iki ayrı 16-bit okuma ile alırsa arada güncelleme yarım değer üretir. Çözüm aynı felsefedir: değeri tek atomik işlemde oku (tek FC isteği) veya çift-tampon/doğrulama. Modbus'ın 16-bit register doğası, 32-bit dünyada bu tearing'i kaçınılmaz kılar.
+
+### Holding Register Çift Yönlülüğü ve Tek-Yazar Kuralı
+
+Holding Register hem master hem PLC tarafından yazılabilir — bu, programming/02'deki "tek-yazar" kuralını ihlal etme tuzağıdır (Hata 3). Bir HR'ı master setpoint için yazıyorsa, PLC kodu onu **asla ezmemeli** (yalnızca okur, GVL_Params'a kopyalar). Tersine, PLC'nin yazdığı bir telemetri register'ına master yazmamalı. Her register için tek yazar tanımlamak — tıpkı GVL'de olduğu gibi — Modbus haritasının sağlığının temelidir. Register haritası belgesinde her register'ın yönü (R/W sahibi) açıkça yazılmalı.
+
+### Modbus'ın Kalıcılığı: Neden Hâlâ Her Yerde?
+
+Modbus 1979'dan beri yaşıyor çünkü **radikal basit**: 4 veri tipi, ~8 function code, durumsuz istek-yanıt. Bu basitlik, en zayıf cihazda bile (8-bit mikrodenetleyici) çalışmasını sağlar ve 45 yıllık geriye uyumluluk verir. OPC UA'nın zenginliği (tip, güvenlik, model) aynı zamanda karmaşıklık ve kaynak maliyetidir. Modbus'ın "eksiklikleri" (güvenlik yok, 16-bit, poll-only) aslında basitliğinin bedelidir — ve bu basitlik onu evrensel kılan şeydir. Uzman, Modbus'ı "ilkel" diye küçümsemez; doğru yerde (basit, güvenilir, evrensel veri paylaşımı) en verimli araçtır.
 
 ## İlgili Konular
 
