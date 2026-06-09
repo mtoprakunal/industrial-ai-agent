@@ -2,8 +2,8 @@
 KONU        : NAMUR NE107 — Saha Cihazlarında Öz-İzleme ve Diagnostik
 KATEGORİ    : standards
 ALT_KATEGORI: standards
-SEVİYE      : Orta
-SON_GÜNCELLEME: 2026-06-08
+SEVİYE      : Uzman
+SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "https://www.namur.net/en/publications/news-archive/ne-107-has-been-revised.html"
     başlık: "NE 107 has been revised — namur.net (resmi)"
@@ -403,6 +403,70 @@ Pepperl+Fuchs Advanced Diagnostic Module (ADM), FOUNDATION fieldbus H1 ve PROFIB
 Endress+Hauser Netilion gibi bulut asset management platformları, sahadan PA-DIM + OPC UA üzerinden alınan NE107 sinyallerini trend grafiklere, tahminsel bakım analizine ve uzaktan izleme panolarına entegre eder. Bu mimari, NE107'yi fiziksel saha cihazı katmanından bulut analytics katmanına doğrudan çıkarır; OPC UA'nın rolü burada köprüdür.
 
 Kaynak: [Automation World — Pepperl+Fuchs ADM](https://www.automationworld.com/products/networks/article/13310449/operator-efficiency-achieved-with-harmonized-diagnostics-from-field-devices)
+
+**Not 6 — Firmware Güncellemesi NE107 Eşlemesini Sessizce Değiştirebilir**
+Saha cihazının firmware'i güncellendiğinde üreticinin yeni sürümdeki dahili diagnostik→NE107 varsayılan eşlemesi önceki sürümden farklı olabilir. Sahada yaşanan tipik vaka: bir transmitter firmware güncellemesinden sonra daha önce M (Maintenance) raporladığı "sensör sürüklenmesi" durumunu S (Out of Spec) olarak raporlamaya başlar; DCS alarm rasyonalizasyonu buna göre ayarlanmadığı için operatör konsolu beklenmedik sarı alarmlarla dolar. Firmware güncellemesini bir "değişiklik yönetimi" (MoC) olayı olarak ele alın ve güncelleme sonrası NE107 eşleme tablosunu yeniden doğrulayın.
+
+**Not 7 — "GOOD/Yeşil" NE107 Statüsü Değildir; Sinyal Yokluğudur**
+Yaygın bir kavram hatası: dört sinyale "yeşil/GOOD" beşinci kategori olarak eklemek. NE107 yalnızca dört *anormal* durumu tanımlar; sağlıklı cihaz "sinyal yok" demektir. Bu ayrım önemlidir çünkü bir cihaz iletişimi tamamen kesilirse DCS "sinyal yok" görür ve bunu yanlışlıkla "GOOD" sayabilir — gerçekte bu bir F (Failure) durumudur. NE107 statüsünün taşındığı kanalın kendisinin (bus kopması, time-out) izlenmesi, statüsün "yokluğunu" arıza olarak yorumlamak için ayrıca gereklidir. Statüsün yokluğu ≠ sağlık.
+
+**Not 8 — HART Cihazlarda NE107 Statüsü 4-20 mA Analog Sinyalden Bağımsızdır**
+HART cihazlarda iki bağımsız kanal vardır: analog 4-20 mA birincil değer ve dijital HART katmanındaki cihaz durumu. Bir cihaz F (Failure) raporlarken 4-20 mA çıkışı NAMUR NE43'e göre arıza akımına (örn. <3.6 mA veya >21 mA) gidebilir veya gitmeyebilir — bu konfigürasyona bağlıdır. Sahada karışıklık yaratan nokta: NE107 dijital statüsü "F" derken DCS'in yalnızca analog değeri okuduğu (HART katmanını okumadığı) sistemlerde arıza fark edilmez. NE107'nin gerçekten işe yaraması için DCS/AMS'in HART dijital katmanını aktif okuması gerekir; salt 4-20 mA döngüsü NE107 statüsünü taşımaz. NE43 (arıza akımı) ve NE107 (diagnostik statü) birbirini tamamlar ama ikame etmez.
+
+## Edge Case'ler ve Sistem Limitleri
+
+NE107'nin "dört sembol" sadeliği, gerçek tesis ortamında çok sayıda gri alan barındırır. Aşağıdaki sınır durumları, basit dört-kategori modelinin nerede gerildiğini gösterir.
+
+**Sınıflandırma belirsizlikleri**
+- **Aynı fiziksel sebep, farklı kategori:** "Düşük besleme gerilimi" bir üreticide S (Out of Spec — sınır dışı çalışma), başka bir üreticide F (Failure — yakında durabilir) olarak sınıflandırılır. Standart sınıflandırma kuralını değil, *kategori tanımını* verir; eşleme kararı üreticinin yorumuna kalır. Çok-üreticili tesiste aynı arızanın farklı renkte görünmesi kaçınılmazdır.
+- **Sınırda gezinen (flapping) statü:** Ortam sıcaklığı spesifikasyon sınırında dalgalanırsa cihaz S ↔ (sinyal yok) arasında saniyede defalarca geçiş yapabilir. Bu, DCS'te alarm flood ve gereksiz iş emri yaratır. NE107 histerezis/debounce tanımlamaz; bu, DCS/AMS tarafında çözülmesi gereken bir uygulama sorunudur.
+- **Çoklu eşzamanlı koşulda bilgi kaybı:** Agregasyon kuralı en yüksek önceliği gösterir; F aktifken aynı anda var olan M tamamen gizlenir. Operatör arızayı giderince altında bekleyen M ortaya çıkar — "arıza bitti sandık, bir de baktık bakım gerekiyormuş" durumu. Operatör konsolu yalnızca agregat statüyü gösterirse alttaki koşullar görünmez kalır.
+
+**Önceliklendirme tuzakları**
+- **S'nin en düşük öncelikte olması yanıltıcı olabilir:** Öncelik sırası F>C>M>S'tir; ancak S (spesifikasyon dışı) bazı kritik ölçümlerde M'den (bakım gerekli) operasyonel olarak daha tehlikelidir — ölçüm *şu anda* şüphelidir. Standardın sabit önceliği uygulama kritikliğini bilmez; bu yüzden kritik noktalarda kullanıcı eşlemesi (M→S→F yükseltme) gerekir.
+- **C (Function Check) güvenlik açığı yaratabilir:** C sırasında sinyal "geçici geçersiz" sayılır ve bazı kontrol stratejileri o ölçümü son geçerli değerde "donmuş" (frozen) tutar. Bir saldırgan veya hatalı bakım, cihazı uzun süre C modunda bırakırsa kontrol körleşir ama operatör "planlı bakım" sanır. C'nin süre sınırı ve eskalasyonu uygulamada tanımlanmalıdır.
+
+**Altyapı ve taşıma sınırları**
+- **Salt 4-20 mA (HART'sız) sistemler:** NE107 statüsü taşınamaz; yalnızca NE43 arıza akımı (analog out-of-range) mevcuttur. Bu sistemlerde NE107 fiilen uygulanamaz — ya HART overlay ya ayrı diagnostik bus gerekir.
+- **Protokoller arası anlam kayması:** Aynı NE107 statüsü HART, PROFIBUS PA ve FF-912 üzerinden farklı kodlanır; çok-protokollü bir gateway üzerinden geçerken eşleme hataları (özellikle vendor-specific alt kodların kaybı) olabilir. Operatör F/C/S/M'yi görür ama altındaki ayrıntılı kod gateway'de düşmüş olabilir.
+- **Eski cihaz / yeni DCS uyumsuzluğu:** NE107-öncesi (legacy) cihazlar dahili diagnostiği NE107 kategorilerine eşlemez; modern DCS bunları "statü bilinmiyor" olarak gösterir. Tesisin diagnostik olgunluğu en eski cihaz seviyesindedir.
+
+## Optimizasyon
+
+NE107'den maksimum değer almak, "dört sembolü göstermek" değil, doğru sinyali doğru kişiye doğru zamanda iletecek bir diagnostik mimarisi kurmaktır.
+
+**Alarm yükü optimizasyonu (ISA-18.2 hizalaması)**
+- **Sinyali role göre yönlendirin:** F → operatör (kritik), C → operatör (bilgilendirici), M → yalnızca AMS/bakım, S → uygulamaya göre. M ve gereksiz S sinyallerini operatör konsoluna alarm olarak göndermek EEMUA 191 alarm yükü hedeflerini (10 alarm/saat) ihlal eder; en sık görülen tasarım hatasıdır.
+- **C için iş emriyle otomatik korelasyon:** C sinyali geldiğinde bakım iş emri sistemiyle (CMMS) otomatik çapraz kontrol yapın; aktif iş emri varsa operatöre "planlı bakım" notu gösterin, yoksa yetkisiz/beklenmedik test uyarısı verin.
+- **S/M için trend tabanlı önceliklendirme:** Anlık sinyal yerine S/M sinyallerinin zaman serisini izleyin; sürekli artan M frekansı yaklaşan F'nin habercisidir ve tahminsel bakım tetikleyicisi olarak kullanılmalıdır.
+
+**Eşleme yapılandırma optimizasyonu**
+- **Kritiklik bazlı eşleme matrisi:** Her proses noktasının kritikliğine göre fabrika varsayılan eşlemesini gözden geçirin; kritik güvenlik noktalarında "sensör kirlenmesi" gibi M'leri S/F'ye yükseltin, düşük kritiklikli noktalarda gereksiz S'leri M'e düşürün.
+- **Eşlemeyi tek kaynakta (single source of truth) tutun:** Proje genelinde NE107 eşleme tablosunu merkezi bir dokümanda tutun; cihaz/firmware değişiminde bu tabloya karşı doğrulama yapın (bkz. Gerçek Proje Notları 6).
+
+**Mimari optimizasyonu**
+- **PA-DIM + OPC UA ile üretici-bağımsız tek arayüz:** Çok-üreticili tesiste her cihazın NE107 statüsünü PA-DIM Device Health node'u üzerinden tek OPC UA arayüzüyle okumak, DCS-cihaz entegrasyon maliyetini düşürür ve bulut analitiğini standardize eder.
+- **Bus seviyesi diagnostiği ayırın:** Pepperl+Fuchs ADM gibi fiziksel katman diagnostik modülleriyle "cihaz sorunu" ile "ağ/bus sorunu"nu NE107 çatısında ayırt edin — sahada arıza lokalizasyon süresini kısaltır.
+
+## Derin Teknik Detay
+
+**NE107 neden bir "standart" değil, bir "tavsiye" (Recommendation/NE)?**
+NAMUR bir standardizasyon kuruluşu (IEC/ISO gibi) değil, proses endüstrisi *kullanıcılarının* derneğidir. NE107 "NAMUR Empfehlung" (NAMUR Tavsiyesi) olarak yayınlanır; yasal/sözleşmesel bağlayıcılığı yoktur ama pazar gücü vardır. Mantık şudur: kullanıcılar (BASF, Bayer, Shell gibi dev operatörler) toplu satın alma güçleriyle "NE107 uyumlu olmayan cihaz almayız" diyerek üreticileri fiilen zorlar. Bu, "yukarıdan standart dayatma" yerine "talep tarafından çekme" (demand-pull) modelidir — bir IEC standardından farklı bir yönetişim felsefesi.
+
+**Dört kategori neden tam dört? Tasarımın bilişsel temeli**
+NE107'nin kalbi bir *insan faktörü* (human factors) kararıdır. Operatör, kriz anında onlarca hata kodunu işleyemez; bilişsel yük (cognitive load) araştırmaları 4±1 kategorinin anlık ayırt edilebilir üst sınır olduğunu gösterir. Dört kategori iki bağımsız soruyu yanıtlar: "Sinyal güvenilir mi?" (F/C = hayır, M = evet, S = şüpheli) ve "Şimdi mi sonra mı müdahale?" (F/C = şimdi, M = sonra, S = değerlendir). Bu iki eksenli ayrım, dört kategorinin neden ne çok ne az olduğunun rasyonelidir.
+
+**İki-hedef-kitle modelinin teorik önemi**
+NE107'nin en derin tasarım kararı, *aynı veriyi iki soyutlama seviyesinde* sunmasıdır: operatöre özet (F/C/S/M), bakımcıya ayrıntı (IDM/AMS). Bu, yazılım mühendisliğindeki "bilgi gizleme" (information hiding) ve "ilgililerin ayrılması" (separation of concerns) ilkelerinin saha cihazına uygulanmasıdır. Operatörün arızayı *gidermesi* gerekmez, *yönetmesi* gerekir; bakımcının prosesi *yönetmesi* gerekmez, arızayı *gidermesi* gerekir. Tek bir veri kaynağı iki role iki farklı görünüm sunar — modern MVC mimarilerinin endüstriyel öncülü.
+
+**Öncelik hiyerarşisinin (F>C>M>S) iç mantığı**
+Sıralama keyfi değil, "yanlış pozitif maliyeti" ile "kaçırma maliyeti" dengesidir. F en üstte çünkü kaçırılan bir arıza fiziksel sonuç doğurur (kaçırma maliyeti en yüksek). S en altta çünkü "spesifikasyon dışı" çoğu zaman geçici ve telafi edilebilir (yanlış alarm maliyeti yüksek, kaçırma maliyeti düşük). C, F'nin hemen altındadır çünkü ikisi de "sinyal geçersiz" ortak sonucunu paylaşır — fark sadece niyet (kaza vs. plan). M, S'nin üstündedir çünkü M "kesin gelecek bakım" (deterministik), S "belki sorun" (olasılıksal) bilgisi taşır.
+
+**Alternatif/ilişkili çerçevelerle konumlanma**
+- **NAMUR NE43 (arıza akımı):** NE107'nin analog atası; 4-20 mA döngüsünde arıza akımı (<3.6 / >21 mA) tanımlar. NE43 "cihaz öldü mü?" sorusunu (ikili), NE107 "cihaz ne durumda?" sorusunu (dört kategori) yanıtlar. NE107 NE43'ün üzerine kuruludur, onu ikame etmez.
+- **NAMUR NE131 / NOA (NAMUR Open Architecture):** NE107 diagnostik *anlamını* tanımlar; NOA bu veriyi kontrol sisteminden bağımsız ikinci bir "monitoring & optimization" kanalıyla buluta taşır. NE107, NOA'nın ana veri yüklerinden biridir.
+- **VDI/VDE 2650 ve ISA-18.2:** Diagnostik mesajların *alarm* olarak nasıl yönetileceğini ISA-18.2 tanımlar; NE107 *neyin* raporlanacağını, ISA-18.2 *nasıl* alarmlanacağını söyler. İkisi dik (orthogonal) ve tamamlayıcıdır.
+- **OPC UA DI / PA-DIM:** NE107'nin makine-okunur, üretici-bağımsız dijital temsili. NE107 insan-merkezli (renk/sembol) doğdu; PA-DIM onu makine-merkezli (OPC UA node) ekosisteme taşıyarak IIoT/bulut analitiğine açtı.
 
 ## İlgili Konular
 
