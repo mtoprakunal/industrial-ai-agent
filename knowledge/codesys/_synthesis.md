@@ -1,27 +1,27 @@
 ---
-KONU        : CODESYS Domaini — Üst Sentez
+KONU        : CODESYS Domaini — Üst Sentez (Uzman)
 KATEGORİ    : codesys
 ALT_KATEGORI: codesys
-SEVİYE      : Temel
+SEVİYE      : Uzman
 SON_GÜNCELLEME: 2026-06-09
 KAYNAKLAR   :
   - url: "knowledge/codesys/fundamentals/_synthesis.md"
-    başlık: "CODESYS Temeller Sentezi"
+    başlık: "CODESYS Temeller Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/task-structure/_synthesis.md"
-    başlık: "CODESYS Task Yapısı Sentezi"
+    başlık: "CODESYS Task Yapısı Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/programming/_synthesis.md"
-    başlık: "CODESYS Programlama Mimarisi Sentezi"
+    başlık: "CODESYS Programlama Mimarisi Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/networking/_synthesis.md"
-    başlık: "CODESYS Networking Sentezi"
+    başlık: "CODESYS Networking Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/project-generation/_synthesis.md"
-    başlık: "CODESYS Otomatik Proje Üretimi Sentezi"
+    başlık: "CODESYS Otomatik Proje Üretimi Sentezi (Uzman)"
     güvenilirlik: deneyimsel
   - url: "knowledge/codesys/debugging/_synthesis.md"
-    başlık: "CODESYS Debugging Sentezi"
+    başlık: "CODESYS Debugging Sentezi (Uzman)"
     güvenilirlik: deneyimsel
 BAĞLANTILAR :
   - konu: "knowledge/codesys/fundamentals/_synthesis.md"
@@ -37,7 +37,8 @@ BAĞLANTILAR :
   - konu: "knowledge/codesys/debugging/_synthesis.md"
     ilişki: bileşen
 ÖNKOŞUL     :
-  - "Bu belge, 6 alt sentezin tamamını okuduktan sonra bütünsel bakış için kullanılmak üzere tasarlanmıştır."
+  - "Altı alt sentezin Uzman bölümleri okunmuş olmalıdır; bu belge onların ortak ilkelerini birleştirir."
+  - "Saha devreye alma, arıza giderme ve mimari tasarım deneyimi varsayılır."
   - "Alternatif: Bu belgeyi harita olarak oku, ardından ilgili alt senteze geç."
 ÇELİŞKİLER :
   - kaynak: "project-generation/_synthesis.md — Hibrit yaklaşım"
@@ -56,11 +57,56 @@ BAĞLANTILAR :
 
 ## Özün Ne
 
-CODESYS, herhangi bir donanımı IEC 61131-3 uyumlu bir PLC'ye dönüştüren SoftPLC ekosistemidir. Tek bir ürün değil; runtime katmanı, geliştirme ortamı, protokol kütüphaneleri ve otomasyon araçlarından oluşan bütünleşik bir platformdur.
+CODESYS, herhangi bir donanımı IEC 61131-3 uyumlu bir PLC'ye dönüştüren SoftPLC ekosistemidir — runtime, geliştirme ortamı, protokol kütüphaneleri ve otomasyon araçlarından oluşan bütünleşik bir platform.
 
-Bu bilgi tabanı, CODESYS'i altı birbirine bağlı alan üzerinden haritalıyor: **Temeller** platformun ne olduğunu, **Task Yapısı** zamanlamanın nasıl kurulduğunu, **Programlama** kod mimarisinin nasıl tasarlandığını, **Networking** dış dünyayla nasıl iletişim kurulduğunu, **Project Generation** projenin nasıl programatik olarak üretildiğini, **Debugging** ise sorunların nasıl teşhis ve giderildiğini açıklar.
+Bu bilgi tabanı CODESYS'i altı alana böler (Temeller, Task Yapısı, Programlama, Networking, Project Generation, Debugging). Ama **uzman seviyesinde asıl mesaj, bu altı alanın ayrı konular değil, tek bir tasarım felsefesinin katmanları olduğudur.** O felsefe **determinizm**dir: *"endüstriyel kontrolün her kararı, her döngüsü, her veri akışı öngörülebilir ve en-kötü-durum garantili olmalıdır."*
 
-Bu altı alan bir araya geldiğinde oluşan bütün şudur: **"IEC kodunu çalıştıran güvenilir, bakımı kolay, dış dünyaya açık, otomatik üretilebilir ve sorunları çözülebilir bir endüstriyel kontrolcü."**
+`fundamentals` bu felsefeyi kurar (JIT yok, I/O image, bellek görüntüsü koruma); diğer beş alan onu kendi katmanında uygular. Uzmanlık, bir saha belirtisini (jitter, race, kaybolan veri, watchdog, üretim hatası) doğru katmana haritalayıp determinizm zincirinin hangi halkasının koptuğunu bulabilmektir. Bu altı alan birlikte tek bir bütün oluşturur: **"IEC kodunu deterministik çalıştıran; güvenilir, bakımı kolay, dış dünyaya açık, otomatik üretilebilir ve sistematik teşhis edilebilir bir endüstriyel kontrolcü."**
+
+---
+
+## Birleştirici İlke: Determinizm Zinciri
+
+Altı alanın her biri, determinizm felsefesini kendi katmanında somutlaştırır. Bunlar bağımsız kurallar değil, tek bir zincirin halkalarıdır — ve **en zayıf halka tüm sistemin determinizmini belirler** (uçtan uca özellik).
+
+| Alan | Determinizmin O Katmandaki İfadesi | Kök Birleştirici İlke |
+|---|---|---|
+| **① Temeller** | JIT yok (her döngü aynı süre) · I/O image (giriş tutarlılığı) · Component Manager | Donanım soyutlama + bellek görüntüsü koruma + öngörülebilirlik |
+| **② Task Yapısı** | tip/cycle/öncelik = tek determinizm bütçesi · jitter < %10 · %70 yük | Öngörülebilirlik bir bütçedir; üç boyut birlikte yönetilir |
+| **③ Programlama** | tek-yazar (race önler) · tek yönlü akış · ELSE→eFault · katmanlı fail-safe | Paylaşımlı durumun tek sahibi; hata önlenir, oluşursa güvenli duruma |
+| **④ Networking** | hiçbiri RT değil (raporlama ≠ kontrol) · GVL temeli · bloke-I/O ayrımı | Raporlama katmanı kontrol determinizmini bozmamalı |
+| **⑤ Project Generation** | idempotent üretim · DUT→GVL→FB→PROGRAM · "derlendi ≠ çalışıyor" | Deterministik, tekrarlanabilir, doğrulanmış çıktı |
+| **⑥ Debugging** | Max (ortalama değil) · belirti→katman→kök neden · 48h test | En-kötü-durum görünür kılınır; teşhis sistematiktir |
+
+### Tüm Domaini Kesen Tekrarlayan Desenler
+
+Aynı birkaç ilke her alanda farklı kılıkta tekrar eder — bunları tanımak uzmanlığın özüdür:
+
+```
+DESEN                        NEREDE TEKRAR EDER
+──────────────────────────────────────────────────────────────────────────
+"Tek-yazar"                  GVL→tek task yazar (③) · FB→sadece output (③) ·
+                             PROGRAM tek çağrı (③) · Modbus HR tek yön (④) ·
+                             preemptive race önleme (②) · üretim tek-yazar (⑤)
+
+"Belirti→katman→kök neden"   task boyutu (②) · ilke ihlali (③) · eksen/ilke (④) ·
+   (teşhis pusulası)          katman→araç (⑥) · ilke→neden (⑤)
+
+"Uçtan uca zincir,           determinizm (①→②→⑥) · RT (kernel→IRQ→task→kod) ·
+   en zayıf halka belirler"   güvenlik (④) · framing (④) · fail-safe katmanları (③⑤)
+
+"Çalışıyor ≠ doğru"          dev≠prod (①) · Max≠ortalama (⑥) · derlendi≠çalışıyor (⑤) ·
+                             sessiz cycle overrun (⑥) · semantic hata (⑤)
+
+"Bellek layout / sıra"       retain sona ekle (①③) · PERSISTENT sıra (③) ·
+                             Online Change interface (①③⑥) · word tearing (④) ·
+                             üretim DUT→FB sırası (⑤)
+
+"Bloke-I/O düşük önceliğe"   Freewheeling log (②) · TCP connect (④) · MQTT broker (④) ·
+                             dosya yazma watchdog (⑥)
+```
+
+**Uzman içgörüsü:** Yeni bir sorun gördüğünde önce "hangi katman?" (teşhis pusulası), sonra "hangi tekrarlayan desen ihlal edildi?" diye sor. Çözüm neredeyse her zaman bu altı desenden biridir; alana özgü ezber değil, ilke transferi.
 
 ---
 
@@ -185,9 +231,64 @@ Bu altı halka, bir CODESYS projesinin başından devreye almasına — ve sonra
 | **Project Generation** | POU üretim sırası zorunludur: **DUT → GVL → FB → PROGRAM** | Script Engine **IronPython 2.7** çalışır — f-string yok, `.format()` kullan |
 | **Debugging** | Her sorun analizine **Log sekmesinden** başla (ekran özet, log tanı) | Task Monitor'da **Max Exec Time** izle — Average aldatıcıdır |
 
+### C. Domain-Üstü Master Teşhis Tablosu
+
+Saha belirtileri çoğu zaman tek alana sığmaz; aşağıdaki tablo belirtiyi doğru alana ve kök nedene haritalar (her alt sentezin teşhis tablolarının konsolidasyonu).
+
+| Belirti | Birincil Katman | Kök Neden / İlke | Çözüm Yönü |
+|---|---|---|---|
+| Kod doğru ama jitter var | ① Temeller / ② Task | RT zinciri zayıf halka | BIOS C-state → isolcpus → RT-preempt |
+| PID salınıyor | ② Task | Freewheeling değişken Δt | Cyclic'e al, sabit Δt |
+| HMI yavaş / OPC UA kopuyor | ② Task | starvation | üst task exec düşür |
+| Sayaç/setpoint kayboluyor | ③ Programlama | tek-yazar ihlali / race | tek yazar + double-buffer |
+| Kalibrasyon download'da gitti | ① ③ | RETAIN vs PERSISTENT | kalibrasyon = PERSISTENT |
+| Bozuk durumda makine kaçtı | ③ | ELSE yok | ELSE→eFault |
+| 4 motor için 4 kopya kod | ③ | kapsülleme yok | FB + array of FB |
+| SCADA değeri geç görüyor | ② ④ | sampling < cycle / bus cycle | sampling ≥ task cycle |
+| Connect/publish sistemi dondurdu | ② ④ | bloke-I/O ana task'ta | Freewheeling task |
+| Ağdaki herkes PLC'ye erişti | ④ | güvenlik yok/None | OPC UA AES / ağ izolasyonu |
+| Gerçek-zaman bekledim, olmadı | ① ④ | raporlama ≠ kontrol | fieldbus (EtherCAT) |
+| "40 hata: tip bulunamadı" | ⑤ | bağımlılık sırası | DUT→GVL→FB→PROGRAM |
+| Derlendi ama sahada çalışmıyor | ⑤ ⑥ | "derlendi ≠ çalışıyor" | semantic check + simülasyon |
+| Sporadik crash, farklı yer | ① ⑥ | dangling pointer (Online Change) | pointer her scan, saklama |
+| Power-cycle eski davranış | ① ⑥ | bootapp | Create Boot App + power-cycle test |
+| Aralıklı arıza, yakalanamıyor | ⑥ | araç yanlış (Watch kaçırır) | Trace + trigger + pre-trigger |
+| Watchdog alarmı | ② ⑥ | exec > cycle / bloke / yük | Max Exec → kök neden |
+
+### D. Uçtan Uca Uzman Senaryosu — Altı Alan Birlikte
+
+**Görev**: OEM, 3 konveyörlü paketleme hattı projesini üretip devreye alacak; SCADA + bulut entegrasyonu istiyor.
+
+```
+① TEMELLER:   Hedef = Control Linux SL (RT-preempt) — Win SL üretim için değil.
+              Determinizm zincirinin tabanı: RT kernel + isolcpus + BIOS C-state kapalı.
+
+② TASK:       Task_Safety(P0,5ms) · Task_Control(P2,10ms) · Task_HMI(P5,100ms) ·
+              Task_Background(Freewheel) — bloke-I/O (bulut) buraya. CPU < %70.
+
+③ PROGRAMLAMA: FB_Conveyor ×3 (state machine + ELSE→eFault + xFault çıkışı).
+              GVL katmanlı (IO/HMI/Params/Alarms), her birine tek yazar.
+              PERSISTENT kalibrasyon, RETAIN üretim sayacı.
+
+④ NETWORKING:  OPC UA (SCADA, fabrika-içi, AES+auth, sembol seti daraltılmış) +
+              MQTT (bulut, Freewheel task, QoS1+idempotency, LWT). İkisi çakışmaz.
+
+⑤ GENERATION:  spec.json → PLCopen XML (DUT+FB, CDATA) → Script Engine headless
+              (temiz template kopyası → import DUT önce → GVL replace → library → compile).
+              50 müşteri için aynı script, farklı spec.
+
+⑥ DEBUGGING:   Devreye alma: Task Monitor 48h (gece+termal), Max Cycle < %70,
+              cyclictest Max < 100µs. Aralıklı arıza → Trace. Create Boot App + power-cycle.
+              Semantic check: her FB girişi bağlı mı (⑤ "derlendi≠çalışıyor").
+```
+
+Bu senaryo determinizm zincirinin uçtan uca kurulmasıdır: her alan bir öncekinin garantisini korur, en zayıf halka (RT yok / tek-yazar ihlali / güvenlik açık / sıra hatası / Max ihmali) tüm sistemi bozar.
+
 ---
 
 ## Öğrenme Yol Haritası
+
+Aşağıdaki harita Temel→İleri ilerlemeyi gösterir. **Her belge ayrıca Uzman bölümleri içerir** (Edge Case'ler, Optimizasyon, Derin Teknik Detay) — bunlar saha deneyimiyle, ilerideki bir UZMAN aşamasında okunmalıdır: tasarım kararlarının "neden"i, sessiz hatalar, RT tuning, gözlemci etkisi, bellek layout. Aşağıdaki sıralama "ne öğrenilir"i; Uzman bölümleri "neden böyle ve nerede patlar"ı verir.
 
 ```
 BAŞLANGIÇ (0–2 hafta) — Zemin Kurma
@@ -243,6 +344,16 @@ Alan: Project Generation
   → Şablon sistemi ve üretim akışı (04_generation_templates.md)
   Pratik: JSON spesifikasyonundan tam derlenebilir proje üret
 
+─────────────────────────────────────────────────────────────────
+UZMAN (6 ay+) — Felsefe ve Kök Neden (her belgenin Uzman bölümleri)
+─────────────────────────────────────────────────────────────────
+  → Determinizm zincirini her katmanda görme: belirti→katman→kök neden
+  → Tekrarlayan desenleri tanıma: tek-yazar, uçtan-uca zincir, çalışıyor≠doğru
+  → Edge Case'ler: sessiz hatalar (bootapp, dangling pointer, cycle overrun, NaN, word tearing)
+  → Optimizasyon: RT tuning (isolcpus/IRQ/C-state), bellek layout, gözlemci etkisi
+  → Derin Teknik Detay: neden JIT yok, neden preemptive, neden lossy PLCopen, neden Max
+  Pratik: bir saha tuhaflığını ilkeye indirgeyip kök nedeni dakikalarda bul
+
 İleri Konular (bu bilgi tabanı kapsamı dışında):
   → OOP: Interface, Inheritance, Polymorphism (ST)
   → EtherCAT SoftMotion entegrasyonu
@@ -277,6 +388,25 @@ Performans analizi (Task Monitor, Max Exec Time, jitter) yalnızca hata sonrası
 
 **7. Kalıcılık stratejisini karıştırmak**
 RETAIN ve PERSISTENT arasındaki farkı bilmemek somut üretim kaybına yol açar: Kalibrasyon RETAIN'de saklanırsa yeni firmware yüklendiğinde kaybolur; üretim partisi iptal edilmek zorunda kalınabilir. Kural nettir — kalibrasyon: PERSISTENT, üretim sayacı: RETAIN.
+
+---
+
+## Sentez Notları (Uzman)
+
+**Sentez Notu 1 — Altı Alan, Tek Felsefe**
+Uzmanlığın eşiği, altı alanı ayrı ayrı bilmek değil; hepsinin tek bir determinizm felsefesinin katmanları olduğunu görmektir. `fundamentals` felsefeyi kurar (JIT yok, I/O image, bellek görüntüsü); task-structure onu bütçeler, programming kapsüller, networking sınırını çizer (raporlama ≠ kontrol), generation tekrarlanabilir kılar, debugging görünür kılar. Bir saha tuhaflığını çözmek = bu zincirin hangi halkasının koptuğunu bulmak. Felsefe pusula, altı alan harita.
+
+**Sentez Notu 2 — Tekrarlayan Desenler İlke Transferidir**
+"Tek-yazar" GVL'de de (③), Modbus HR'da da (④), üretimde de (⑤) aynı kuraldır. "Belirti→katman→kök neden" her alt sentezin teşhis pusulasıdır. "Uçtan uca zincir" determinizmde, RT'de, güvenlikte tekrar eder. Uzman, yeni bir alanda bu desenleri tanır ve önceki alandan ilkeyi transfer eder — her alanı sıfırdan ezberlemez. Altı alandaki yüzlerce edge-case, aslında ~6 ilkenin farklı kılıklarıdır.
+
+**Sentez Notu 3 — "Çalışıyor ≠ Doğru" Tüm Domaini Keser**
+Dev ortamında çalışır ≠ üretimde çalışır (①). Ortalama iyi ≠ Max güvenli (⑥). Derlendi ≠ doğru çalışıyor (⑤). Sessiz cycle overrun, hata üretmeyen jitter, eksik FB bağlantısı — hepsi "çalışıyor görünüp" en kötü anda çöken sınıftır. Uzman, "çalışıyor"a güvenmez; en-kötü-durumu (Max, 48h test, semantic check, fiziksel fail-safe testi) doğrular. Bu, determinizm felsefesinin saha disiplinine dönüşmesidir.
+
+**Sentez Notu 4 — Determinizm Uçtan Uca, Tek Katman Kurtarmaz**
+Mükemmel ST kodu + RT-preempt kernel, ama BIOS C-state açıksa → jitter. Mükemmel FB, ama global'e yazıyorsa → race. Mükemmel OPC UA, ama task'ı bloke ediyorsa → watchdog. Mükemmel üretim, ama DUT sırası yanlışsa → 40 hata. Her katman bir öncekinin garantisini korumalı; bir katmanın ihmali tüm zinciri bozar. Bu yüzden uzman tek alana değil, zincirin bütününe bakar.
+
+**Sentez Notu 5 — Bu Bilgi Tabanının Agent İçin Değeri**
+Bu altı Uzman sentez + üst sentez, bir agent'ın CODESYS projesi üretip, devreye alıp, sorununu çözebilmesi için gereken bütünsel modeli verir. Agent "3 motorlu hat üret" dediğinde D-bölümündeki uçtan-uca senaryoyu izler: doğru runtime (①), doğru task (②), kapsüllü kod (③), güvenli iletişim (④), idempotent üretim (⑤), 48h doğrulama (⑥). Tek bir alanı atlayan agent, "çalışıyor görünen ama sahada çöken" proje üretir — bu sentezin önlemeye çalıştığı tam da budur.
 
 ---
 
