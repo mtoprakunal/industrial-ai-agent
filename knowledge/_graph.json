@@ -8,7 +8,9 @@
     "alternatif"   : "Bu iki konu aynı probleme farklı çözümler sunar",
     "tamamlar"     : "Bu iki konu birlikte daha güçlüdür",
     "detaylandırır": "Bu konu diğerinin belirli bir yönünü derinleştirir",
-    "üretir"       : "Bu konu diğerini çıktı olarak üretir"
+    "üretir"       : "Bu konu diğerini çıktı olarak üretir",
+    "türev"        : "Bu konu diğerinin bir türevi/uyarlamasıdır (aynı çekirdek)",
+    "programlar"   : "Bu yazılım/ortam diğer cihazı programlar"
   },
 
   "edges": [
@@ -35,6 +37,10 @@
     { "from": "decisions/hmi-technology",      "to": "hmi/web-based",                       "ilişki": "kullanır",      "not": "HMI teknoloji kararları web seçeneklerini değerlendirir" },
     { "from": "decisions/hmi-technology",      "to": "hmi/desktop",                         "ilişki": "kullanır",      "not": "HMI teknoloji kararları masaüstü seçeneklerini değerlendirir" },
     { "from": "applications/conveyor",         "to": "codesys/task-structure",              "ilişki": "kullanır",      "not": "Konveyör uygulamaları task yapısı kararlarını somutlaştırır" },
-    { "from": "applications/conveyor",         "to": "decisions/protocol-selection",        "ilişki": "tamamlar",      "not": "Gerçek uygulama protokol seçim kararlarına örnek oluşturur" }
+    { "from": "applications/conveyor",         "to": "decisions/protocol-selection",        "ilişki": "tamamlar",      "not": "Gerçek uygulama protokol seçim kararlarına örnek oluşturur" },
+    { "from": "inovance/inoproshop",           "to": "codesys/fundamentals",                "ilişki": "türev",         "not": "InoProShop, CODESYS V3 çekirdeği üzerine kurulu bir türevdir" },
+    { "from": "inovance/inoproshop",           "to": "protocols/opc-ua",                    "ilişki": "kullanır",      "not": "InoProShop OPC-UA sunucu konfigürasyonu sağlar (CODESYS mantığı)" },
+    { "from": "inovance/inoproshop",           "to": "protocols/modbus-tcp",                "ilişki": "kullanır",      "not": "InoProShop Modbus TCP server/client konfigürasyonu sağlar" },
+    { "from": "inovance/inoproshop",           "to": "devices/INOVANCE_AM600",              "ilişki": "programlar",    "not": "InoProShop AM600 motion kontrolörünü programlar (H5U DEĞİL — o AutoShop)" }
   ]
 }

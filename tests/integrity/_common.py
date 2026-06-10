@@ -14,11 +14,23 @@ RULES      = REPO / 'agent' / 'rules.json'
 
 SEVIYELER  = ['Stub', 'Temel', 'Orta', 'İleri', 'Uzman']
 KATEGORILER = ['protocols', 'codesys', 'hmi', 'hardware',
-               'networking', 'standards', 'applications', 'decisions']
+               'networking', 'standards', 'applications', 'decisions',
+               'inovance']
+
+DEVICES_INDEX = REPO / 'devices' / '_index.json'
 
 
 def load_index():
     return json.loads(INDEX.read_text())
+
+
+def device_paths():
+    """devices/_index.json'daki cihaz dizinlerini 'devices/<dir>' seti olarak verir
+    (graph'ta cihaz kütüphanesine cross-referans kenarlarını çözmek için)."""
+    if not DEVICES_INDEX.exists():
+        return set()
+    idx = json.loads(DEVICES_INDEX.read_text())
+    return {f"devices/{d['dir']}" for d in idx.get('devices', [])}
 
 
 def load_graph():

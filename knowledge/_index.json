@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "description": "Bilgi tabanının tüm konularını, olgunluk seviyelerini ve durumlarını takip eder.",
   "maturity_levels": ["Stub", "Temel", "Orta", "İleri", "Uzman"],
-  "last_updated": "2026-06-09",
+  "last_updated": "2026-06-10",
 
   "domains": {
 
@@ -154,6 +154,23 @@
       "protocol-selection": { "seviye": "Uzman", "başlık": "Protokol Seçim Kararları" },
       "architecture":       { "seviye": "Uzman", "başlık": "Mimari Tasarım Kararları" },
       "hmi-technology":     { "seviye": "Uzman", "başlık": "HMI Teknoloji Seçimleri" }
+    },
+
+    "inovance": {
+      "description": "Inovance otomasyon ekosistemi (CODESYS tabanlı InoProShop dahil)",
+      "inoproshop": {
+        "_synthesis":                  { "seviye": "Orta", "başlık": "InoProShop — Üst Sentez" },
+        "01_inoproshop_overview":      { "seviye": "Orta", "başlık": "InoProShop Genel Bakış" },
+        "02_project_structure":        { "seviye": "Orta", "başlık": "Proje Yapısı" },
+        "03_iec61131_in_inoproshop":   { "seviye": "Orta", "başlık": "InoProShop'ta IEC 61131-3" },
+        "04_hardware_configuration":   { "seviye": "Orta", "başlık": "Donanım Konfigürasyonu (AM600/AC800)" },
+        "05_ethercat_configuration":   { "seviye": "Orta", "başlık": "EtherCAT Konfigürasyonu" },
+        "06_motion_control":           { "seviye": "Orta", "başlık": "Motion Control (PLCopen)" },
+        "07_communication":            { "seviye": "Orta", "başlık": "Haberleşme" },
+        "08_codesys_to_inoproshop":    { "seviye": "Orta", "başlık": "CODESYS'ten InoProShop'a Taşıma" },
+        "09_debugging":                { "seviye": "Orta", "başlık": "Hata Ayıklama" },
+        "10_best_practices":           { "seviye": "Orta", "başlık": "En İyi Uygulamalar" }
+      }
     }
   }
 }

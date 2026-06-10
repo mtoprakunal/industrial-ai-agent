@@ -4,7 +4,7 @@ knowledge/_graph.json butunlugu: yapi, iliski tipleri, kenar hedeflerinin gecerl
 """
 import unittest
 
-from _common import load_graph, load_index, iter_leaves
+from _common import load_graph, load_index, iter_leaves, device_paths
 
 
 def index_topic_paths(index):
@@ -24,7 +24,8 @@ class TestGraph(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.graph = load_graph()
-        cls.valid_paths = index_topic_paths(load_index())
+        # Bilgi tabanı konuları + cihaz kütüphanesi cross-referansları
+        cls.valid_paths = index_topic_paths(load_index()) | device_paths()
 
     def test_graph_has_required_keys(self):
         for key in ('relationship_types', 'edges'):

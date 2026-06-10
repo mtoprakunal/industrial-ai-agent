@@ -27,7 +27,8 @@ TEMPLATE = BASE / 'knowledge' / '_template.md'
 INDEX    = BASE / 'knowledge' / '_index.json'
 
 KATEGORILER = ['protocols', 'codesys', 'hmi', 'hardware',
-               'networking', 'standards', 'applications', 'decisions']
+               'networking', 'standards', 'applications', 'decisions',
+               'inovance']
 SEVIYELER   = ['Stub', 'Temel', 'Orta', 'İleri', 'Uzman']
 
 
