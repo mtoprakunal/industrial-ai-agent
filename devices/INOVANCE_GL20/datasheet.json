@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "complete",
+    "notes": "GL20 yeni nesil dağıtık I/O sistemi. Değerler resmi Inovance EU Easy Series broşürü içindeki GL20 bölümünden (GL20-RTU-ECT EtherCAT bus coupler spesifikasyon tablosu, Data code 19120266) alındı. GL20 bir modül ailesidir; bu kayıt EtherCAT bus coupler (GL20-RTU-ECT, sipariş kodu 1440286) baz alınarak doldurulmuştur. Modül başına DI/DO/AI/AO değerleri modül tipine göre değişir (notlarda)."
+  },
+  "identity": {
+    "manufacturer": "Inovance (Shenzhen Inovance Technology)",
+    "model": "GL20 (GL20-RTU-ECT)",
+    "product_family": "GL20 Serisi dağıtık I/O",
+    "category": "remote-io",
+    "description": "Yeni nesil ince/kompakt dağıtık I/O sistemi (iF Design Award 2022). EtherCAT bus coupler (GL20-RTU-ECT) arkasına 16 genişletme modülüne kadar DI/DO/AI/AO/sıcaklık modülü eklenir. Önceki nesil GL10'a göre %66 kabin alanı tasarrufu. Inovance Easy, H5U, AM600 ve AC700/AC800 PLC'leri ile uyumlu.",
+    "official_url": "https://www.inovance.eu/products/plcs-hmis/gl20-i/o-modules",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/GL20_Br_EN_Spreads_Web_v0.3.pdf"
+  },
+  "communication": {
+    "protocols": ["EtherCAT (slave; GL20-RTU-ECT)", "PROFINET (slave; GL20-RTU-PN)", "EtherNet/IP (slave; coupler varyantı)", "IO-Link (coupler varyantı)"],
+    "fieldbus_role": "slave",
+    "device_description_file": {
+      "type": "ESI",
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["2x EtherCAT (RJ45, IN/OUT)", "1x USB-C (firmware güncelleme)", "24 VDC besleme terminali (A&B 2 kanal)"]
+  },
+  "electrical": {
+    "power_supply": "+24 VDC",
+    "power_consumption": null,
+    "isolation": "Aşırı akım / ters bağlantı koruması"
+  },
+  "environment": {
+    "operating_temp": "-20 ~ 55 °C",
+    "storage_temp": null,
+    "humidity": "<%95, yoğuşmasız",
+    "ip_rating": "IP20"
+  },
+  "physical": {
+    "dimensions": "Bus coupler 24 x 100 x 83 mm; ince I/O modülleri 12 mm kalınlık (örn. GL20-0008ETN). GL20-RTU-ECT yükseklik 100 mm.",
+    "weight": null,
+    "mounting": "DIN ray (kaldıraçlı, takım gerektirmeyen kablolama; yaylı klemensler, çıkarılabilir bloklar)"
+  },
+  "io": {
+    "digital_inputs": "Modüle göre: 8/16/32 kanal (GL20-0800END/1600END/3200END-M, source PNP/sink NPN, giriş filtresi 0.25–32 ms)",
+    "digital_outputs": "Modüle göre: 8/16/32 kanal transistör (GL20-0008/0016/0032 ETN/ETP, yanıt 100 µs) veya 8 kanal röle (GL20-0008ER, 15 ms)",
+    "analog_inputs": "GL20-4AD: 4 kanal (16 bit, 250 µs örnekleme)",
+    "analog_outputs": "GL20-4DA: 4 kanal (16 bit, 250 µs örnekleme)",
+    "special": "Sıcaklık modülleri: GL20-4PT (RTD: Pt100/500/1000, Cu100, KTY84, NTC) ve GL20-4TC (termokupl B,E,N,J,K,R,S,T). Dijital I/O kombo: GL20-0808ETN, GL20-3232ETN-M.",
+    "notes": "Bus coupler başına maks. 16 genişletme modülü. Process data: 1024 girdi + 1024 çıktı bayta kadar; mailbox 256+256 bayt. CoE (PDO/SDO). EtherCAT min. çevrim süresi 125 µs, 100 Mbit/s tam dupleks, 100 m. DI/DO donanım yanıtı ~100 µs. Modüller hem bus coupler arkasına hem doğrudan Easy/H5U/AM600 CPU yanına eklenebilir."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": null
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": "dolaylı (EtherCAT slave olarak; master CODESYS ise ESI ile eklenir)",
+    "runtime": null,
+    "integration_notes": "GL20 bir I/O slave'idir, programlanmaz. GL20-RTU-ECT bir EtherCAT slave olarak herhangi bir EtherCAT master'a (Inovance AM600/H5U/Easy AutoShop/InoProShop veya üçüncü taraf CODESYS master) ESI dosyası ile eklenir; PDO eşlemesiyle I/O verisi okunup yazılır. CODESYS tabanlı bir master ile çalıştırılabilir (dolaylı). EtherCAT alias master üzerinden yapılandırılır (1–65535); coupler arkasındaki modüller alias erişimini desteklemez."
+  },
+  "applications": [
+    "Dağıtık uzak I/O (EtherCAT/PROFINET hattı boyunca)",
+    "Kompakt kabinlerde alan tasarruflu I/O genişletme",
+    "Hızlı yanıt gerektiren senkron I/O (125 µs çevrim)",
+    "Sıcaklık ölçümü (RTD/termokupl) ve analog edinme",
+    "Inovance Easy/H5U/AM600 sistemlerinde yerel veya uzak genişletme"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/products/plcs-hmis/gl20-i/o-modules",
+      "title": "Inovance EU — GL20 I/O Modules ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/Easy_Series_PLC_Br_EN_Singles_Web_V0.1.pdf",
+      "title": "Inovance — Easy Series / GL20 broşürü (GL20-RTU-ECT spesifikasyon tablosu, modül listesi)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/GL20_Br_EN_Spreads_Web_v0.3.pdf",
+      "title": "Inovance — GL20 Series broşürü",
+      "reliability": "resmi"
+    }
+  ]
+}
