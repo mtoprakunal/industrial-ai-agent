@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "complete",
+    "notes": "Değerler Beijer resmi X2 pro 15 Technical Data ve X2 pro / iX yazılım sayfalarından alındı. X2 pro AİLESİ entegre CODESYS ÇALIŞTIRMAZ — iX runtime/iX Developer ile programlanır ve PLC'ye haberleşme sürücüleriyle bağlanır. İşletim sistemi versiyonu resmi teknik veride açıkça yazılmadığı için null. Ekran 15.4 inç olarak teknik veride geçer (ürün adı '15')."
+  },
+  "identity": {
+    "manufacturer": "Beijer Electronics",
+    "model": "X2 pro 15",
+    "product_family": "X2 pro (operatör paneli, iX runtime)",
+    "category": "hmi",
+    "description": "15.4 inç geniş dokunmatik operatör paneli. iX runtime ile gelir, iX Developer ile programlanır. Büyük ekranlı saf HMI; PLC/sürücülere haberleşme sürücüleri üzerinden bağlanır, dahili PLC mantığı (CODESYS) çalıştırmaz.",
+    "official_url": "https://www.beijerelectronics.com/en/Products/Operator___panels/X2___pro/X2___pro___15",
+    "datasheet_url": "https://www.beijerelectronics.com/docs/X2-pro-15-Installation/en/technical-data_x2-pro-15.html"
+  },
+  "communication": {
+    "protocols": ["Modbus TCP", "Modbus RTU", "Ethernet/IP", "PROFINET", "OPC-UA (sunucu/istemci)", "çeşitli PLC sürücüleri (iX driver kütüphanesi)"],
+    "fieldbus_role": "client",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["2x Ethernet 10/100 Mbit (RJ45, LAN A/B)", "2x USB Host 2.0", "RS-232", "RS-422/RS-485", "RS-485", "1x CAN 2.0B", "1x SD kart"]
+  },
+  "electrical": {
+    "power_supply": "+24 V DC (18–32 V DC)",
+    "power_consumption": "31.2 W",
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": "-10 °C ila +60 °C",
+    "storage_temp": "-20 °C ila +70 °C",
+    "humidity": "%5–85 yoğunlaşmasız",
+    "ip_rating": "Ön panel IP65"
+  },
+  "physical": {
+    "dimensions": "410 × 286 × 8 mm (ön panel)",
+    "weight": "3.85 kg",
+    "mounting": "Pano kesiti montaj; VESA 75 × 75"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": null,
+    "notes": "Saf HMI; yerel proses I/O'su yoktur, veri haberleşme sürücüleriyle PLC'den okunur."
+  },
+  "display": {
+    "size_inch": "15.4",
+    "resolution": "1280 × 800 piksel, 262k renk",
+    "touch": "Rezistif (cam üzeri polyester, ITO film)",
+    "processor": "NXP i.MX6 DualLite, çift çekirdek ARM Cortex-A9 1.0 GHz",
+    "ram": "1 GB DDR3",
+    "storage": "1.5 GB eMMC SSD (uygulama)",
+    "os": null,
+    "software": "iX Developer 2.x / iX runtime"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": false,
+    "runtime": null,
+    "integration_notes": "X2 pro entegre CODESYS çalıştırmaz; iX Developer ile programlanır. CODESYS tabanlı PLC'ye (X2 control, BoX2 SC veya 3. parti) HMI olarak Modbus TCP / Ethernet/IP / OPC-UA istemcisi olarak bağlanır. Dahili kontrol mantığı gerekiyorsa X2 control / BoX2 SC seçilmelidir."
+  },
+  "applications": [
+    "Büyük ekran makine/hat operatör arayüzü",
+    "Proses görselleştirme ve SCADA istasyonu",
+    "Alarm/recipe/trend HMI",
+    "OPC-UA sunucu olarak üst sisteme köprü"
+  ],
+  "sources": [
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/Operator___panels/X2___pro/X2___pro___15",
+      "title": "Beijer Electronics — X2 pro 15 ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/docs/X2-pro-15-Installation/en/technical-data_x2-pro-15.html",
+      "title": "Beijer Electronics — X2 pro 15 Technical Data (Hardware & Installation)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/software/ix-hmi-software/for-advanced-users/OPC___UA___server",
+      "title": "Beijer Electronics — iX OPC UA server (X2/BoX2 OPC-UA sunucu yeteneği)",
+      "reliability": "resmi"
+    }
+  ]
+}
