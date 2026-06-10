@@ -6,6 +6,20 @@
                  "vfd", "servo-drive", "remote-io", "gateway", "sensor",
                  "safety", "power", "other"],
   "devices": [
-    { "dir": "PENKO_SGM820", "manufacturer": "PENKO Engineering B.V.", "model": "SGM820", "category": "transmitter", "completeness": "partial" }
+    { "dir": "PENKO_SGM820", "manufacturer": "PENKO Engineering B.V.", "model": "SGM820", "category": "transmitter", "completeness": "partial" },
+    { "dir": "BEIJER_X2_control_7", "manufacturer": "Beijer Electronics", "model": "X2 control 7", "category": "hmi", "completeness": "complete" },
+    { "dir": "BEIJER_X2_control_10", "manufacturer": "Beijer Electronics", "model": "X2 control 10", "category": "hmi", "completeness": "complete" },
+    { "dir": "BEIJER_X2_pro_10", "manufacturer": "Beijer Electronics", "model": "X2 pro 10", "category": "hmi", "completeness": "complete" },
+    { "dir": "BEIJER_X2_pro_15", "manufacturer": "Beijer Electronics", "model": "X2 pro 15", "category": "hmi", "completeness": "complete" },
+    { "dir": "BEIJER_BoX2_A12", "manufacturer": "Beijer Electronics", "model": "BoX2 A12", "category": "panel-pc", "completeness": "partial" },
+    { "dir": "INOVANCE_H5U-1614MTD", "manufacturer": "Inovance", "model": "H5U-1614MTD", "category": "plc", "completeness": "complete" },
+    { "dir": "INOVANCE_AM600", "manufacturer": "Inovance", "model": "AM600", "category": "motion-controller", "completeness": "complete" },
+    { "dir": "INOVANCE_Easy521", "manufacturer": "Inovance", "model": "Easy521", "category": "plc", "completeness": "partial" },
+    { "dir": "INOVANCE_GL20", "manufacturer": "Inovance", "model": "GL20", "category": "remote-io", "completeness": "complete" },
+    { "dir": "INOVANCE_MD500", "manufacturer": "Inovance", "model": "MD500", "category": "vfd", "completeness": "partial" },
+    { "dir": "INOVANCE_MD290", "manufacturer": "Inovance", "model": "MD290", "category": "vfd", "completeness": "partial" },
+    { "dir": "INOVANCE_MD810", "manufacturer": "Inovance", "model": "MD810", "category": "vfd", "completeness": "partial" },
+    { "dir": "INOVANCE_SV660N", "manufacturer": "Inovance", "model": "SV660N", "category": "servo-drive", "completeness": "partial" },
+    { "dir": "INOVANCE_IS620N", "manufacturer": "Inovance", "model": "IS620N", "category": "servo-drive", "completeness": "partial" }
   ]
 }
