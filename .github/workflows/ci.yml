@@ -1,0 +1,37 @@
+name: CI
+
+# Bilgi tabani butunlugunu ve agent beyninin degismezlerini her push/PR'da dogrular.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  knowledge-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scriptleri derle (sozdizimi kontrolu)
+        run: |
+          python -m py_compile scripts/*.py
+          python -m py_compile templates/codesys/project-scripts/*.py
+
+      - name: Bilgi belgelerini dogrula (_template.md formati)
+        run: python scripts/validate_knowledge.py
+
+      - name: Butunluk testleri (index / graph / rules / add_knowledge)
+        run: python tests/run_tests.py -v
+
+      - name: PLCopen XML well-formed mi
+        run: |
+          for f in templates/codesys/plcopen-xml/*.xml; do
+            python -c "import xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1])" "$f"
+          done

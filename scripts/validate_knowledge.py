@@ -37,6 +37,8 @@ def main():
 
     print(f"\n{'='*50}")
     print(f"Toplam: {total} belge | Hatalı: {failed} | Geçerli: {total-failed}")
+    return 1 if failed else 0
 
 if __name__ == '__main__':
-    main()
+    import sys
+    sys.exit(main())
