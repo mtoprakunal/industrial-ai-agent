@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "complete",
+    "notes": "Değerler Beijer resmi X2 control 10 Technical Data ve X2 control / CODESYS sayfalarından alındı. X2 control 10 entegre CODESYS runtime 3.5 çalıştırır (BCS Tools). İşletim sistemi versiyonu resmi teknik veride açıkça yazılmadığı için null. EtherCAT standart fieldbus; CAN portu bu modelin teknik verisinde açıkça listelenmediğinden eklenmedi (7 ve 15 modellerinde CAN var). Opto-MOS 2x SPST relay çıkışı mevcut."
+  },
+  "identity": {
+    "manufacturer": "Beijer Electronics",
+    "model": "X2 control 10",
+    "product_family": "X2 control (entegre CODESYS kontrol)",
+    "category": "hmi",
+    "description": "10.1 inç dokunmatik operatör paneli ve entegre CODESYS yumuşak PLC birleşimi. Quad-core işlemci ile daha yüksek mantık/grafik yükü taşır. iX Developer ile HMI, BCS Tools / CODESYS ile IEC 61131-3 kontrol aynı donanımda çalışır.",
+    "official_url": "https://www.beijerelectronics.com/en/Products/Control___systems/X2___with___CODESYS___control/X2___control___10",
+    "datasheet_url": "https://www.beijerelectronics.com/docs/X2-control-10-Installation/en/technical-data_x2-control-10.html"
+  },
+  "communication": {
+    "protocols": ["EtherCAT", "Modbus TCP", "Modbus RTU", "PROFINET", "Ethernet/IP", "CANopen", "OPC-UA"],
+    "fieldbus_role": "master",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["2x Ethernet 10/100 Mbit (RJ45, LAN A/B)", "2x USB Host 2.0", "RS-232", "RS-422/RS-485", "RS-485", "Opto-MOS relay 2x SPST", "1x SD kart"]
+  },
+  "electrical": {
+    "power_supply": "+24 V DC (18–32 V DC)",
+    "power_consumption": "21.6 W",
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": "-10 °C ila +60 °C",
+    "storage_temp": "-20 °C ila +70 °C",
+    "humidity": "%5–85 yoğunlaşmasız",
+    "ip_rating": "Ön panel IP65"
+  },
+  "physical": {
+    "dimensions": "292 × 194 × 7 mm (ön panel)",
+    "weight": "1.65 kg",
+    "mounting": "Pano kesiti montaj; VESA 75 × 75"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": "2x Opto-MOS relay (SPST)",
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": null,
+    "notes": "Geniş I/O genelde EtherCAT/CANopen uzak I/O ile sağlanır."
+  },
+  "display": {
+    "size_inch": "10.1",
+    "resolution": "1024 × 600 piksel, 262k renk",
+    "touch": "Rezistif (cam üzeri polyester, ITO film)",
+    "processor": "NXP i.MX6 Quad, dört çekirdek ARM Cortex-A9 1.0 GHz",
+    "ram": "2 GB DDR3",
+    "storage": "2 GB eMMC SSD (1.5 GB uygulama için boş)",
+    "os": null,
+    "software": "iX Developer 2.x (HMI) + BCS Tools / CODESYS (kontrol)"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": true,
+    "runtime": "CODESYS Control runtime 3.5 (BCS Tools 3.x); 64 KB non-volatile değişken",
+    "integration_notes": "Cihaz entegre CODESYS runtime çalıştırır; PLC mantığı BCS Tools ile yazılır. EtherCAT standarttır; CODESYS EtherCAT, CODESYS Modbus Ethernet, CODESYS Modbus RTU ve CANopen sürücüleri desteklenir. iX projesi BCS Tools 3.62 ile üretilen PLC programlarını destekler; iX Developer 2.40 SP5+ önerilir. HMI–PLC değişken paylaşımı cihaz içi tag senkronizasyonu ile yapılır."
+  },
+  "applications": [
+    "Orta ölçek makine kontrolü (HMI + PLC tek kutu)",
+    "EtherCAT eksen/uzak I/O kontrolü",
+    "OEM makine ve hat panelleri",
+    "Proses izleme ve yerel kontrol"
+  ],
+  "sources": [
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/Control___systems/X2___with___CODESYS___control/X2___control___10",
+      "title": "Beijer Electronics — X2 control 10 ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/docs/X2-control-10-Installation/en/technical-data_x2-control-10.html",
+      "title": "Beijer Electronics — X2 control 10 Technical Data (Hardware & Installation)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/x2control",
+      "title": "Beijer Electronics — X2 control HMI panels with integrated CODESYS control",
+      "reliability": "resmi"
+    }
+  ]
+}
