@@ -41,6 +41,11 @@
     { "from": "inovance/inoproshop",           "to": "codesys/fundamentals",                "ilişki": "türev",         "not": "InoProShop, CODESYS V3 çekirdeği üzerine kurulu bir türevdir" },
     { "from": "inovance/inoproshop",           "to": "protocols/opc-ua",                    "ilişki": "kullanır",      "not": "InoProShop OPC-UA sunucu konfigürasyonu sağlar (CODESYS mantığı)" },
     { "from": "inovance/inoproshop",           "to": "protocols/modbus-tcp",                "ilişki": "kullanır",      "not": "InoProShop Modbus TCP server/client konfigürasyonu sağlar" },
-    { "from": "inovance/inoproshop",           "to": "devices/INOVANCE_AM600",              "ilişki": "programlar",    "not": "InoProShop AM600 motion kontrolörünü programlar (H5U DEĞİL — o AutoShop)" }
+    { "from": "inovance/inoproshop",           "to": "devices/INOVANCE_AM600",              "ilişki": "programlar",    "not": "InoProShop AM600 motion kontrolörünü programlar (H5U DEĞİL — o AutoShop)" },
+    { "from": "examples/case-studies",         "to": "decisions/protocol-selection",        "ilişki": "tamamlar",      "not": "Vaka çalışmaları protokol seçim kararlarını gerçek makinelerde gösterir" },
+    { "from": "examples/case-studies",         "to": "applications/conveyor",               "ilişki": "tamamlar",      "not": "Konveyör vakası uygulama bilgisini somut mimariyle pekiştirir" },
+    { "from": "examples/open-source",          "to": "codesys/programming/03_function_blocks","ilişki": "kullanır",    "not": "Açık kaynak kütüphaneler yeniden kullanılabilir FB pattern'lerini öğretir" },
+    { "from": "examples/reference-arch",       "to": "standards",                           "ilişki": "detaylandırır", "not": "Referans mimariler IEC/ISA standartlarını sistem seviyesinde uygular" },
+    { "from": "examples/reference-arch",       "to": "protocols/mqtt",                      "ilişki": "kullanır",      "not": "UNS / Sparkplug B referans mimarisi MQTT üzerine kurulur" }
   ]
 }

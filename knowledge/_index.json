@@ -171,6 +171,33 @@
         "09_debugging":                { "seviye": "Orta", "başlık": "Hata Ayıklama" },
         "10_best_practices":           { "seviye": "Orta", "başlık": "En İyi Uygulamalar" }
       }
+    },
+
+    "examples": {
+      "description": "Web'den öğrenilen örnek projeler, açık kaynak, vendor notları ve referans mimariler",
+      "_synthesis": { "seviye": "Orta", "başlık": "Örnekler — Üst Sentez" },
+      "open-source": {
+        "01_oscat_library":            { "seviye": "Orta", "başlık": "OSCAT Açık Kaynak Kütüphaneleri" },
+        "02_codesys_forge_store":      { "seviye": "Orta", "başlık": "CODESYS Forge ve Store Örnekleri" },
+        "03_github_iec61131_projects": { "seviye": "Orta", "başlık": "GitHub IEC 61131-3 Projeleri" }
+      },
+      "vendor-app-notes": {
+        "01_codesys_application_examples": { "seviye": "Orta", "başlık": "CODESYS Uygulama Örnekleri" },
+        "02_beckhoff_twincat_samples":     { "seviye": "Orta", "başlık": "Beckhoff TwinCAT Örnekleri" },
+        "03_inovance_am600_examples":      { "seviye": "Orta", "başlık": "Inovance AM600 Örnekleri" }
+      },
+      "case-studies": {
+        "01_packaging_machine":         { "seviye": "Orta", "başlık": "Paketleme Makinesi Vakası" },
+        "02_material_handling_conveyor":{ "seviye": "Orta", "başlık": "Malzeme Taşıma / Konveyör Vakası" },
+        "03_process_batch_control":     { "seviye": "Orta", "başlık": "Proses / Batch Kontrol Vakası" },
+        "04_motion_winder_flying_saw":  { "seviye": "Orta", "başlık": "Senkron Motion (Winder / Flying Saw) Vakası" }
+      },
+      "reference-arch": {
+        "01_isa95_hierarchy":          { "seviye": "Orta", "başlık": "ISA-95 Otomasyon Hiyerarşisi" },
+        "02_uns_sparkplug_b":          { "seviye": "Orta", "başlık": "Unified Namespace ve Sparkplug B" },
+        "03_opcua_companion_specs":    { "seviye": "Orta", "başlık": "OPC-UA Companion Specs" },
+        "04_namur_open_architecture":  { "seviye": "Orta", "başlık": "NAMUR Open Architecture (NOA)" }
+      }
     }
   }
 }
