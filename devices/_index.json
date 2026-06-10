@@ -1,9 +1,11 @@
 {
   "version": "1.0.0",
   "description": "Cihaz kütüphanesindeki tüm kayıtları üretici, model, kategori ve doluluk durumuyla takip eder.",
-  "last_updated": "",
+  "last_updated": "2026-06-10",
   "categories": ["transmitter", "hmi", "panel-pc", "plc", "motion-controller",
                  "vfd", "servo-drive", "remote-io", "gateway", "sensor",
                  "safety", "power", "other"],
-  "devices": []
+  "devices": [
+    { "dir": "PENKO_SGM820", "manufacturer": "PENKO Engineering B.V.", "model": "SGM820", "category": "transmitter", "completeness": "partial" }
+  ]
 }

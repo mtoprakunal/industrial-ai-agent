@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "Güç beslemesi, çalışma sıcaklığı, IP sınıfı, boyut ve montaj resmi kaynaklarda açıkça belirtilmediği için boş bırakıldı (tahmin edilmedi). Register/PDI adresleri resmi PENKO Modbus/PDI dokümanından alınmalıdır."
+  },
+  "identity": {
+    "manufacturer": "PENKO Engineering B.V.",
+    "model": "SGM820",
+    "product_family": "SGM800 Serisi Tartım Dijitizer",
+    "category": "transmitter",
+    "description": "SGM800 serisinin Ethernet'li üyesi: sertifikalı dijital tartım transmitteri/dijitizer. Load cell sinyalini dijitalleştirir, kurumsal ağa Ethernet üzerinden taşır. G-Cal otomatik kalibrasyon sistemi içerir.",
+    "official_url": "https://www.penko.com/en/products/machine-automation/measuring-instruments/amplifiers/",
+    "datasheet_url": "https://shop.penko.com/sgm820-weighing-controller-ethernet/"
+  },
+  "communication": {
+    "protocols": ["Modbus TCP", "Ethernet/IP", "Omron FINS", "USB (konfigürasyon)"],
+    "fieldbus_role": "slave",
+    "device_description_file": {
+      "type": "EDS",
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["Ethernet (RJ45)", "USB"]
+  },
+  "electrical": {
+    "power_supply": null,
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": null,
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": null
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": "DIN ray (SGM800 serisi genel)"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": "4 programlanabilir setpoint çıkışı",
+    "analog_inputs": "Load cell girişi (mV/V)",
+    "analog_outputs": "Opsiyonel analog çıkış (0/4–20 mA)",
+    "special": "Load cell girişi: maks. 8 load cell (350 ohm); örnekleme hızı 1600/s'e kadar; tek/çift kutuplu mV/V; LED gösterge",
+    "notes": "Gösterge yenileme hızı 1–50 Hz arası seçenekler. Konfigürasyon USB, ön panel veya gömülü web sunucusu (seçili modeller) ile."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": "Gömülü web sunucusu (seçili modeller); PENKO PI Mach II / Pi Configuration"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": "dolaylı (Modbus TCP veya Ethernet/IP üzerinden)",
+    "runtime": null,
+    "integration_notes": "CODESYS'e Modbus TCP slave olarak (Modbus TCP Master cihazı altında) veya Ethernet/IP adapter olarak eklenir. Parametre okuma/yazma için PENKO'nun PDI protokolü Modbus TCP üzerinden kullanılır (PDI ağacındaki parametreye erişim). Register/PDI indeksleri resmi PENKO 'PDI over Modbus' dokümanından alınmalı — burada tahmin edilmedi."
+  },
+  "applications": [
+    "Endüstriyel tartım ve dozajlama",
+    "Tank/silo seviye (ağırlık) ölçümü",
+    "Dolum/paketleme hatlarında kontrol tartımı",
+    "Yasal tartım (sertifikalı seri)"
+  ],
+  "sources": [
+    {
+      "url": "https://www.penko.com/en/products/machine-automation/measuring-instruments/amplifiers/",
+      "title": "PENKO — Amplifiers / SGM800 serisi ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://shop.penko.com/sgm820-weighing-controller-ethernet/",
+      "title": "PENKO Shop — SGM820 Weighing Controller (Ethernet)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.penko.com/globalassets/penko/documents/support-articles/how-to-use-the-pdi-protocol-to-read-or-write-the-parameter-in-the-pdi-tree-with-modbus.pdf",
+      "title": "PENKO — PDI protokolünü Modbus ile kullanma (parametre okuma/yazma)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/1658175/Penko-Sgm800.html",
+      "title": "PENKO SGM800 Manual (ManualsLib aynası)",
+      "reliability": "topluluk"
+    }
+  ]
+}
