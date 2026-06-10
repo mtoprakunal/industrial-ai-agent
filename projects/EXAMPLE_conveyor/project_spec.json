@@ -2,7 +2,7 @@
   "meta": {
     "proje_adi": "EXAMPLE_Conveyor_Line1",
     "olusturulma": "2026-06-01",
-    "durum": "spec_only",
+    "durum": "partial",
     "agent_tarafindan_uretildi": false
   },
   "gereksinimler": {
