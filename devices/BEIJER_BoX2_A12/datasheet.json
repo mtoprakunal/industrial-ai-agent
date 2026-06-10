@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "DİKKAT: 'BoX2 A12' tam model adı Beijer'in güncel resmi ürün sayfalarında DOĞRULANAMADI (A12 muhtemelen donanım platformu/parça kodu ya da bölgesel/eski isimlendirme). Cihaz tanımına en uygun doğrulanmış model BoX2 pro / BoX2 pro SC ailesidir: displaysiz (headless) box, iX runtime ile gelir, SC sürümlerinde entegre CODESYS çalıştırır. Bu kayıttaki donanım değerleri resmi BoX2 pro ve BoX2 base v2 teknik verisinden alınmış, BoX2 pro sınıfı için tipik değerlerdir; 'A12' özel varyantının kesin değerleri (boyut, ağırlık, güç tüketimi) resmi BoX2 pro Hardware & Installation dokümanından teyit edilmeli — burada tahmin edilmedi, null bırakıldı."
+  },
+  "identity": {
+    "manufacturer": "Beijer Electronics",
+    "model": "BoX2 A12",
+    "product_family": "BoX2 (displaysiz box / IIoT gateway / edge controller)",
+    "category": "panel-pc",
+    "description": "Ekransız (headless) endüstriyel box cihaz / protokol dönüştürücü-IIoT gateway. iX runtime çalıştırır, iX Developer ile yapılandırılır; SC (soft control) sürümlerinde entegre CODESYS edge controller olur. PLC/servo/sürücüleri ağa bağlar, yerel veritabanı/alarm/raporlama ve bulut bağlantısı sunar. ('A12' model adı resmi sayfalarda doğrulanamadı; değerler BoX2 pro sınıfına dayanır.)",
+    "official_url": "https://www.beijerelectronics.com/en/Products/Converters___and___IIoT___gateways/BoX2___pro",
+    "datasheet_url": "https://www.beijerelectronics.com/docs/BoX2-base-v2-Installation/en/technical-data_box2-base-v2.html"
+  },
+  "communication": {
+    "protocols": ["Modbus TCP", "Modbus RTU", "Ethernet/IP", "PROFINET", "OPC-UA (sunucu/istemci)", "EtherCAT (SC/CODESYS sürümünde)", "CANopen (SC/CODESYS sürümünde)"],
+    "fieldbus_role": "both",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["2x Ethernet 100 Mbit (RJ45, LAN A/B)", "1x USB Host 2.0", "3x seri port RS-232/RS-422/RS-485 (9-pin DSUB)", "1x SD/microSD kart"]
+  },
+  "electrical": {
+    "power_supply": "+24 V DC (18–32 V DC)",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": "-10 °C ila +60 °C",
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": "IP20 / IP22 (BoX2 pro sınıfı; extreme'de IP66)"
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": "DIN ray veya masaüstü/montaj plakası"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": null,
+    "notes": "Displaysiz; yerel proses I/O'su yoktur. I/O, fieldbus uzak I/O üzerinden (CODESYS sürümünde) eklenir."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": "1 GHz çift çekirdek ARM Cortex-A9 (BoX2 pro sınıfı)",
+    "ram": "1 GB",
+    "storage": "2 GB MLC NAND flash + 1x SD kart",
+    "os": "Windows Embedded Compact 2013 Professional (BoX2 pro); iX runtime üstte çalışır",
+    "software": "iX Developer 2.x / iX runtime; SC sürümünde BCS Tools / CODESYS"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": "kısmi (yalnızca SC sürümünde entegre CODESYS; standart BoX2 pro değil)",
+    "runtime": "CODESYS Control runtime 3.5 (yalnızca BoX2 pro SC / extreme SC sürümleri; BCS Tools platformu)",
+    "integration_notes": "Standart BoX2 (base/pro) iX runtime çalıştırır, CODESYS çalıştırmaz; PLC'ye Modbus TCP / Ethernet/IP / OPC-UA istemcisi olarak bağlanır. SC (soft control) sürümleri entegre CODESYS edge controller olarak çalışır, BCS Tools ile programlanır ve EtherCAT/Modbus/CANopen master olabilir. 'A12' varyantının SC olup olmadığı resmi dokümandan teyit edilmeli."
+  },
+  "applications": [
+    "Protokol dönüştürme ve IIoT/edge gateway",
+    "Ekransız (headless) HMI sunucu / OPC-UA sunucu",
+    "Yerel veri tabanı, alarm, raporlama ve bulut bağlantısı",
+    "CODESYS edge controller (SC sürümünde)"
+  ],
+  "sources": [
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/Converters___and___IIoT___gateways/BoX2___pro",
+      "title": "Beijer Electronics — BoX2 pro ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/docs/BoX2-base-v2-Installation/en/technical-data_box2-base-v2.html",
+      "title": "Beijer Electronics — BoX2 base v2 Technical Data (Hardware & Installation)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/Control___systems/BoX2___edge___controller",
+      "title": "Beijer Electronics — BoX2 edge controller (CODESYS SC sürümleri)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://motionusa.com/manufacturer/beijer-electronics/box2-pro-beijer",
+      "title": "Motion USA — BoX2 pro teknik özet (distribütör)",
+      "reliability": "distribütör"
+    }
+  ]
+}
