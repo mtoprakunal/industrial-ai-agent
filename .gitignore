@@ -24,6 +24,11 @@ projects/*/io_list.csv
 projects/*/alarm_list.csv
 projects/*/project_report.md
 
+# İSTİSNA: EXAMPLE_* projeleri referans örnektir, tamamı izlenir.
+# (Önce dizinleri, sonra dosyaları yeniden dahil et — sırası önemli.)
+!projects/EXAMPLE_*/**/
+!projects/EXAMPLE_*/**
+
 # Node.js (HMI web şablonları)
 node_modules/
 dist/

@@ -1,0 +1,14 @@
+Alarm_ID,Tag,Seviye,Sebep,Etki,Operator_Aksiyonu
+A001,PLT_EST_01_OK,Kritik,Acil durdurma basildi veya zincir koptu,Tum motorlar donanimsal olarak enerjisiz - tum bolgeler durur,E-Stop'u serbest birak / zinciri kontrol et / Reset bas
+A040,PLT_PMT_01_Run,Yuksek,Calistirma izni kayboldu (koruma kapisi acik vb.),Bolgeler baslatılamaz - calisanlar durdurulur,Koruma kapisini kapat / izin kosulunu sagla
+A010,ZN1_JAM_01_Sensor,Yuksek,Bolge 1 sikisma sensoru 200ms aktif,Bolge 1 durur ve JAMMED durumuna gecer,Sikismayi temizle / Reset bas
+A011,ZN2_JAM_02_Sensor,Yuksek,Bolge 2 sikisma sensoru 200ms aktif,Bolge 2 durur ve JAMMED durumuna gecer,Sikismayi temizle / Reset bas
+A012,ZN3_JAM_03_Sensor,Yuksek,Bolge 3 sikisma sensoru 200ms aktif,Bolge 3 durur ve JAMMED durumuna gecer,Sikismayi temizle / Reset bas
+A020,ZN1_TAC_01_Speed,Orta,Motor calisiyor ama hiz < min esigi (2sn),Bant kaymasi / motor arizasi suphesi - bolge durur,Bandi/motoru kontrol et / Reset bas
+A021,ZN2_TAC_02_Speed,Orta,Motor calisiyor ama hiz < min esigi (2sn),Bant kaymasi / motor arizasi suphesi - bolge durur,Bandi/motoru kontrol et / Reset bas
+A022,ZN3_TAC_03_Speed,Orta,Motor calisiyor ama hiz < min esigi (2sn),Bant kaymasi / motor arizasi suphesi - bolge durur,Bandi/motoru kontrol et / Reset bas
+A030,ZN1_TAC_01_Speed,Orta,Takometre sinyali < 4mA (kablo kopmasi - NAMUR NE107),Hiz okumasi gecersiz,Takometre kablolamasini kontrol et
+A031,ZN2_TAC_02_Speed,Orta,Takometre sinyali < 4mA (kablo kopmasi - NAMUR NE107),Hiz okumasi gecersiz,Takometre kablolamasini kontrol et
+A032,ZN3_TAC_03_Speed,Orta,Takometre sinyali < 4mA (kablo kopmasi - NAMUR NE107),Hiz okumasi gecersiz,Takometre kablolamasini kontrol et
+A060,ZN2_MTR_02_Run,Orta,Bolge 2 oto modda calismak istiyor ama Bolge 1 calismi yor (interlock),Bolge 2 baslatılamaz - yiginlanma onlenir,Once Bolge 1'i calistir
+A050,PLT_OPCUA_Comm,Dusuk,OPC-UA / HMI baglanti kopmasi (HMI tarafinda tespit),Izleme kesilir - kontrol PLC'de devam eder,Ag / gateway / sunucu durumunu kontrol et

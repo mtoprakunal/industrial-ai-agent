@@ -1,0 +1,34 @@
+Tag,Adres,Tip,Yon,Task,Aciklama,Olcek_Not
+ZN1_SEL_01_Auto,%IX0.0,BOOL,DI,Fast,Bolge 1 Oto/Manuel secici (ON=Oto),
+ZN1_PBS_01_Start,%IX0.1,BOOL,DI,Control,Bolge 1 Baslat butonu,
+ZN1_PBS_01_Stop,%IX0.2,BOOL,DI,Control,Bolge 1 Durdur butonu (NC mantik),
+ZN1_JAM_01_Sensor,%IX0.3,BOOL,DI,Control,Bolge 1 sikisma sensoru (ham),200ms debounce
+ZN1_PEY_01_Present,%IX0.4,BOOL,DI,Control,Bolge 1 fotosel - malzeme var,
+ZN2_SEL_02_Auto,%IX0.5,BOOL,DI,Fast,Bolge 2 Oto/Manuel secici (ON=Oto),
+ZN2_PBS_02_Start,%IX0.6,BOOL,DI,Control,Bolge 2 Baslat butonu,
+ZN2_PBS_02_Stop,%IX0.7,BOOL,DI,Control,Bolge 2 Durdur butonu (NC mantik),
+ZN2_JAM_02_Sensor,%IX1.0,BOOL,DI,Control,Bolge 2 sikisma sensoru (ham),200ms debounce
+ZN2_PEY_02_Present,%IX1.1,BOOL,DI,Control,Bolge 2 fotosel - malzeme var,
+ZN3_SEL_03_Auto,%IX1.2,BOOL,DI,Fast,Bolge 3 Oto/Manuel secici (ON=Oto),
+ZN3_PBS_03_Start,%IX1.3,BOOL,DI,Control,Bolge 3 Baslat butonu,
+ZN3_PBS_03_Stop,%IX1.4,BOOL,DI,Control,Bolge 3 Durdur butonu (NC mantik),
+ZN3_JAM_03_Sensor,%IX1.5,BOOL,DI,Control,Bolge 3 sikisma sensoru (ham),200ms debounce
+ZN3_PEY_03_Present,%IX1.6,BOOL,DI,Control,Bolge 3 fotosel - malzeme var,
+PLT_EST_01_OK,%IX1.7,BOOL,DI,Fast,Acil durdurma zinciri saglam (NC=1 saglikli),Donanimsal zincir durumu
+PLT_RST_01_PB,%IX2.0,BOOL,DI,Control,Hata kabul / Reset butonu,
+PLT_PMT_01_Run,%IX2.1,BOOL,DI,Fast,Calistirma izni (koruma kapisi vb. NC),
+ZN1_MTR_01_Run,%QX0.0,BOOL,DO,Fast,Bolge 1 motor calistir (VFD enable/kontaktor),
+ZN1_LMP_01_Run,%QX0.1,BOOL,DO,Control,Bolge 1 calisiyor lambasi (yesil),
+ZN1_LMP_01_Flt,%QX0.2,BOOL,DO,Control,Bolge 1 hata lambasi (kirmizi),
+ZN2_MTR_02_Run,%QX0.3,BOOL,DO,Fast,Bolge 2 motor calistir (VFD enable/kontaktor),
+ZN2_LMP_02_Run,%QX0.4,BOOL,DO,Control,Bolge 2 calisiyor lambasi (yesil),
+ZN2_LMP_02_Flt,%QX0.5,BOOL,DO,Control,Bolge 2 hata lambasi (kirmizi),
+ZN3_MTR_03_Run,%QX0.6,BOOL,DO,Fast,Bolge 3 motor calistir (VFD enable/kontaktor),
+ZN3_LMP_03_Run,%QX0.7,BOOL,DO,Control,Bolge 3 calisiyor lambasi (yesil),
+ZN3_LMP_03_Flt,%QX1.0,BOOL,DO,Control,Bolge 3 hata lambasi (kirmizi),
+PLT_BCN_01_Run,%QX1.1,BOOL,DO,Control,Tesis kule isigi - calisiyor (yesil),
+PLT_BCN_01_Flt,%QX1.2,BOOL,DO,Control,Tesis kule isigi - hata (kirmizi),
+PLT_HRN_01_Alarm,%QX1.3,BOOL,DO,Control,Sesli alarm korna,
+ZN1_TAC_01_Speed,%IW2,INT,AI,Control,Bolge 1 takometre (4-20mA),4mA=0 / 20mA=120 m/min
+ZN2_TAC_02_Speed,%IW3,INT,AI,Control,Bolge 2 takometre (4-20mA),4mA=0 / 20mA=120 m/min
+ZN3_TAC_03_Speed,%IW4,INT,AI,Control,Bolge 3 takometre (4-20mA),4mA=0 / 20mA=120 m/min
