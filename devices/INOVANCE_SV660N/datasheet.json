@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "Veriler Inovance resmi ürün/EtherCAT Technology Group sayfaları ve SV660N donanım kılavuzundan özetlendi. Depolama sıcaklığı, nem, ağırlık ve tam boyut (gövde boyutuna göre değişir) ile STO SIL/PL kategorisi resmi kaynakta net sayı olarak doğrulanamadığı için boş bırakıldı (tahmin edilmedi). Register/CiA402 obje haritası: yalnızca CiA 402 standart objeleri verildi; üreticiye özel H-grubu parametre adresleri SV660N Communication Guide'dan teyit edilmeli."
+  },
+  "identity": {
+    "manufacturer": "Inovance (Shenzhen Inovance Technology / Inovance Technology Europe GmbH)",
+    "model": "SV660N",
+    "product_family": "SV660 Serisi AC Servo Sürücü",
+    "category": "servo-drive",
+    "description": "SV660N, tek eksenli yüksek performanslı EtherCAT AC servo sürücüsüdür ('N' = network/EtherCAT). 4.5 kHz akım çevrimi, 3 kHz'e kadar hız çevrimi bant genişliği ve 23-bit yüksek çözünürlüklü enkoder ile çalışır. IEC 61800-7 (CiA 402) hareket kontrol profilini EtherCAT (CoE) üzerinden uygular; 7 CiA 402 çalışma modunu ~125 µs çevrim süresinde destekler. Resmi EtherCAT Test Center sertifikalıdır.",
+    "official_url": "https://www.inovance.com/global/content/details_815_403229.html",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/SV660N_FI_EN_Spreads_Web_V0.5.pdf"
+  },
+  "communication": {
+    "protocols": ["EtherCAT (CoE, CiA 402)"],
+    "fieldbus_role": "slave",
+    "device_description_file": {
+      "type": "ESI",
+      "name": "SV660N EtherCAT ESI (XML)",
+      "download_url": null
+    },
+    "ports": ["2x RJ45 (EtherCAT IN/OUT)", "USB (komisyon/InoDriverShop)", "CN6 STO emniyet girişi (-FS modeli)"]
+  },
+  "electrical": {
+    "power_supply": "Ana güç: 1AC 220 V, 3AC 220 V veya 3AC 380 V (model bazlı); STO/kontrol için 24 VDC (±15%)",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": "0–55 °C (45 °C üstünde her +1 °C için %2 derating)",
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": "IP20"
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": "Arka plaka (backplate) montaj — pano içi dikey montaj"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": "STO (Safe Torque Off): iki izole, çift kanallı giriş STO1/STO2 (CN6, -FS emniyet modeli); 24 VDC; sürücü ile emniyet şalteri arası maks. kablo 30 m",
+    "notes": "DI/DO ve dokümanda model/firmware bazlı yapılandırılır; tam sayılar SV660N donanım kılavuzundan teyit edilmeli (burada uydurulmadı)."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": "InoDriverShop (komisyon ve diagnostik PC yazılımı); cihaz üstü tuş takımı + LED gösterge"
+  },
+  "drive": {
+    "power_range": "0.05 kW – 7.5 kW (50 W–7.5 kW)",
+    "voltage_class": "1AC 220 V / 3AC 220 V / 3AC 380 V (model bazlı)",
+    "control_modes": "EtherCAT CiA 402 üzerinden: konum (PP, CSP), hız (PV, CSV), tork (PT, CST), homing (HM) — toplam 7 mod",
+    "overload": null,
+    "feedback": "23-bit yüksek çözünürlüklü enkoder (seri, mutlak/absolute)"
+  },
+  "register_map": [
+    { "address": "6040h", "name": "Controlword", "data_type": "UINT16", "access": "RW", "scale": null, "unit": null, "description": "CiA 402 kontrol kelimesi (durum makinesi komutu)" },
+    { "address": "6041h", "name": "Statusword", "data_type": "UINT16", "access": "R", "scale": null, "unit": null, "description": "CiA 402 durum kelimesi" },
+    { "address": "6060h", "name": "Modes of operation", "data_type": "INT8", "access": "RW", "scale": null, "unit": null, "description": "Çalışma modu seçimi (1=PP, 3=PV, 4=PT, 6=HM, 8=CSP, 9=CSV, 10=CST)" },
+    { "address": "6061h", "name": "Modes of operation display", "data_type": "INT8", "access": "R", "scale": null, "unit": null, "description": "Aktif çalışma modu" },
+    { "address": "6064h", "name": "Position actual value", "data_type": "INT32", "access": "R", "scale": null, "unit": "inc", "description": "Gerçek pozisyon" },
+    { "address": "607Ah", "name": "Target position", "data_type": "INT32", "access": "RW", "scale": null, "unit": "inc", "description": "Hedef pozisyon (PP/CSP)" },
+    { "address": "60FFh", "name": "Target velocity", "data_type": "INT32", "access": "RW", "scale": null, "unit": null, "description": "Hedef hız (PV/CSV)" },
+    { "address": "6071h", "name": "Target torque", "data_type": "INT16", "access": "RW", "scale": "0.1", "unit": "% rated", "description": "Hedef tork (PT/CST)" }
+  ],
+  "codesys": {
+    "compatible": "dolaylı (EtherCAT CiA 402 ekseni olarak)",
+    "runtime": null,
+    "integration_notes": "Servo sürücü kendisi CODESYS runtime çalıştırmaz. SV660N, IEC 61800-7 (CiA 402) profilini EtherCAT (CoE) üzerinden uyguladığı için CODESYS SoftMotion'da 'SoftMotion CiA 402 Axis' olarak kullanılabilir: EtherCAT Master altına ESI/XML ile slave ekle, ardından eksen objesini ekleyip PLCopen MC_ FB'leriyle sür. PP/CSP/CSV/CST/HM modları desteklenir, ~125 µs çevrim. ESI dosyası Inovance resmi destek portalından temin edilmeli (download_url boş)."
+  },
+  "applications": [
+    "Paketleme ve etiketleme makineleri",
+    "Elektronik üretim / SMT ve dispensing",
+    "CNC ve genel hareket kontrolü",
+    "Robotik ve pick-and-place",
+    "Çok eksenli senkronize hareket (EtherCAT hattında birden çok eksen)"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.com/global/content/details_815_403229.html",
+      "title": "Inovance — SV660 Series Servo Drive (resmi ürün sayfası)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.ethercat.org/en/products/6B9B3C89DDDE44C2ACFBE609E8C72C3B.htm",
+      "title": "EtherCAT Technology Group — SV660N Series Servo Drive (sertifika kaydı)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Servo_drives_and_motors/SV660N_Advanced_User_Guide.pdf",
+      "title": "Inovance — SV660N Series Advanced User Guide",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/3511382/Inovance-Sv660n-Series.html",
+      "title": "Inovance SV660N Series Hardware Manual (ManualsLib aynası)",
+      "reliability": "topluluk"
+    }
+  ]
+}
