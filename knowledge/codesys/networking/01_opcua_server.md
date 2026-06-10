@@ -25,7 +25,7 @@ BAĞLANTILAR :
     ilişki: alternatif
   - konu: "knowledge/codesys/programming/02_gvl_design.md"
     ilişki: gerektirir
-  - konu: "knowledge/standards/opcua_overview.md"
+  - konu: "knowledge/protocols/opc-ua/01_architecture.md"
     ilişki: gerektirir
 ÖNKOŞUL     :
   - "CODESYS proje yapısı ve GVL tasarımı (programming/02_gvl_design.md)"

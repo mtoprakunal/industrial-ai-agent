@@ -31,9 +31,9 @@ BAĞLANTILAR :
     ilişki: gerektirir
   - konu: "02_project_structure.md"
     ilişki: gerektirir
-  - konu: "knowledge/codesys/advanced/state_machines_sfc.md"
+  - konu: "knowledge/codesys/advanced/02_state_machines_sfc.md"
     ilişki: detaylandırır
-  - konu: "knowledge/codesys/advanced/oop_codesys.md"
+  - konu: "knowledge/codesys/advanced/01_oop_codesys.md"
     ilişki: tamamlar
 ÖNKOŞUL     :
   - "Temel mantık kapıları ve Boole cebri"

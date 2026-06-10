@@ -23,7 +23,7 @@ KAYNAKLAR   :
 BAĞLANTILAR :
   - konu: "01_inoproshop_overview.md"
     ilişki: gerektirir
-  - konu: "05_ethercat_servo.md"
+  - konu: "05_ethercat_configuration.md"
     ilişki: gerektirir
   - konu: "knowledge/codesys/fundamentals/01_runtime_architecture.md"
     ilişki: gerektirir
@@ -295,7 +295,7 @@ hıza ulaşıldığını bildirir.
 ## İlgili Konular
 
 - `01_inoproshop_overview.md` — InoProShop = CODESYS V3 tabanı
-- `05_ethercat_servo.md` — EtherCAT master, CiA 402 servo eşleme, ESI yönetimi
+- `05_ethercat_configuration.md` — EtherCAT master, CiA 402 servo eşleme, ESI yönetimi
 - `devices/INOVANCE_SV660N/datasheet.json` — SV660N servo (STO, CiA 402 objeleri)
 - `devices/INOVANCE_IS620N/datasheet.json` — IS620N servo
 - `devices/INOVANCE_AM600/datasheet.json` — AM600 motion kontrolör sınırları

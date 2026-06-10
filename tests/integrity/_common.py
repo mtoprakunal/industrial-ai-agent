@@ -15,7 +15,7 @@ RULES      = REPO / 'agent' / 'rules.json'
 SEVIYELER  = ['Stub', 'Temel', 'Orta', 'İleri', 'Uzman']
 KATEGORILER = ['protocols', 'codesys', 'hmi', 'hardware',
                'networking', 'standards', 'applications', 'decisions',
-               'inovance', 'examples']
+               'inovance', 'examples', 'safety']
 
 DEVICES_INDEX = REPO / 'devices' / '_index.json'
 

@@ -28,7 +28,7 @@ INDEX    = BASE / 'knowledge' / '_index.json'
 
 KATEGORILER = ['protocols', 'codesys', 'hmi', 'hardware',
                'networking', 'standards', 'applications', 'decisions',
-               'inovance', 'examples']
+               'inovance', 'examples', 'safety']
 SEVIYELER   = ['Stub', 'Temel', 'Orta', 'İleri', 'Uzman']
 
 

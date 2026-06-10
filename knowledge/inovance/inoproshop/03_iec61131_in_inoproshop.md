@@ -27,7 +27,7 @@ BAĞLANTILAR :
     ilişki: gerektirir
   - konu: "01_inoproshop_overview.md"
     ilişki: gerektirir
-  - konu: "knowledge/codesys/libraries/standard_libraries.md"
+  - konu: "knowledge/codesys/libraries/01_standard_libraries.md"
     ilişki: kullanır
 ÖNKOŞUL     :
   - "IEC 61131-3 dilleri: ST, LD, FBD, SFC (ve IL/CFC) — CODESYS tabanı (knowledge/codesys/fundamentals/03_iec61131_languages.md)"
@@ -226,4 +226,4 @@ mcMoveAbs(Axis := Axis1, Execute := xGo, Position := 100.0, Velocity := 200.0 );
 - `02_project_structure.md` — Device tree, Library Manager, Device Repository (taşımada yeniden
   kurulan yapılar)
 - `01_inoproshop_overview.md` — InoProShop = CODESYS V3 türevi (taşımanın neden mümkün olduğu)
-- `knowledge/codesys/libraries/standard_libraries.md` — her iki ortamda ortak standart kütüphaneler
+- `knowledge/codesys/libraries/01_standard_libraries.md` — her iki ortamda ortak standart kütüphaneler

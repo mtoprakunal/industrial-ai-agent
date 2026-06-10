@@ -32,7 +32,7 @@ BAĞLANTILAR :
     ilişki: gerektirir
   - konu: "03_iec61131_in_inoproshop.md"
     ilişki: tamamlar
-  - konu: "knowledge/codesys/libraries/standard_libraries.md"
+  - konu: "knowledge/codesys/libraries/01_standard_libraries.md"
     ilişki: kullanır
 ÖNKOŞUL     :
   - "InoProShop genel bakış ve InoProShop = CODESYS V3 türevi gerçeği (01_inoproshop_overview.md)"

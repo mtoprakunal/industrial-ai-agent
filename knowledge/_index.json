@@ -81,6 +81,16 @@
         "01_common_errors":    { "seviye": "Uzman", "başlık": "Sık Karşılaşılan Hatalar" },
         "02_tools":            { "seviye": "Uzman", "başlık": "Debug Araçları" },
         "03_performance":      { "seviye": "Uzman", "başlık": "Performans Analizi" }
+      },
+      "advanced": {
+        "_synthesis":            { "seviye": "İleri", "başlık": "CODESYS İleri Konular — Sentez" },
+        "01_oop_codesys":        { "seviye": "İleri", "başlık": "CODESYS V3 Nesne Yönelimli Programlama" },
+        "02_state_machines_sfc": { "seviye": "İleri", "başlık": "SFC ve CASE Durum Makineleri" }
+      },
+      "libraries": {
+        "_synthesis":            { "seviye": "İleri", "başlık": "Kütüphane Stratejisi — Sentez" },
+        "01_standard_libraries": { "seviye": "İleri", "başlık": "Standart Kütüphaneler" },
+        "02_library_management": { "seviye": "İleri", "başlık": "Kütüphane Yönetimi ve Sürümleme" }
       }
     },
 
@@ -130,7 +140,14 @@
       "_synthesis": { "seviye": "Uzman" },
       "01_topologies":  { "seviye": "Uzman", "başlık": "Ağ Topolojileri" },
       "02_security":    { "seviye": "Uzman", "başlık": "Endüstriyel Ağ Güvenliği" },
-      "03_performance": { "seviye": "Uzman", "başlık": "Gecikme ve Güvenilirlik" }
+      "03_performance": { "seviye": "Uzman", "başlık": "Gecikme ve Güvenilirlik" },
+      "fieldbus": {
+        "_synthesis":      { "seviye": "İleri", "başlık": "Fieldbus — Karşılaştırmalı Sentez" },
+        "01_ethercat":     { "seviye": "İleri", "başlık": "EtherCAT" },
+        "02_profinet":     { "seviye": "İleri", "başlık": "PROFINET" },
+        "03_ethernet_ip":  { "seviye": "İleri", "başlık": "EtherNet/IP" },
+        "04_canopen":      { "seviye": "İleri", "başlık": "CANopen" }
+      }
     },
 
     "standards": {
@@ -143,6 +160,7 @@
 
     "applications": {
       "description": "Uygulama bazlı bilgi",
+      "_synthesis":    { "seviye": "Uzman", "başlık": "Uygulamalar — Sentez" },
       "conveyor":      { "seviye": "Uzman", "başlık": "Konveyör Sistemleri" },
       "tank-level":    { "seviye": "Uzman", "başlık": "Tank Seviye Kontrolü" },
       "motor-control": { "seviye": "Uzman", "başlık": "Motor Kontrol Sistemleri" },
@@ -151,9 +169,19 @@
 
     "decisions": {
       "description": "Gerçek karar örnekleri ve gerekçeleri",
+      "_synthesis":         { "seviye": "Uzman", "başlık": "Kararlar — Sentez" },
       "protocol-selection": { "seviye": "Uzman", "başlık": "Protokol Seçim Kararları" },
       "architecture":       { "seviye": "Uzman", "başlık": "Mimari Tasarım Kararları" },
       "hmi-technology":     { "seviye": "Uzman", "başlık": "HMI Teknoloji Seçimleri" }
+    },
+
+    "safety": {
+      "description": "Fonksiyonel emniyet — SIL/PL, emniyet PLC/IO, safe motion, e-stop devreleri",
+      "_synthesis":                   { "seviye": "İleri", "başlık": "Fonksiyonel Emniyet — Üst Sentez" },
+      "01_sil_pl_standards":          { "seviye": "İleri", "başlık": "SIL / PL Standartları (IEC 61508/62061, ISO 13849)" },
+      "02_safety_plc_and_io":         { "seviye": "İleri", "başlık": "Emniyet PLC ve Safe I/O" },
+      "03_safe_motion":               { "seviye": "İleri", "başlık": "Safe Motion (STO/SS1/SS2 — IEC 61800-5-2)" },
+      "04_estop_and_safety_circuits": { "seviye": "İleri", "başlık": "E-Stop ve Emniyet Devreleri" }
     },
 
     "inovance": {

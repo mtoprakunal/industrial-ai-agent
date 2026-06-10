@@ -300,7 +300,7 @@ knowledge/codesys/programming/    → GVL tek-yazar, FB state machine, kütüpha
 
 Bağlı / sonraki:
 knowledge/networking/ethercat/    → gerçek-zaman fieldbus (raporlama değil kontrol)
-knowledge/standards/opcua_overview.md → OPC UA Information Model, NodeId
+knowledge/protocols/opc-ua/01_architecture.md → OPC UA Information Model, NodeId
 knowledge/codesys/debugging/      → Wireshark, protokol analizi
 
 Araçlar:

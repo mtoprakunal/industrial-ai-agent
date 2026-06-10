@@ -22,9 +22,9 @@ BAĞLANTILAR :
     ilişki: gerektirir
   - konu: "03_iec61131_languages.md"
     ilişki: tamamlar
-  - konu: "knowledge/codesys/tasks/task_types.md"
+  - konu: "knowledge/codesys/task-structure/01_task_types.md"
     ilişki: detaylandırır
-  - konu: "knowledge/codesys/libraries/standard_libraries.md"
+  - konu: "knowledge/codesys/libraries/01_standard_libraries.md"
     ilişki: kullanır
 ÖNKOŞUL     :
   - "CODESYS runtime kavramı (01_runtime_architecture.md)"

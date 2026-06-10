@@ -22,7 +22,7 @@ BAĞLANTILAR :
     ilişki: gerektirir
   - konu: "knowledge/inovance/inoproshop/06_motion_control.md"
     ilişki: detaylandırır
-  - konu: "knowledge/inovance/inoproshop/05_ethercat_servo.md"
+  - konu: "knowledge/inovance/inoproshop/05_ethercat_configuration.md"
     ilişki: gerektirir
   - konu: "01_codesys_application_examples.md"
     ilişki: tamamlar
@@ -161,6 +161,6 @@ Starting guide örneklerinin öğrettiği tipik akış (kaynak: MD800/MD500 Ethe
 
 - `knowledge/inovance/inoproshop/01_inoproshop_overview.md` — InoProShop = CODESYS V3 tabanı
 - `knowledge/inovance/inoproshop/06_motion_control.md` — PLCopen/SoftMotion MC_ FB örnek kodu, emniyet
-- `knowledge/inovance/inoproshop/05_ethercat_servo.md` — EtherCAT master, CiA 402, ESI yönetimi
+- `knowledge/inovance/inoproshop/05_ethercat_configuration.md` — EtherCAT master, CiA 402, ESI yönetimi
 - `01_codesys_application_examples.md` — transfer edilebilir jenerik CODESYS motion örnekleri
 - `02_beckhoff_twincat_samples.md` — alternatif ekosistem (TwinCAT) karşılaştırması

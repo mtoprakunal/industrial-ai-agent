@@ -46,6 +46,16 @@
     { "from": "examples/case-studies",         "to": "applications/conveyor",               "ilişki": "tamamlar",      "not": "Konveyör vakası uygulama bilgisini somut mimariyle pekiştirir" },
     { "from": "examples/open-source",          "to": "codesys/programming/03_function_blocks","ilişki": "kullanır",    "not": "Açık kaynak kütüphaneler yeniden kullanılabilir FB pattern'lerini öğretir" },
     { "from": "examples/reference-arch",       "to": "standards",                           "ilişki": "detaylandırır", "not": "Referans mimariler IEC/ISA standartlarını sistem seviyesinde uygular" },
-    { "from": "examples/reference-arch",       "to": "protocols/mqtt",                      "ilişki": "kullanır",      "not": "UNS / Sparkplug B referans mimarisi MQTT üzerine kurulur" }
+    { "from": "examples/reference-arch",       "to": "protocols/mqtt",                      "ilişki": "kullanır",      "not": "UNS / Sparkplug B referans mimarisi MQTT üzerine kurulur" },
+    { "from": "safety",                        "to": "standards",                           "ilişki": "kullanır",      "not": "Fonksiyonel emniyet IEC 61508/62061 ve ISO 13849 standartlarına dayanır" },
+    { "from": "safety/03_safe_motion",         "to": "networking/fieldbus",                 "ilişki": "kullanır",      "not": "Safe motion (FSoE/PROFIsafe) emniyet fieldbus'ı üzerinden taşınır" },
+    { "from": "networking/fieldbus",           "to": "codesys/networking",                  "ilişki": "kullanır",      "not": "Fieldbus master CODESYS device tree'de konfigüre edilir" },
+    { "from": "networking/fieldbus",           "to": "inovance/inoproshop",                 "ilişki": "tamamlar",      "not": "EtherCAT, InoProshop motion ekosisteminin temelini oluşturur" },
+    { "from": "codesys/advanced",              "to": "codesys/fundamentals",                "ilişki": "gerektirir",    "not": "OOP/SFC ileri konular temel CODESYS bilgisini gerektirir" },
+    { "from": "codesys/libraries",             "to": "codesys/programming/04_libraries",    "ilişki": "detaylandırır", "not": "Kütüphane yönetimi programlama kütüphane sistemini derinleştirir" },
+    { "from": "standards/01_iec61131_3",       "to": "codesys/advanced",                    "ilişki": "detaylandırır", "not": "IEC 61131-3 dilleri OOP ve SFC ile derinleşir" },
+    { "from": "decisions",                     "to": "examples/case-studies",               "ilişki": "kullanır",      "not": "Kararlar gerçek vaka çalışmalarında somutlaşır" },
+    { "from": "codesys/fundamentals",          "to": "hardware/industrial-pc",              "ilişki": "kullanır",      "not": "CODESYS runtime endüstriyel PC üzerinde çalışır" },
+    { "from": "applications/conveyor",         "to": "safety/04_estop_and_safety_circuits", "ilişki": "gerektirir",    "not": "Konveyör ve benzeri makineler donanımsal e-stop/emniyet devresi gerektirir" }
   ]
 }

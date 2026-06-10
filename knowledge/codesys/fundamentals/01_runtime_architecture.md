@@ -25,9 +25,9 @@ BAĞLANTILAR :
     ilişki: tamamlar
   - konu: "03_iec61131_languages.md"
     ilişki: gerektirir
-  - konu: "knowledge/codesys/tasks/task_types.md"
+  - konu: "knowledge/codesys/task-structure/01_task_types.md"
     ilişki: detaylandırır
-  - konu: "knowledge/networking/fieldbus/ethercat.md"
+  - konu: "knowledge/networking/fieldbus/01_ethercat.md"
     ilişki: kullanır
 ÖNKOŞUL     :
   - "Genel işletim sistemi kavramları (process, thread, scheduler)"
