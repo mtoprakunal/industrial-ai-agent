@@ -1,0 +1,323 @@
+/* ============================================================
+   style.css — Endüstriyel HMI görünümü
+   ------------------------------------------------------------
+   Koyu tema, büyük okunaklı rakamlar, net durum renkleri.
+   Durum renkleri (renk + metin + ikon → renk körü erişilebilirliği,
+   ISA-101 / ISA-18.2):
+     yeşil  = çalışıyor / normal
+     kırmızı = alarm / hata / acil
+     gri    = offline / veri yok / bekliyor
+     turuncu = uyarı / kısmi / onaylanmış-aktif
+     sarı   = orta öncelik
+   ============================================================ */
+
+:root {
+    --bg:           #0e1116;
+    --panel:        #161b22;
+    --panel-2:      #1c232d;
+    --border:       #2b3340;
+    --text:         #e6edf3;
+    --text-dim:     #8b97a6;
+
+    --green:        #2ea043;
+    --green-bg:     #12361c;
+    --red:          #f0413f;
+    --red-bg:       #3a1413;
+    --amber:        #e3922b;
+    --amber-bg:     #3a2810;
+    --yellow:       #d9c024;
+    --blue:         #3a8fd6;
+    --gray:         #5a6675;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Arial, system-ui, sans-serif;
+    font-size: 16px;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* ----------------------------- Üst bar ----------------------------- */
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 2px solid var(--border);
+}
+
+.title {
+    margin: 0;
+    font-size: 1.3rem;
+    letter-spacing: 1px;
+    font-weight: 700;
+}
+
+.conn-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+}
+
+.conn-text { font-size: 0.95rem; }
+
+/* Bağlantı LED'i */
+.led {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 2px solid rgba(0,0,0,0.4);
+    box-shadow: 0 0 6px rgba(0,0,0,0.6);
+}
+.led-green { background: var(--green);  box-shadow: 0 0 10px var(--green); }
+.led-amber { background: var(--amber);  box-shadow: 0 0 10px var(--amber); }
+.led-red   { background: var(--red);    box-shadow: 0 0 10px var(--red); }
+
+/* Yanıp sönme (offline / kritik) */
+.blink { animation: blink 1s step-start infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+
+/* ----------------------------- Bağlantı bandı ----------------------------- */
+.conn-banner {
+    display: none;
+    padding: 10px 20px;
+    background: var(--amber-bg);
+    color: var(--amber);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+}
+.conn-banner.visible { display: block; }
+.conn-banner.banner-error {
+    background: var(--red-bg);
+    color: var(--red);
+}
+
+/* ----------------------------- Yerleşim ----------------------------- */
+.layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    gap: 16px;
+    padding: 16px;
+}
+@media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+}
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.panel-title {
+    margin: 0 0 12px 0;
+    font-size: 0.95rem;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+}
+.process-panel .panel-title:not(:first-child) { margin-top: 24px; }
+
+/* ----------------------------- Tag kartları ----------------------------- */
+.tag-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.tag-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--gray);
+    border-radius: 6px;
+    padding: 12px 14px;
+    min-height: 92px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.tag-label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tag-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.tag-value {
+    font-size: 2rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums; /* rakamlar zıplamaz */
+    line-height: 1.1;
+}
+
+.tag-unit {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+
+.tag-meta {
+    font-size: 0.7rem;
+    color: var(--amber);
+    min-height: 0.9em;
+}
+
+/* Durum renkleri (sol şerit + değer rengi) */
+.tag-card.state-running  { border-left-color: var(--green); }
+.tag-card.state-running  .tag-value { color: var(--green); }
+.tag-card.state-idle     { border-left-color: var(--gray); }
+.tag-card.state-idle     .tag-value { color: var(--text-dim); }
+.tag-card.state-starting { border-left-color: var(--amber); }
+.tag-card.state-starting .tag-value { color: var(--amber); }
+.tag-card.state-stopping { border-left-color: var(--amber); }
+.tag-card.state-stopping .tag-value { color: var(--amber); }
+.tag-card.state-jammed   { border-left-color: var(--red); }
+.tag-card.state-jammed   .tag-value { color: var(--red); }
+.tag-card.state-fault    { border-left-color: var(--red); }
+.tag-card.state-fault    .tag-value { color: var(--red); }
+.tag-card.state-unknown  { border-left-color: var(--gray); }
+
+/* Veri yok / eski / kötü kalite */
+.tag-card.no-data .tag-value { color: var(--gray); }
+.tag-card.no-data            { border-left-color: var(--gray); }
+
+.tag-card.stale .tag-value {
+    color: var(--text-dim);
+    font-style: italic;        /* eski veri işareti */
+    opacity: 0.7;
+}
+.tag-card.bad-quality .tag-value {
+    text-decoration: line-through;
+    color: var(--red);
+}
+
+/* ----------------------------- Komut butonları ----------------------------- */
+.command-panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.cmd-btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 20px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    min-width: 160px;
+    transition: background 0.15s, transform 0.05s;
+}
+.cmd-btn:hover:not(:disabled) { background: #243040; }
+.cmd-btn:active:not(:disabled) { transform: translateY(1px); }
+
+.cmd-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.cmd-btn.cmd-reset {
+    border-color: var(--amber);
+    color: var(--amber);
+}
+
+/* Gönderim geri bildirimi */
+.cmd-btn.cmd-ok   { background: var(--green-bg); border-color: var(--green); }
+.cmd-btn.cmd-fail { background: var(--red-bg);  border-color: var(--red); }
+
+/* ----------------------------- Alarm paneli ----------------------------- */
+.alarm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.alarm-empty {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 24px;
+    font-style: italic;
+}
+
+.alarm-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 6px solid var(--gray);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+
+.alarm-prio {
+    font-weight: 700;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    align-self: flex-start;
+    padding-top: 2px;
+}
+
+.alarm-body { min-width: 0; }
+.alarm-desc { font-weight: 600; }
+.alarm-detail {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+
+.alarm-ack-btn {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.alarm-ack-btn:hover { background: #243040; }
+
+/* Öncelik renkleri (sol şerit + rozet) */
+.alarm-row.prio-critical { border-left-color: var(--red); }
+.alarm-row.prio-critical .alarm-prio { color: var(--red); }
+.alarm-row.prio-high     { border-left-color: var(--amber); }
+.alarm-row.prio-high     .alarm-prio { color: var(--amber); }
+.alarm-row.prio-medium   { border-left-color: var(--yellow); }
+.alarm-row.prio-medium   .alarm-prio { color: var(--yellow); }
+.alarm-row.prio-low      { border-left-color: var(--blue); }
+.alarm-row.prio-low      .alarm-prio { color: var(--blue); }
+
+/* Onaylanmamış kritik/yüksek alarm yanıp söner; onaylanmış sabit/soluk */
+.alarm-row.unack.prio-critical { animation: blink 1s step-start infinite; }
+.alarm-row.acked { opacity: 0.65; }

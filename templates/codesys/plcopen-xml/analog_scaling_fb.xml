@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+
+    <fileHeader companyName="Industrial AI Agent"
+                productName="CODESYS"
+                productVersion="3.5.21.0"
+                creationDateTime="2026-06-10T10:00:00"/>
+
+    <contentHeader name="AnalogScaleTemplate"
+                   modificationDateTime="2026-06-10T10:00:00">
+        <coordinateInfo>
+            <fbd><scaling x="1" y="1"/></fbd>
+            <ld><scaling x="1" y="1"/></ld>
+            <sfc><scaling x="1" y="1"/></sfc>
+        </coordinateInfo>
+    </contentHeader>
+
+    <types>
+        <dataTypes/>
+        <pous>
+            <pou name="FB_AnalogScale" pouType="functionBlock">
+                <interface>
+                    <inputVars>
+                        <variable name="iRaw">
+                            <type><INT/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Modulden gelen ham deger</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="iRawMin">
+                            <type><INT/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">4mA karsiligi ham deger</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="iRawMax">
+                            <type><INT/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">20mA karsiligi ham deger</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="rEngMin">
+                            <type><REAL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Muhendislik min</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="rEngMax">
+                            <type><REAL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Muhendislik max</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="iRawBreak">
+                            <type><INT/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Altinda kablo kopmasi sayilan esik</xhtml>
+                            </documentation>
+                        </variable>
+                    </inputVars>
+                    <outputVars>
+                        <variable name="rEng">
+                            <type><REAL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Olceklenmis deger</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xUnderRange">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Kablo kopmasi / 4mA alti</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xOverRange">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">20mA ustu</xhtml>
+                            </documentation>
+                        </variable>
+                    </outputVars>
+                    <localVars>
+                        <variable name="rSpan">
+                            <type><REAL/></type>
+                        </variable>
+                    </localVars>
+                </interface>
+                <body>
+                    <ST>
+                        <xhtml xmlns="http://www.w3.org/1999/xhtml"><![CDATA[
+// ------------------------------------------------------------
+// FB_AnalogScale - 4-20mA ham analog degeri muhendislik
+// birimine cevirir. Kablo kopmasi (under-range, NAMUR NE107)
+// ve over-range tespiti yapar. Tek sorumluluk: olcekleme.
+// ------------------------------------------------------------
+
+// --- Kablo kopmasi kontrolu (once) ---
+xUnderRange := (iRaw < iRawBreak);
+
+IF xUnderRange THEN
+    rEng := rEngMin;        // Guvenli varsayilan: min deger
+    xOverRange := FALSE;
+    RETURN;
+END_IF
+
+// --- Sifira bolme korumasi ---
+rSpan := INT_TO_REAL(iRawMax - iRawMin);
+IF rSpan <= 0.0 THEN
+    rEng := rEngMin;        // Hatali konfig - guvenli deger
+    RETURN;
+END_IF
+
+// --- Lineer olcekleme ---
+rEng := rEngMin + (INT_TO_REAL(iRaw - iRawMin) / rSpan) * (rEngMax - rEngMin);
+
+// --- Kelepceleme (clamp) ---
+xOverRange := (rEng > rEngMax);
+IF rEng > rEngMax THEN
+    rEng := rEngMax;
+ELSIF rEng < rEngMin THEN
+    rEng := rEngMin;
+END_IF
+]]></xhtml>
+                    </ST>
+                </body>
+            </pou>
+        </pous>
+    </types>
+
+    <instances>
+        <configurations/>
+    </instances>
+
+</project>

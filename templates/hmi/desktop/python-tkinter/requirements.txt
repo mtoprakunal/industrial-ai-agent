@@ -1,0 +1,8 @@
+# EXAMPLE_conveyor Tkinter + asyncua masaüstü HMI bağımlılıkları (2025/2026)
+# Tkinter Python stdlib ile gelir (ek paket gerekmez).
+# Python 3.10+ gereklidir (asyncua v2.0).
+
+asyncua>=2.0,<3.0          # OPC-UA istemci (asyncua.sync sarmalayıcı kullanılır)
+
+# Güvenli bağlantı (USE_SECURITY=True) için gerekli; aksi halde isteğe bağlı.
+cryptography>=43.0

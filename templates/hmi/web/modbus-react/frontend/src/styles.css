@@ -1,0 +1,221 @@
+/* ==========================================================================
+   HMI stilleri — ISA-101 esinli: koyu/notr arka plan, durum renkleri kontrastli.
+   Normal durum sakin (gri/notr); alarm ve aktif durum belirgin renkli.
+   ========================================================================== */
+
+:root {
+  --bg: #1a1d21;
+  --panel: #242830;
+  --panel-2: #2c313a;
+  --border: #3a404a;
+  --text: #e4e7eb;
+  --text-dim: #9aa3af;
+  --ok: #3ba776;
+  --on: #2e9e5b;
+  --off: #555c66;
+  --warn: #d9822b;
+  --crit: #d23f3f;
+  --info: #3a78c2;
+  --stale: #6b5d2a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.hmi-app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 16px 48px;
+}
+
+.hmi-header h1 {
+  font-size: 20px;
+  margin: 8px 0 16px;
+}
+
+/* --- Baglanti banner --- */
+.conn-banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.conn-banner.status-disconnected { background: var(--crit); }
+.conn-banner.status-connecting { background: var(--warn); }
+.conn-banner.status-error { background: var(--crit); }
+
+/* --- Panel / grid --- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+}
+.panel h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+/* --- Bool indicator --- */
+.bool-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.bool-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--off);
+  flex: 0 0 auto;
+}
+.bool-indicator.state-on .bool-dot { background: var(--on); box-shadow: 0 0 6px var(--on); }
+.bool-indicator.state-off .bool-dot { background: var(--off); }
+.bool-indicator.state-unknown .bool-dot { background: var(--stale); }
+.bool-label { flex: 1; font-size: 13px; }
+.bool-text { font-size: 12px; font-weight: 700; color: var(--text-dim); }
+.bool-indicator.state-on .bool-text { color: var(--on); }
+
+/* --- Analog display --- */
+.analog-display {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.analog-display.stale { opacity: 0.5; }
+.analog-display.alarm-high { border-color: var(--crit); }
+.analog-display.alarm-low { border-color: var(--info); }
+.ad-label { font-size: 12px; color: var(--text-dim); }
+.ad-value { font-size: 24px; font-weight: 700; margin: 2px 0 6px; }
+.ad-unit { font-size: 13px; color: var(--text-dim); margin-left: 4px; }
+.ad-bar {
+  height: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ad-fill { height: 100%; background: var(--ok); transition: width 0.2s; }
+.ad-fill.alarm-high { background: var(--crit); }
+.ad-fill.alarm-low { background: var(--info); }
+.ad-range {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+/* --- Coil control --- */
+.coil-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  flex-wrap: wrap;
+}
+.cc-label { flex: 1; font-size: 13px; }
+.cc-state { font-weight: 700; font-size: 12px; }
+.cc-state.on { color: var(--on); }
+.cc-state.off { color: var(--text-dim); }
+.cc-buttons { display: flex; gap: 4px; }
+.cc-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+}
+.cc-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.cc-on { background: var(--on); }
+.cc-off { background: var(--off); }
+.cc-error { color: var(--crit); font-size: 11px; flex-basis: 100%; }
+
+/* --- Setpoint control --- */
+.setpoint-control {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.sp-label { font-size: 13px; font-weight: 600; }
+.sp-current { font-size: 12px; color: var(--text-dim); margin: 4px 0 6px; }
+.sp-row { display: flex; align-items: center; gap: 6px; }
+.sp-input {
+  width: 80px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.sp-unit { font-size: 12px; color: var(--text-dim); }
+.sp-apply {
+  border: none;
+  border-radius: 4px;
+  background: var(--info);
+  color: #fff;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sp-apply:disabled { opacity: 0.4; cursor: not-allowed; }
+.sp-error { color: var(--crit); font-size: 11px; display: block; margin-top: 4px; }
+
+/* --- Alarm panel --- */
+.alarm-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+}
+.alarm-panel.no-alarms { color: var(--ok); font-weight: 600; }
+.alarm-panel h3 { margin: 0 0 8px; font-size: 14px; }
+.alarm-list { list-style: none; margin: 0; padding: 0; }
+.alarm-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+.alarm-icon { font-size: 11px; width: 34px; }
+.alarm-text { flex: 1; font-weight: 600; }
+.alarm-time { font-size: 11px; color: var(--text-dim); }
+.alarm-item.priority-critical { background: rgba(210, 63, 63, 0.18); border-left: 4px solid var(--crit); animation: blink 1s steps(2, start) infinite; }
+.alarm-item.priority-high { background: rgba(217, 130, 43, 0.18); border-left: 4px solid var(--warn); }
+.alarm-item.priority-medium { background: rgba(214, 196, 60, 0.15); border-left: 4px solid #d6c43c; }
+.alarm-item.priority-low { background: rgba(58, 120, 194, 0.15); border-left: 4px solid var(--info); }
+
+@keyframes blink {
+  50% { opacity: 0.55; }
+}

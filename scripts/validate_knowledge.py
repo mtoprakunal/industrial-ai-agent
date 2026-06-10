@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 BASE = Path(__file__).parent.parent / 'knowledge'
-REQUIRED_FIELDS = ['KONU', 'KATEGORI', 'SEVIYE', 'SON_GÜNCELLEME']
+REQUIRED_FIELDS = ['KONU', 'KATEGORİ', 'SEVİYE', 'SON_GÜNCELLEME']
 
 def validate_file(path):
     errors = []

@@ -1,0 +1,102 @@
+<Window x:Class="ConveyorHmi.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:ConveyorHmi.ViewModels"
+        xmlns:conv="clr-namespace:ConveyorHmi.Converters"
+        Title="EXAMPLE_conveyor — WPF OPC-UA HMI"
+        Width="920" Height="680">
+
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+
+    <Window.Resources>
+        <conv:BoolToBrushConverter x:Key="BoolToBrush"/>
+    </Window.Resources>
+
+    <DockPanel Margin="8">
+
+        <!-- Durum şeridi -->
+        <UniformGrid DockPanel.Dock="Top" Rows="1" Columns="4" Height="40" Margin="0,0,0,8">
+            <Border Background="{Binding EStopActive, Converter={StaticResource BoolToBrush}, ConverterParameter='#B71C1C;#388E3C'}" CornerRadius="4" Margin="2">
+                <TextBlock Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Text="{Binding EStopActive, StringFormat='E-STOP: {0}'}"/>
+            </Border>
+            <Border Background="{Binding RunPermit, Converter={StaticResource BoolToBrush}, ConverterParameter='#388E3C;#E65100'}" CornerRadius="4" Margin="2">
+                <TextBlock Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Text="{Binding RunPermit, StringFormat='İZİN: {0}'}"/>
+            </Border>
+            <Border Background="{Binding AnyAlarm, Converter={StaticResource BoolToBrush}, ConverterParameter='#B71C1C;#388E3C'}" CornerRadius="4" Margin="2">
+                <TextBlock Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Text="{Binding AnyAlarm, StringFormat='ALARM: {0}'}"/>
+            </Border>
+            <Border Background="#455A64" CornerRadius="4" Margin="2">
+                <TextBlock Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Text="{Binding ConnectionState}"/>
+            </Border>
+        </UniformGrid>
+
+        <!-- Bağlan / Kes + Reset -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button Content="Bağlan" Command="{Binding ConnectCommand}" Width="120" Margin="2"/>
+            <Button Content="Bağlantıyı Kes" Command="{Binding DisconnectCommand}" Width="120" Margin="2"/>
+            <Button Content="RESET" Command="{Binding ResetCommand}" Width="120" Margin="2"/>
+            <Button Content="Tümünü Onayla" Command="{Binding AcknowledgeAllCommand}" Width="140" Margin="2"/>
+        </StackPanel>
+
+        <!-- Bölge göstergeleri -->
+        <GroupBox DockPanel.Dock="Top" Header="Konveyör Bölgeleri" Margin="0,0,0,8">
+            <ItemsControl ItemsSource="{Binding Zones}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Rows="1"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="#BDBDBD" BorderThickness="1" CornerRadius="4" Margin="4" Padding="6">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Header}" FontWeight="Bold" FontSize="14"/>
+                                <Border CornerRadius="4" Margin="0,4" Height="40"
+                                        Background="{Binding IsStale, Converter={StaticResource BoolToBrush}, ConverterParameter='#9E9E9E;#388E3C'}">
+                                    <TextBlock Foreground="White" FontWeight="Bold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Text="{Binding State}"/>
+                                </Border>
+                                <TextBlock Text="{Binding Speed, StringFormat='Hız: {0:F1} m/min'}"/>
+                                <TextBlock Text="{Binding IsAuto, StringFormat='Oto Mod: {0}'}"/>
+                                <CheckBox Content="Oto Run" Margin="0,4,0,0"
+                                          Checked="OnAutoRunChanged" Unchecked="OnAutoRunChanged"
+                                          Tag="{Binding ZoneNo}"
+                                          IsEnabled="{Binding DataContext.CommandsEnabled, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </GroupBox>
+
+        <!-- Alarm tablosu -->
+        <GroupBox Header="Alarmlar">
+            <DataGrid ItemsSource="{Binding Alarms}" AutoGenerateColumns="False"
+                      IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Zaman" Binding="{Binding TimeText}" Width="90"/>
+                    <DataGridTextColumn Header="Kod" Binding="{Binding Code}" Width="90"/>
+                    <DataGridTextColumn Header="Mesaj" Binding="{Binding Message}" Width="*"/>
+                    <DataGridTextColumn Header="Durum" Binding="{Binding StatusText}" Width="90"/>
+                    <DataGridTextColumn Header="Onay" Binding="{Binding AckText}" Width="70"/>
+                </DataGrid.Columns>
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Active}" Value="True">
+                                <Setter Property="Background" Value="#FFCDD2"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+            </DataGrid>
+        </GroupBox>
+    </DockPanel>
+</Window>

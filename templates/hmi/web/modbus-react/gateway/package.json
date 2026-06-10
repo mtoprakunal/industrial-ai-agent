@@ -1,0 +1,28 @@
+{
+  "name": "modbus-react-gateway",
+  "version": "1.0.0",
+  "description": "Modbus TCP -> WebSocket gateway (PLC ile React HMI arasinda koprü). Tarayici dogrudan Modbus TCP konusamaz; bu gateway PLC'yi periyodik okur ve WebSocket ile frontend'e iter.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "jsmodbus": "^4.0.10",
+    "ws": "^8.18.0"
+  },
+  "keywords": [
+    "modbus",
+    "modbus-tcp",
+    "hmi",
+    "scada",
+    "websocket",
+    "plc"
+  ],
+  "license": "MIT"
+}

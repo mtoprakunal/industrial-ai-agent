@@ -1,0 +1,11 @@
+# Alarm Listesi Sablonu - sutun aciklamalari (bu yorum satirlarini teslimden once silin)
+# Alarm_ID          : Benzersiz alarm kodu (orn. A001). Seviye bloklarina gore numaralandir
+# Tag               : Iliskili IO etiketi (io_list.csv ile eslesmeli)
+# Seviye            : Kritik / Yuksek / Orta / Dusuk
+# Sebep             : Alarmi tetikleyen kosul - ASCII karakter kullan
+# Etki              : Sistem uzerindeki etki (hangi bolge/motor durur vb.)
+# Operator_Aksiyonu : Operatorun yapmasi gereken islem
+Alarm_ID,Tag,Seviye,Sebep,Etki,Operator_Aksiyonu
+A001,PLT_EST_01_OK,Kritik,Acil durdurma basildi veya zincir koptu,Tum motorlar donanimsal olarak enerjisiz - tum bolgeler durur,E-Stop'u serbest birak / zinciri kontrol et / Reset bas
+A010,ZN1_JAM_01_Sensor,Yuksek,Bolge 1 sikisma sensoru 200ms aktif,Bolge 1 durur ve JAMMED durumuna gecer,Sikismayi temizle / Reset bas
+A050,PLT_OPCUA_Comm,Dusuk,OPC-UA / HMI baglanti kopmasi,Izleme kesilir - kontrol PLC'de devam eder,Ag / gateway / sunucu durumunu kontrol et

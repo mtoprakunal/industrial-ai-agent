@@ -1,0 +1,13 @@
+# IO Listesi Sablonu - sutun aciklamalari (bu yorum satirlarini teslimden once silin)
+# Tag       : Benzersiz sinyal adi. Sema: BOLGE_TIP_NO_Islev (orn. ZN1_MTR_01_Run)
+# Adres      : CODESYS adresi. %IX=dijital giris bit, %QX=dijital cikis bit, %IW=analog giris word
+# Tip        : Veri tipi (BOOL, INT, WORD, REAL ...)
+# Yon        : DI=dijital giris, DO=dijital cikis, AI=analog giris, AO=analog cikis
+# Task       : Sinyalin islendigi task (Fast=guvenlik kritik, Control=normal, Slow=yavas)
+# Aciklama   : Sinyalin islevi - ASCII karakter kullan (i,s,g; o,c degil)
+# Olcek_Not  : Analog olcekleme/debounce notu (orn. 4mA=0 / 20mA=120 m/min)
+Tag,Adres,Tip,Yon,Task,Aciklama,Olcek_Not
+ZN1_PBS_01_Start,%IX0.0,BOOL,DI,Control,Bolge 1 Baslat butonu,
+PLT_EST_01_OK,%IX1.7,BOOL,DI,Fast,Acil durdurma zinciri saglam (NC=1 saglikli),Donanimsal zincir durumu
+ZN1_MTR_01_Run,%QX0.0,BOOL,DO,Fast,Bolge 1 motor calistir (VFD enable/kontaktor),
+ZN1_TAC_01_Speed,%IW2,INT,AI,Control,Bolge 1 takometre (4-20mA),4mA=0 / 20mA=120 m/min

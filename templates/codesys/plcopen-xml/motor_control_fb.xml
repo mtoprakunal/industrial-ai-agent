@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+
+    <fileHeader companyName="Industrial AI Agent"
+                productName="CODESYS"
+                productVersion="3.5.21.0"
+                creationDateTime="2026-06-10T10:00:00"/>
+
+    <contentHeader name="MotorControlTemplate"
+                   modificationDateTime="2026-06-10T10:00:00">
+        <coordinateInfo>
+            <fbd><scaling x="1" y="1"/></fbd>
+            <ld><scaling x="1" y="1"/></ld>
+            <sfc><scaling x="1" y="1"/></sfc>
+        </coordinateInfo>
+    </contentHeader>
+
+    <types>
+        <dataTypes/>
+        <pous>
+            <pou name="FB_MotorControl" pouType="functionBlock">
+                <interface>
+                    <inputVars>
+                        <variable name="xStart">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Calistirma komutu (start)</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xStop">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Durdurma komutu (stop, oncelikli)</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xInterlock">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Guvenlik kilidi: TRUE = calismaya izin var</xhtml>
+                            </documentation>
+                        </variable>
+                    </inputVars>
+                    <outputVars>
+                        <variable name="xRun">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Motor calisma cikisi</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xFault">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Hata bayragi (interlock kayboldu)</xhtml>
+                            </documentation>
+                        </variable>
+                    </outputVars>
+                    <localVars>
+                        <variable name="fbRS">
+                            <type><derived name="RS"/></type>
+                        </variable>
+                    </localVars>
+                </interface>
+                <body>
+                    <ST>
+                        <xhtml xmlns="http://www.w3.org/1999/xhtml"><![CDATA[
+// ------------------------------------------------------------
+// FB_MotorControl - Mandalli (RS) motor kontrol blogu
+// Stop ve interlock kaybi oncelikli olarak motoru durdurur.
+// RS flip-flop: Set = xStart, Reset (oncelikli) = stop kosulu
+// ------------------------------------------------------------
+
+// Interlock kaybi hata uretir
+xFault := NOT xInterlock;
+
+// RS mandali: Set1 baskin reset, R baskin
+fbRS(
+    SET  := xStart AND xInterlock,
+    RESET1 := xStop OR NOT xInterlock
+);
+
+xRun := fbRS.Q1;
+]]></xhtml>
+                    </ST>
+                </body>
+            </pou>
+        </pous>
+    </types>
+
+    <instances>
+        <configurations/>
+    </instances>
+
+</project>

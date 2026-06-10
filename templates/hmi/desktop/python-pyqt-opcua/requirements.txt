@@ -1,0 +1,10 @@
+# EXAMPLE_conveyor PyQt6 + asyncua masaüstü HMI bağımlılıkları (2025/2026)
+# Python 3.10+ gereklidir (asyncua v2.0 yalnızca 3.10+ destekler).
+
+asyncua>=2.0,<3.0          # OPC-UA async istemci/sunucu (opcua-asyncio)
+PyQt6>=6.7,<6.9            # Qt6 binding
+qasync>=0.28,<0.29         # asyncio + Qt event loop köprüsü
+
+# Güvenli bağlantı (USE_SECURITY=True) için gerekli; aksi halde isteğe bağlı.
+# asyncua[crypto] cryptography'yi getirir.
+cryptography>=43.0

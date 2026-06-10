@@ -1,0 +1,151 @@
+/* ============================================================
+   styles.css — Endüstriyel HMI sade stil (ISA-101 esinli)
+   ISA-101: normal durum gri/nötr, alarm/dikkat renkli.
+   ============================================================ */
+
+:root {
+    --bg: #1a1d21;
+    --panel: #24282e;
+    --panel-2: #2c3138;
+    --text: #e4e7eb;
+    --muted: #8a929c;
+    --border: #3a4049;
+    --ok: #3fa66a;
+    --running: #2f8fd6;
+    --transition: #c9a227;
+    --alarm: #d6432f;
+    --critical: #e23b2e;
+    --high: #e08a2b;
+    --medium: #d6be2b;
+    --stale: #6b7280;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+}
+
+.hmi-app { max-width: 1100px; margin: 0 auto; padding: 16px; }
+
+/* --- Header --- */
+.hmi-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+}
+.hmi-header h1 { font-size: 1.3rem; margin: 0; }
+.hmi-main h2 { font-size: 1.05rem; color: var(--muted); margin: 18px 0 8px; }
+
+/* --- Bağlantı durumu --- */
+.conn-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+}
+.conn-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--stale);
+}
+.conn-ok .conn-dot { background: var(--ok); }
+.conn-degraded .conn-dot { background: var(--transition); animation: blink 1s infinite; }
+.conn-down .conn-dot { background: var(--alarm); animation: blink 0.6s infinite; }
+.conn-ok { border-color: var(--ok); }
+.conn-degraded { border-color: var(--transition); }
+.conn-down { border-color: var(--alarm); }
+.conn-meta { color: var(--muted); font-size: 0.72rem; margin-left: 6px; }
+
+@keyframes blink { 50% { opacity: 0.3; } }
+
+/* --- Alarm paneli --- */
+.alarm-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+}
+.alarm-panel.ok { color: var(--ok); }
+.alarm-panel h3 { margin: 0 0 10px; font-size: 1rem; }
+.alarm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.alarm-item {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 8px 10px; border-radius: 6px; background: var(--panel-2);
+    border-left: 4px solid var(--medium);
+}
+.alarm-item.p-critical { border-left-color: var(--critical); }
+.alarm-item.p-high { border-left-color: var(--high); }
+.alarm-item.p-medium { border-left-color: var(--medium); }
+.alarm-text { display: flex; flex-direction: column; }
+.alarm-label { font-weight: 600; }
+.alarm-note { font-size: 0.78rem; color: var(--muted); }
+
+/* --- Genel durum tag'leri --- */
+.overview-tags { display: flex; gap: 12px; flex-wrap: wrap; }
+.tag-value {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; min-width: 130px;
+    display: flex; flex-direction: column; gap: 2px;
+}
+.tv-label { font-size: 0.78rem; color: var(--muted); }
+.tv-number { font-size: 1.4rem; font-weight: 600; }
+.tv-unit { font-size: 0.85rem; color: var(--muted); margin-left: 4px; }
+.tag-value.stale { opacity: 0.55; }
+.tag-value.stale .tv-number { font-style: italic; color: var(--stale); }
+.tv-stale { font-size: 0.7rem; color: var(--transition); }
+.q-bad .tv-number { text-decoration: line-through; }
+
+/* --- Bölge kartları --- */
+.zones-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.zone-panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px; border-top: 4px solid var(--stale);
+}
+.zone-running { border-top-color: var(--running); }
+.zone-idle { border-top-color: var(--stale); }
+.zone-transition { border-top-color: var(--transition); }
+.zone-alarm { border-top-color: var(--alarm); }
+.zone-panel.stale { opacity: 0.55; }
+.zone-head { display: flex; justify-content: space-between; align-items: center; }
+.zone-head h3 { margin: 0; font-size: 1rem; }
+.zone-badge {
+    font-size: 0.72rem; padding: 3px 8px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border);
+}
+.badge-running { color: var(--running); }
+.badge-transition { color: var(--transition); }
+.badge-alarm { color: var(--alarm); font-weight: 700; }
+.zone-body { display: flex; gap: 16px; margin: 12px 0; }
+.zone-metric { display: flex; flex-direction: column; }
+.zm-label { font-size: 0.74rem; color: var(--muted); }
+.zm-value { font-size: 1.2rem; font-weight: 600; }
+.zm-unit { font-size: 0.8rem; color: var(--muted); margin-left: 3px; }
+
+/* --- Komut butonları --- */
+.cmd-button-wrap { display: flex; flex-direction: column; gap: 4px; }
+.cmd-button {
+    background: var(--running); color: #fff; border: none;
+    padding: 8px 16px; border-radius: 6px; font-size: 0.9rem;
+    cursor: pointer; font-weight: 600;
+}
+.cmd-button:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+.cmd-button:not(:disabled):hover { filter: brightness(1.1); }
+.cmd-error { font-size: 0.72rem; color: var(--alarm); }
+
+.global-cmd-row { display: flex; gap: 12px; }
+.cmd-hint { font-size: 0.78rem; color: var(--muted); margin-top: 8px; }

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+
+    <fileHeader companyName="Industrial AI Agent"
+                productName="CODESYS"
+                productVersion="3.5.21.0"
+                creationDateTime="2026-06-10T10:00:00"/>
+
+    <contentHeader name="AlarmHandlerTemplate"
+                   modificationDateTime="2026-06-10T10:00:00">
+        <coordinateInfo>
+            <fbd><scaling x="1" y="1"/></fbd>
+            <ld><scaling x="1" y="1"/></ld>
+            <sfc><scaling x="1" y="1"/></sfc>
+        </coordinateInfo>
+    </contentHeader>
+
+    <types>
+        <dataTypes/>
+        <pous>
+            <pou name="FB_AlarmHandler" pouType="functionBlock">
+                <interface>
+                    <inputVars>
+                        <variable name="xTrigger">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Alarm tetikleme kosulu (TRUE = alarm var)</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xAcknowledge">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Operator kabul (acknowledge) butonu</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="bLevel">
+                            <type><USINT/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Alarm seviyesi (0=info, 1=uyari, 2=kritik)</xhtml>
+                            </documentation>
+                        </variable>
+                    </inputVars>
+                    <outputVars>
+                        <variable name="xActive">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Alarm kosulu su an aktif mi</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xLatched">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Mandalli alarm: tetiklendi, henuz kabul edilmedi</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="xUnacknowledged">
+                            <type><BOOL/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Aktif/mandalli ve kabul bekliyor (yanip sonme icin)</xhtml>
+                            </documentation>
+                        </variable>
+                        <variable name="bAlarmLevel">
+                            <type><USINT/></type>
+                            <documentation>
+                                <xhtml xmlns="http://www.w3.org/1999/xhtml">Mandallanan alarmin seviyesi</xhtml>
+                            </documentation>
+                        </variable>
+                    </outputVars>
+                    <localVars>
+                        <variable name="rtrigTrigger">
+                            <type><derived name="R_TRIG"/></type>
+                        </variable>
+                        <variable name="rtrigAck">
+                            <type><derived name="R_TRIG"/></type>
+                        </variable>
+                    </localVars>
+                </interface>
+                <body>
+                    <ST>
+                        <xhtml xmlns="http://www.w3.org/1999/xhtml"><![CDATA[
+// ------------------------------------------------------------
+// FB_AlarmHandler - Alarm mandalla / kabul mantigi
+// Tetikleme yukselen kenarda alarmi mandalar ve seviyesini saklar.
+// Kabul (acknowledge) yalnizca kosul dustukten sonra mandali siler.
+// ------------------------------------------------------------
+
+// Kenar tespiti
+rtrigTrigger(CLK := xTrigger);
+rtrigAck(CLK := xAcknowledge);
+
+// Anlik aktif durum
+xActive := xTrigger;
+
+// --- Mandalla: yukselen kenarda alarmi yakala ve seviye sakla ---
+IF rtrigTrigger.Q THEN
+    xLatched := TRUE;
+    bAlarmLevel := bLevel;
+END_IF
+
+// --- Kabul: yalnizca kosul artik aktif degilse mandali sil ---
+IF rtrigAck.Q AND NOT xActive THEN
+    xLatched := FALSE;
+    bAlarmLevel := 0;
+END_IF
+
+// --- Kabul bekleyen (yanip sonen) durum ---
+// Aktif veya mandalli ise ve henuz temizlenmemisse kabul bekliyor
+xUnacknowledged := xActive OR xLatched;
+]]></xhtml>
+                    </ST>
+                </body>
+            </pou>
+        </pous>
+    </types>
+
+    <instances>
+        <configurations/>
+    </instances>
+
+</project>

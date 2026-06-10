@@ -24,6 +24,17 @@ projects/*/io_list.csv
 projects/*/alarm_list.csv
 projects/*/project_report.md
 
+# Node.js (HMI web şablonları)
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-error.log*
+
+# .NET (WPF HMI şablonu)
+bin/
+obj/
+
 # Gizli
 *.env
 secrets.json

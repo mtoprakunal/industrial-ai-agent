@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    EXAMPLE_conveyor WPF + OPC Foundation SDK masaüstü HMI.
+    CODESYS PLC'ye doğrudan (gateway yok) bağlanır.
+    .NET 8 (LTS) hedeflenir; WPF yalnızca Windows üzerinde çalışır.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ConveyorHmi</RootNamespace>
+    <AssemblyName>ConveyorHmi</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- OPC Foundation resmi .NET Standard stack (2025/2026 sürüm serisi) -->
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Client" Version="1.5.378.145" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" Version="1.5.378.145" />
+    <!-- MVVM yardımcıları: ObservableObject, RelayCommand -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+  </ItemGroup>
+
+</Project>

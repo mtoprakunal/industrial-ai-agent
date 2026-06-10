@@ -1,0 +1,21 @@
+{
+  "name": "opcua-react-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "React (Vite) endüstriyel HMI — OPC-UA gateway'e WebSocket ile bağlanır.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.5"
+  }
+}

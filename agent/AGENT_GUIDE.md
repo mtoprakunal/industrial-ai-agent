@@ -15,9 +15,36 @@ python scripts/knowledge_status.py
 
 ## Yeni Bilgi Ekleme
 
+İnteraktif:
+
 ```bash
 python scripts/add_knowledge.py
 ```
+
+Non-interaktif (scriptlenebilir):
+
+```bash
+python scripts/add_knowledge.py \
+    --konu "OPC-UA Alarmları" --kategori protocols --alt opc-ua \
+    --dosya 07_alarms.md --seviye Temel
+```
+
+Belgeyi oluşturur **ve `_index.json`'u otomatik günceller** (konu eklenir,
+`last_updated` bugüne çekilir). `_graph.json` bağlantıları ilişki yorumu
+gerektirdiği için elle eklenir — script bunu hatırlatır.
+
+> Not: `_index.json` her eklemede `json` ile yeniden yazılır (2 boşluk girinti,
+> Türkçe karakterler korunur). İlk çalıştırmada dosya tek seferlik biçim
+> normalizasyonundan geçebilir; içerik aynı kalır.
+
+## Testler
+
+```bash
+python tests/run_tests.py        # bilgi tabanı + kural bütünlük testleri
+```
+
+Yeni bilgi eklediğinde çalıştır — `_index.json` ile disk uyumsuzluğunu yakalar.
+Agent davranış senaryoları için bkz. `tests/scenarios/`.
 
 ## Agent'a Soru Sorma
 

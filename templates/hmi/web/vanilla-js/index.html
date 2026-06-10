@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Konveyör HMI — Vanilla JS</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- ÜST BAR: başlık + bağlantı durumu LED'i -->
+    <header class="topbar">
+        <h1 class="title">KONVEYÖR HAT 1 — HMI</h1>
+        <div class="conn-status">
+            <span id="conn-led" class="led led-red"></span>
+            <span id="conn-text" class="conn-text">BAŞLATILIYOR…</span>
+        </div>
+    </header>
+
+    <!-- Bağlantı bilgi/uyarı bandı (OFFLINE/DEGRADED iken görünür) -->
+    <div id="conn-banner" class="conn-banner"></div>
+
+    <main class="layout">
+        <!-- SOL: tag göstergeleri + komut butonları -->
+        <section class="panel process-panel">
+            <h2 class="panel-title">PROSES DEĞERLERİ</h2>
+            <div id="tag-grid" class="tag-grid">
+                <!-- ui.js doldurur -->
+            </div>
+
+            <h2 class="panel-title">KOMUTLAR</h2>
+            <div id="command-panel" class="command-panel">
+                <!-- ui.js doldurur -->
+            </div>
+        </section>
+
+        <!-- SAĞ: alarm paneli -->
+        <section class="panel alarm-panel">
+            <h2 class="panel-title">
+                AKTİF ALARMLAR (<span id="alarm-count">0</span>)
+            </h2>
+            <div id="alarm-list" class="alarm-list">
+                <!-- ui.js doldurur -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Yükleme sırası önemli: config → ws-client → commands → ui → app -->
+    <script src="js/config.js"></script>
+    <script src="js/ws-client.js"></script>
+    <script src="js/commands.js"></script>
+    <script src="js/ui.js"></script>
+    <script>
+        // Uygulama başlangıcı: UI'ı kur, ardından bağlan.
+        document.addEventListener('DOMContentLoaded', function () {
+            window.UI.init();
+            window.WSClient.connect();
+        });
+    </script>
+</body>
+</html>
