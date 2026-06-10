@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "Güç aralığı, voltaj sınıfı, kontrol modları, aşırı yük ve haberleşme resmi Inovance EU ürün sayfasından alındı. Modbus non-parameter register adresleri (1000H frekans setpoint, 2000H komut, 3000H durum) resmi MD500 kullanıcı kılavuzu Ek B'den doğrulandı. Çalışma sıcaklığı tam aralık, IP sınıfı (tipik IP20), fiziksel boyut ve montaj resmi spesifikasyon tablosundan tek tek teyit edilmediği için boş bırakıldı (tahmin edilmedi)."
+  },
+  "identity": {
+    "manufacturer": "Inovance",
+    "model": "MD500",
+    "product_family": "MD Serisi AC Sürücüler",
+    "category": "vfd",
+    "description": "Yüksek performanslı genel amaçlı vektör AC sürücü (VFD). Açık çevrim V/f ve sensörsüz vektör (SVC) ile kapalı çevrim vektör (FVC) kontrolü destekler. Dahili RS-485 Modbus RTU; opsiyonel fieldbus kartları (PROFINET, PROFIBUS-DP, CANopen, CANlink) ile genişletilebilir.",
+    "official_url": "https://www.inovance.eu/products/ac-drives-low-voltage/md500-high-performance-vector-ac-drive",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/MD500_Br_EN_Spreads_Web_V1.2.3.pdf"
+  },
+  "communication": {
+    "protocols": ["Modbus RTU (RS-485, dahili)", "PROFINET (opsiyonel kart)", "PROFIBUS-DP (opsiyonel kart)", "CANopen (opsiyonel kart)", "CANlink (opsiyonel kart)"],
+    "fieldbus_role": "slave",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["RS-485 (dahili, Modbus RTU)", "Opsiyonel haberleşme kartı yuvası"]
+  },
+  "electrical": {
+    "power_supply": "3AC 380–480 V (0.4–450 kW) ; 3AC 200–240 V (0.4–55 kW)",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": "40 °C üzerinde derating gerekir (tam aralık resmi spesifikasyondan teyit edilmeli)",
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": null
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": null
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": "Dahili dinamik frenleme ünitesi (model aralığına göre); otomatik tork boost; kayma kompanzasyonu",
+    "notes": "Kontrol terminali sayıları (DI/DO/AI/AO/röle) modele göre değişir; resmi donanım kılavuzundan teyit edilmeli."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": null
+  },
+  "drive": {
+    "power_range": "0.4–450 kW (3AC 380–480 V) ; 0.4–55 kW (3AC 200–240 V)",
+    "voltage_class": "3AC 380–480 V ; 3AC 200–240 V",
+    "control_modes": "V/f (açık çevrim), SVC (sensörsüz vektör), FVC (kapalı çevrim vektör)",
+    "overload": "SVC: %150 başlatma torku @ 0.25 Hz ; FVC: %180 başlatma torku @ 0 Hz. Çıkış frekansı 500 Hz'e kadar.",
+    "feedback": "FVC için enkoder (PG kartı, opsiyonel)"
+  },
+  "register_map": [
+    {
+      "address": "0x1000",
+      "name": "Haberleşme ayar değeri (frekans/setpoint)",
+      "data_type": "INT16",
+      "access": "W",
+      "scale": "-10000…10000 = -%100…%100 (göreli set değeri)",
+      "unit": "%",
+      "description": "Frekans referansı (ve mod seçimine göre tork limiti / V/F gerilimi / PID referansı-geri besleme) için yazma register'ı."
+    },
+    {
+      "address": "0x2000",
+      "name": "Kontrol komutu",
+      "data_type": "UINT16",
+      "access": "W",
+      "scale": null,
+      "unit": null,
+      "description": "1: İleri çalış, 2: Geri çalış, 3: İleri jog, 4: Geri jog, 5: Serbest duruş (coast), 6: Yavaşlayarak dur, 7: Hata reset."
+    },
+    {
+      "address": "0x3000",
+      "name": "AC sürücü çalışma durumu",
+      "data_type": "UINT16",
+      "access": "R",
+      "scale": null,
+      "unit": null,
+      "description": "1: İleri çalışıyor, 2: Geri çalışıyor, 3: Durmuş."
+    },
+    {
+      "address": "0x8000",
+      "name": "Hata bilgisi",
+      "data_type": "UINT16",
+      "access": "R",
+      "scale": null,
+      "unit": null,
+      "description": "Güncel hata kodu (F9-14 ile aynı kod tablosu)."
+    }
+  ],
+  "codesys": {
+    "compatible": "dolaylı (Modbus RTU/TCP veya fieldbus kartı üzerinden)",
+    "runtime": null,
+    "integration_notes": "MD500 CODESYS runtime çalıştırmaz; CODESYS PLC'ye sürücü, Modbus RTU (RS-485) slave olarak veya opsiyonel PROFINET/CANopen kartıyla fieldbus slave olarak entegre edilir. Komut 0x2000, frekans setpoint 0x1000, durum 0x3000 register'ları üzerinden çalış/dur/frekans kontrolü yapılır. Grup F/A parametreleri için adres = yüksek 8 bit grup + düşük 8 bit parametre SN (örn F0-16 = F010H). Tüm parametre/monitör adresleri resmi MD500 kullanıcı kılavuzu Ek B/C'den teyit edilmeli."
+  },
+  "applications": [
+    "Genel amaçlı motor sürme (pompa, fan, konveyör)",
+    "Vinç ve kaldırma uygulamaları",
+    "Tekstil ve makine otomasyonu",
+    "Yüksek tork gerektiren düşük hız uygulamaları (FVC)"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/products/ac-drives-low-voltage/md500-high-performance-vector-ac-drive",
+      "title": "Inovance EU — MD500 High Performance Vector AC Drive (ürün sayfası)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/MD500_Br_EN_Spreads_Web_V1.2.3.pdf",
+      "title": "Inovance EU — MD500 AC Drive Brochure",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/1590962/Inovance-Md500.html",
+      "title": "Inovance MD500 User Manual — Ek B: Modbus Communication Data Address (ManualsLib aynası)",
+      "reliability": "topluluk"
+    }
+  ]
+}
