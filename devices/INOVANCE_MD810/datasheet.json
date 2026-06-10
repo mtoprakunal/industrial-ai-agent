@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "Güç aralığı (drive/dual/PSU), voltaj, kontrol modları, haberleşme ve STO SIL3 resmi Inovance EU ürün sayfasından alındı. Aşırı yük değeri, çalışma sıcaklığı tam aralığı, IP sınıfı, boyut ve montaj resmi spesifikasyon tablosundan tek tek teyit edilemediği için boş bırakıldı (tahmin edilmedi). Register adresleri Inovance MD ailesi ortak Modbus şemasını izler (1000H/2000H/3000H) ancak MD810 kullanıcı kılavuzu haberleşme bölümünden doğrudan doğrulanamadığından register_map boş bırakıldı — resmi kılavuza yönlendirilir."
+  },
+  "identity": {
+    "manufacturer": "Inovance",
+    "model": "MD810",
+    "product_family": "MD810 MultiDrive Sistemi",
+    "category": "vfd",
+    "description": "Yeni nesil alçak gerilim çoklu sürücü (multidrive) sistemi: ortak bir güç besleme ünitesi (PSU) ve birden fazla sürücü ünitesinden oluşur; çok eksenli/çok noktalı sürüş uygulamaları için kitap (book) tipi yapı. Asenkron (IM) ve kalıcı mıknatıslı senkron (PMSM) motorlar için V/f, sensörsüz vektör ve kapalı çevrim vektör kontrol. STO SIL3 (EN/IEC 61800-5-2).",
+    "official_url": "https://www.inovance.eu/products/ac-drives-low-voltage/md810-multidrive-system",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/AC_Drives_LV/MD810_Standard_Drive_User_Guide.pdf"
+  },
+  "communication": {
+    "protocols": ["Modbus RTU (RS-485, dahili)", "CANopen (opsiyonel kart)", "PROFINET (opsiyonel kart)", "PROFIBUS-DP (opsiyonel kart)", "CANlink (opsiyonel kart)"],
+    "fieldbus_role": "slave",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["RS-485 (dahili, Modbus RTU)", "Opsiyonel haberleşme kartı yuvası"]
+  },
+  "electrical": {
+    "power_supply": "Sürücü ünitesi 3AC 400 V, 1.5–160 kW ; Çift sürücü ünitesi 1.5–18.5 kW ; Ortak güç besleme ünitesi 22–355 kW",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": null,
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": null
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": "Kitap (book) tipi yan yana montaj (çoklu sürücü sistemi)"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": "STO SIL3 (EN/IEC 61800-5-2); statik ve dinamik auto-tuning; merkez sarıcı/açıcı fonksiyonu; wobble; nokta-nokta pozisyon kontrolü; ikinci PID döngüsü",
+    "notes": "Kontrol terminali sayıları sürücü ünitesi modeline göre değişir; resmi donanım kılavuzundan teyit edilmeli."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": null
+  },
+  "drive": {
+    "power_range": "Sürücü ünitesi 1.5–160 kW ; çift sürücü ünitesi 1.5–18.5 kW ; ortak güç besleme ünitesi 22–355 kW",
+    "voltage_class": "3AC 400 V",
+    "control_modes": "V/f, SVC (sensörsüz vektör), FVC (kapalı çevrim vektör) — IM ve PMSM için",
+    "overload": null,
+    "feedback": "FVC için enkoder (PG kartı, opsiyonel)"
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": "dolaylı (Modbus RTU/TCP veya fieldbus kartı üzerinden)",
+    "runtime": null,
+    "integration_notes": "MD810 CODESYS runtime çalıştırmaz; CODESYS PLC'ye dahili RS-485 Modbus RTU slave olarak veya opsiyonel PROFINET/CANopen kartıyla fieldbus slave olarak entegre edilir. Inovance MD ailesi ortak Modbus şemasında çalış/dur 0x2000 komut, frekans setpoint 0x1000, durum 0x3000 register'larıyla yapılır; ANCAK MD810 register/adres tablosu bu çalışmada resmi kaynaktan doğrudan doğrulanamadı — kesin adresler için resmi MD810 Standard Drive User Guide haberleşme bölümüne bakılmalı (register_map bilinçli olarak boş bırakıldı)."
+  },
+  "applications": [
+    "Çok eksenli/çok noktalı ortak DC-bara sürüş sistemleri",
+    "Tekstil ve kağıt makineleri (sarıcı/açıcı)",
+    "Asansör/kaldırma ve enerji geri kazanımlı uygulamalar",
+    "Makine otomasyonunda kompakt panel çoklu sürücü"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/products/ac-drives-low-voltage/md810-multidrive-system",
+      "title": "Inovance EU — MD810 MultiDrive System (ürün sayfası)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/AC_Drives_LV/MD810_Standard_Drive_User_Guide.pdf",
+      "title": "Inovance EU — MD810 Series Standard Drive (Multidrive System) Advanced User Guide",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/1631004/Inovance-Md810-Series.html",
+      "title": "Inovance MD810 Series User Manual (ManualsLib aynası)",
+      "reliability": "topluluk"
+    }
+  ]
+}
