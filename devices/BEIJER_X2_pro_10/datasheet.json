@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "complete",
+    "notes": "Değerler Beijer resmi X2 pro 10 Technical Data ve X2 pro / iX yazılım sayfalarından alındı. X2 pro AİLESİ entegre CODESYS ÇALIŞTIRMAZ — sadece iX runtime/iX Developer ile programlanır ve PLC'ye haberleşme sürücüleri (Modbus, Ethernet/IP, OPC-UA istemci/sunucu vb.) üzerinden bağlanır. İşletim sistemi versiyonu resmi teknik veride açıkça yazılmadığı için null."
+  },
+  "identity": {
+    "manufacturer": "Beijer Electronics",
+    "model": "X2 pro 10",
+    "product_family": "X2 pro (operatör paneli, iX runtime)",
+    "category": "hmi",
+    "description": "10.1 inç dokunmatik operatör paneli. iX runtime ile gelir, iX Developer ile programlanır. PLC/sürücü/servo gibi cihazlara çok sayıda haberleşme sürücüsü üzerinden bağlanan saf HMI'dır; dahili PLC mantığı (CODESYS) çalıştırmaz.",
+    "official_url": "https://www.beijerelectronics.com/en/Products/Operator___panels/X2___pro/X2___pro___10",
+    "datasheet_url": "https://www.beijerelectronics.com/docs/X2-pro-10-Installation/en/technical-data_x2-pro-10.html"
+  },
+  "communication": {
+    "protocols": ["Modbus TCP", "Modbus RTU", "Ethernet/IP", "PROFINET", "OPC-UA (sunucu/istemci)", "çeşitli PLC sürücüleri (iX driver kütüphanesi)"],
+    "fieldbus_role": "client",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["2x Ethernet 10/100 Mbit (RJ45, LAN A/B)", "2x USB Host 2.0", "COM1 RS-232 (RTS/CTS)", "COM2 RS-422/RS-485", "COM3 RS-485", "1x CAN 2.0B", "1x SD kart"]
+  },
+  "electrical": {
+    "power_supply": "+24 V DC (18–32 V DC)",
+    "power_consumption": "21.6 W",
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": "-10 °C ila +60 °C",
+    "storage_temp": "-20 °C ila +70 °C",
+    "humidity": "%5–85 yoğunlaşmasız",
+    "ip_rating": "Ön panel IP65"
+  },
+  "physical": {
+    "dimensions": "292 × 194 × 7 mm (ön panel)",
+    "weight": "1.65 kg",
+    "mounting": "Pano kesiti montaj; VESA 75 × 75"
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": null,
+    "notes": "Saf HMI; yerel proses I/O'su yoktur, veri haberleşme sürücüleriyle PLC'den okunur."
+  },
+  "display": {
+    "size_inch": "10.1",
+    "resolution": "1024 × 600 piksel, 262k renk",
+    "touch": "Rezistif (cam üzeri polyester, ITO film); ~1 milyon dokunma ömrü",
+    "processor": "NXP i.MX6 DualLite, çift çekirdek ARM Cortex-A9 1.0 GHz",
+    "ram": "1 GB DDR3",
+    "storage": "1.5 GB eMMC SSD (uygulama)",
+    "os": null,
+    "software": "iX Developer 2.x / iX runtime"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": false,
+    "runtime": null,
+    "integration_notes": "X2 pro entegre CODESYS çalıştırmaz; iX Developer ile programlanır. CODESYS tabanlı bir PLC'ye (ör. X2 control, BoX2 SC veya 3. parti CODESYS denetleyici) HMI olarak Modbus TCP / Ethernet/IP / OPC-UA istemcisi olarak bağlanır. Dahili kontrol mantığı gerekiyorsa X2 control veya BoX2 SC modeli seçilmelidir."
+  },
+  "applications": [
+    "Makine/hat operatör arayüzü",
+    "PLC görselleştirme ve veri toplama",
+    "Alarm/recipe/trend HMI",
+    "OPC-UA sunucu olarak SCADA'ya köprü"
+  ],
+  "sources": [
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/Operator___panels/X2___pro/X2___pro___10",
+      "title": "Beijer Electronics — X2 pro 10 ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/docs/X2-pro-10-Installation/en/technical-data_x2-pro-10.html",
+      "title": "Beijer Electronics — X2 pro 10 Technical Data (Hardware & Installation)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.beijerelectronics.com/en/Products/software/ix-hmi-software/for-advanced-users/OPC___UA___server",
+      "title": "Beijer Electronics — iX OPC UA server (X2/BoX2 OPC-UA sunucu yeteneği)",
+      "reliability": "resmi"
+    }
+  ]
+}
