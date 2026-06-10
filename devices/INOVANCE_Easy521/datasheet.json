@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "Easy521-0808TN (sipariş kodu 01440385). Easy500 hareket-kontrol alt serisinin 8 eksenli üyesi (Easy522=16, Easy523=32). I/O, eksen, port ve güç değerleri resmi Easy Series PLC broşürü ve Inovance Easy521 User Manual + distribütör listelemesi ile teyit edildi. CPU çalışma sıcaklığı broşürün CPU tablosunda açıkça verilmediği için null bırakıldı (GE20/GL20 modülleri -20~55°C; CPU için tahmin edilmedi). Easy521 AutoShop ile programlanır — CODESYS değil."
+  },
+  "identity": {
+    "manufacturer": "Inovance (Shenzhen Inovance Technology)",
+    "model": "Easy521-0808TN",
+    "product_family": "Easy Serisi (Easy500 hareket-kontrol alt serisi)",
+    "category": "plc",
+    "description": "Kompakt EtherCAT master hareket-kontrol PLC'si. 8 dijital giriş / 8 dijital çıkış, EtherCAT + darbe ile 8 eksene kadar kontrol, CAM ve enterpolasyon desteği. Model kodu: 08=8 giriş, 08=8 çıkış, 5=EtherCAT'li, 2=çift Ethernet, TN=sink transistör.",
+    "official_url": "https://www.inovance.eu/products/plcs-hmis",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/Easy_Series_PLC_Br_EN_Singles_Web_V0.1.pdf"
+  },
+  "communication": {
+    "protocols": ["EtherCAT (master)", "Modbus TCP (master/client; slave/server)", "EtherNet/IP (scanner/adapter)", "Modbus RTU/ASCII (RS485)", "CANopen (GE20 kartı ile)", "CANlink (GE20 kartı ile)", "Serbest protokol (RS485)"],
+    "fieldbus_role": "master",
+    "device_description_file": {
+      "type": "ESI",
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["2x Ethernet (RJ45)", "1x EtherCAT (RJ45)", "1x RS485", "1x USB Type-C (programlama)", "GE20 yuvaları (RS232/485, CAN, AI/AO, DI/DO, RTC, TF)"]
+  },
+  "electrical": {
+    "power_supply": "DC 24V (etikette: POWER INPUT DC24V 1A; OUTPUT DC24V 0.5A RES.LOAD)",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": null,
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": "IP20"
+  },
+  "physical": {
+    "dimensions": "W x H x D = 53 x 100 x 80 mm",
+    "weight": "≈197 g",
+    "mounting": "DIN ray"
+  },
+  "io": {
+    "digital_inputs": "8 (seçilebilir sink/source)",
+    "digital_outputs": "8 (TN: sink/NPN transistör)",
+    "analog_inputs": "Yok (yerleşik); GE20-2AD1DA kartı veya GL20 modülleri ile",
+    "analog_outputs": "Yok (yerleşik); GE20-2AD1DA kartı veya GL20 modülleri ile",
+    "special": "8 senkron eksene kadar (maks. EtherCAT eksenleri veya maks. 5 darbe ekseni dahil kombinasyon). 4 kanal enkoder ekseni (8 yüksek hızlı giriş, 200 kHz'e kadar). CAM ve enterpolasyon desteği. GL20 üzerinden genişletilebilir I/O.",
+    "notes": "Easy500 alt serisi EtherCAT için 72 slave'e kadar destekler (senkron eksenler dahil); Easy521 8 eksen sürümüdür. GE20 yuvaları (Easy301 hariç) ek seri/CAN/analog/dijital kart kabul eder."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": "200 K-step program; 2 MB veri (128 KB kalıcı) [Easy500 alt serisi]",
+    "os": null,
+    "software": "Inovance AutoShop (PLCopen FB, LD/SFC/ST, eksen ayar aracı)"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": false,
+    "runtime": null,
+    "integration_notes": "Easy serisi (H5U gibi) Inovance AutoShop ile programlanır — CODESYS DEĞİL. CODESYS tabanlı bir üst sistemle entegrasyon yalnızca dolaylı olur: Easy521 Modbus TCP server/RTU üzerinden veri paylaşır, EtherCAT master olarak kendi slave ağını sürer veya EtherNet/IP adapter/scanner olarak ağda yer alır. Doğrudan CODESYS runtime'ı yoktur."
+  },
+  "applications": [
+    "Kompakt çok eksenli makine kontrolü (8 eksene kadar)",
+    "Konveyör, ayıklama, paketleme hatları",
+    "EtherCAT servo (SV630N/SV660N) ve MD520/MD800 sürücü kontrolü",
+    "CAM ve enterpolasyon gerektiren küçük makineler",
+    "GL20 uzak/yerel I/O ile dağıtık kontrol"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/Easy_Series_PLC_Br_EN_Singles_Web_V0.1.pdf",
+      "title": "Inovance — Easy Series PLC broşürü (Easy500 alt serisi spesifikasyonları, AutoShop)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/3294914/Inovance-Easy521.html",
+      "title": "Inovance Easy521 User Manual (ManualsLib aynası)",
+      "reliability": "topluluk"
+    },
+    {
+      "url": "https://www.mrosupply.com/automation/6486732_01440385_inovance/",
+      "title": "MROSupply — Easy521-0808TN (sipariş kodu 01440385) listelemesi",
+      "reliability": "distribütör"
+    }
+  ]
+}
