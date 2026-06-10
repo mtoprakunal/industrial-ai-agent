@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "complete",
+    "notes": "Değerler resmi Inovance EU AM600 broşüründen (Data code L6210221 V2.2) alındı; AM600-CPU1608TP/TN modülü baz alındı. AM600, Inovance'ın CODESYS tabanlı InoProShop ortamıyla programlanan tek serisidir (IEC 61131-3). Çalışma sıcaklığı/IP broşürde açıkça verilmediği için null. Modüler sistem: CPU + GL10 güç/IO + GR10 uzak modüller."
+  },
+  "identity": {
+    "manufacturer": "Inovance (Shenzhen Inovance Technology)",
+    "model": "AM600",
+    "product_family": "AM600 Serisi (merkezi hareket kontrolörü)",
+    "category": "motion-controller",
+    "description": "Yerleşik PLC işlevli merkezi hareket kontrolörü. Standart EtherCAT portu ile 32 eksene kadar nokta-nokta pozisyonlama, 8 eksene kadar enterpolasyon, 16 eksene kadar CAM. ARM Cortex-A8 1 GHz. AM600-CPU1608TP/TN: 16 yüksek hızlı giriş / 8 yüksek hızlı çıkış. Sipariş kodu (TP) 01440168 / (TN) 01440064.",
+    "official_url": "https://www.inovance.eu/products/motion-controllers-i/o-modules/am600-motion-controllers",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/AM600_Br_EN_Singles_Web_V2.2.pdf"
+  },
+  "communication": {
+    "protocols": ["EtherCAT (master)", "Modbus TCP (master/slave)", "Modbus RTU (master/slave)", "EtherNet/IP (scanner/adapter)", "CANopen (master)", "CANlink (master/slave)", "OPC UA (server)"],
+    "fieldbus_role": "master",
+    "device_description_file": {
+      "type": "ESI",
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["1x EtherCAT (RJ45)", "1x Ethernet (RJ45)", "2x RS485 (CPU1608TP/TN)", "1x CAN", "1x USB", "SD kart yuvası"]
+  },
+  "electrical": {
+    "power_supply": "+24 VDC (CPU girişi). Güç modülü GL10-PS2: 220 VAC giriş → 24 VDC / 2 A çıkış.",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": null,
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": null
+  },
+  "physical": {
+    "dimensions": "CPU modülü W x H x D = 80 x 90 x 95 mm. Genişletme modülleri (GL10) 32 x 90 x 95 mm.",
+    "weight": null,
+    "mounting": "DIN ray (modüler, CPU + güç + genişletme modülleri)"
+  },
+  "io": {
+    "digital_inputs": "16 yüksek hızlı giriş (CPU yerleşik)",
+    "digital_outputs": "8 yüksek hızlı çıkış (CPU yerleşik; TP=source/PNP, TN=sink/NPN)",
+    "analog_inputs": "Yok (CPU yerleşik); GL10-4AD veya GR10-4ADE modülleri ile",
+    "analog_outputs": "Yok (CPU yerleşik); GL10-4DA veya GR10-4DAE modülleri ile",
+    "special": "8 kanal A/B faz darbe sayacı (her kanal maks. 200 kHz); 4 grup 200 kHz pozisyonlama darbe çıkışı; enkoder girişi; simüle enkoder çıkışı. 32 eksene kadar EtherCAT hareket (8 enterpolasyon, 16 CAM).",
+    "notes": "Her CPU'ya 16 yerel GL10 modülü; EtherCAT üzerinden 125 slave istasyona kadar uzak GR10 modülü/bus coupler. EtherCAT CiA 402 profili: CSP/CSV/CST/HM/PP/PV/PT."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": "ARM Cortex-A8 1 GHz (IEEE 754 double hassasiyet)",
+    "ram": null,
+    "storage": "4 MB kullanıcı program belleği",
+    "os": null,
+    "software": "InoProShop (CODESYS tabanlı, IEC 61131-3: ST/LD/SFC/CFC)"
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": true,
+    "runtime": "InoProShop (CODESYS tabanlı IEC 61131-3 ortamı). Inovance 2015'ten beri CODESYS GmbH ile çalışır.",
+    "integration_notes": "AM600, Inovance'ın CODESYS tabanlı InoProShop yazılımıyla programlanır (ST/LD/SFC/CFC + PLCopen Motion kütüphanesi). EtherCAT master olarak Inovance SV660N gibi sürücüleri ve üçüncü taraf CiA 402 sürücülerini sürer. Modbus TCP/RTU master/slave, EtherNet/IP scanner/adapter, CANopen master, OPC UA server ile üst/alt sistemlere bağlanır."
+  },
+  "applications": [
+    "Çok eksenli senkron hareket kontrolü (paketleme, baskı, tekstil, robotik)",
+    "EtherCAT eksen ağı (32 eksene kadar) ve uzak I/O dağıtımı",
+    "CAM/elektronik dişli uygulamaları",
+    "Lineer/dairesel/küresel enterpolasyon",
+    "OPC UA ile MES/SCADA entegrasyonu"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/products/motion-controllers-i/o-modules/am600-motion-controllers",
+      "title": "Inovance EU — AM400/600 motion controllers ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/AM600_Br_EN_Singles_Web_V2.2.pdf",
+      "title": "Inovance — AM600 Motion Controller broşürü (Data code L6210221 V2.2)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/news/details/inovance-has-worked-with-codesys-since-2015-is-now-listed-on-the-codesys-website-173",
+      "title": "Inovance — CODESYS iş birliği duyurusu",
+      "reliability": "resmi"
+    }
+  ]
+}
