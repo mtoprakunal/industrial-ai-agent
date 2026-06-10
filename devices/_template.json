@@ -1,0 +1,78 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "",
+    "completeness": "stub",
+    "notes": null
+  },
+  "identity": {
+    "manufacturer": "",
+    "model": "",
+    "product_family": null,
+    "category": "other",
+    "description": null,
+    "official_url": null,
+    "datasheet_url": null
+  },
+  "communication": {
+    "protocols": [],
+    "fieldbus_role": null,
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": []
+  },
+  "electrical": {
+    "power_supply": null,
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": null,
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": null
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": null
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": null,
+    "notes": null
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": null
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": null,
+    "runtime": null,
+    "integration_notes": null
+  },
+  "applications": [],
+  "sources": [
+    { "url": "", "title": null, "reliability": "belirsiz" }
+  ]
+}

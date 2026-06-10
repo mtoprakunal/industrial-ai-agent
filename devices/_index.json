@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "description": "Cihaz kütüphanesindeki tüm kayıtları üretici, model, kategori ve doluluk durumuyla takip eder.",
+  "last_updated": "",
+  "categories": ["transmitter", "hmi", "panel-pc", "plc", "motion-controller",
+                 "vfd", "servo-drive", "remote-io", "gateway", "sensor",
+                 "safety", "power", "other"],
+  "devices": []
+}

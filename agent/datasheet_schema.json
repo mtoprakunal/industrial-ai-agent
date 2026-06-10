@@ -1,0 +1,211 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Endüstriyel Cihaz Datasheet Şeması",
+  "description": "devices/{URETICI}_{MODEL}/datasheet.json dosyalarının yapısını tanımlar. Tüm cihaz kategorilerini kapsayacak şekilde esnektir; bulunamayan değerler null veya '' bırakılır (asla tahmin edilmez).",
+  "type": "object",
+  "required": ["meta", "identity", "communication", "codesys", "sources"],
+  "additionalProperties": false,
+  "properties": {
+
+    "meta": {
+      "type": "object",
+      "required": ["schema_version", "filled_date", "completeness"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string" },
+        "filled_date": { "type": "string", "description": "YYYY-MM-DD" },
+        "completeness": {
+          "type": "string",
+          "enum": ["stub", "partial", "complete"],
+          "description": "Kaç alanın gerçek veriyle dolduğu — boş bırakılanlar varsa 'partial'."
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "identity": {
+      "type": "object",
+      "required": ["manufacturer", "model", "category"],
+      "additionalProperties": false,
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "product_family": { "type": ["string", "null"] },
+        "category": {
+          "type": "string",
+          "enum": ["transmitter", "hmi", "panel-pc", "plc", "motion-controller",
+                   "vfd", "servo-drive", "remote-io", "gateway", "sensor",
+                   "safety", "power", "other"]
+        },
+        "description": { "type": ["string", "null"] },
+        "official_url": { "type": ["string", "null"] },
+        "datasheet_url": { "type": ["string", "null"] }
+      }
+    },
+
+    "communication": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocols": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Örn: Modbus RTU, Modbus TCP, EtherCAT, PROFINET, OPC-UA, CANopen, Ethernet/IP"
+        },
+        "fieldbus_role": {
+          "type": ["string", "null"],
+          "description": "master | slave | both | none | client | server"
+        },
+        "device_description_file": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": ["string", "null"],
+              "enum": ["GSDML", "ESI", "EDS", "GSD", "none", "unknown", null],
+              "description": "PROFINET=GSDML, EtherCAT=ESI, Ethernet/IP=EDS, PROFIBUS=GSD, Modbus/OPC-UA=none"
+            },
+            "name": { "type": ["string", "null"] },
+            "download_url": { "type": ["string", "null"] }
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Fiziksel haberleşme/IO portları, örn: 2x RJ45, 1x RS-485, USB"
+        }
+      }
+    },
+
+    "electrical": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "power_supply": { "type": ["string", "null"] },
+        "power_consumption": { "type": ["string", "null"] },
+        "isolation": { "type": ["string", "null"] }
+      }
+    },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operating_temp": { "type": ["string", "null"] },
+        "storage_temp": { "type": ["string", "null"] },
+        "humidity": { "type": ["string", "null"] },
+        "ip_rating": { "type": ["string", "null"] }
+      }
+    },
+
+    "physical": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dimensions": { "type": ["string", "null"] },
+        "weight": { "type": ["string", "null"] },
+        "mounting": { "type": ["string", "null"] }
+      }
+    },
+
+    "io": {
+      "type": "object",
+      "description": "I/O cihazları, transmitterlar, PLC'ler için.",
+      "additionalProperties": false,
+      "properties": {
+        "digital_inputs": { "type": ["string", "integer", "null"] },
+        "digital_outputs": { "type": ["string", "integer", "null"] },
+        "analog_inputs": { "type": ["string", "integer", "null"] },
+        "analog_outputs": { "type": ["string", "integer", "null"] },
+        "special": { "type": ["string", "null"], "description": "Örn: load cell girişi, encoder, relay" },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "display": {
+      "type": "object",
+      "description": "HMI / panel PC için.",
+      "additionalProperties": false,
+      "properties": {
+        "size_inch": { "type": ["string", "number", "null"] },
+        "resolution": { "type": ["string", "null"] },
+        "touch": { "type": ["string", "null"] },
+        "processor": { "type": ["string", "null"] },
+        "ram": { "type": ["string", "null"] },
+        "storage": { "type": ["string", "null"] },
+        "os": { "type": ["string", "null"] },
+        "software": { "type": ["string", "null"], "description": "Örn: iX Developer 2.x, CODESYS HMI" }
+      }
+    },
+
+    "drive": {
+      "type": "object",
+      "description": "VFD / servo sürücü için.",
+      "additionalProperties": false,
+      "properties": {
+        "power_range": { "type": ["string", "null"] },
+        "voltage_class": { "type": ["string", "null"] },
+        "control_modes": { "type": ["string", "null"], "description": "V/f, SVC, FVC, torque, position" },
+        "overload": { "type": ["string", "null"] },
+        "feedback": { "type": ["string", "null"], "description": "Servo için encoder tipi" }
+      }
+    },
+
+    "register_map": {
+      "type": "array",
+      "description": "Modbus cihazları/sürücüler için parametre/register haritası (kısmi, en kritik olanlar).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "address": { "type": "string" },
+          "name": { "type": "string" },
+          "data_type": { "type": ["string", "null"] },
+          "access": { "type": ["string", "null"], "description": "R | W | RW" },
+          "scale": { "type": ["string", "null"] },
+          "unit": { "type": ["string", "null"] },
+          "description": { "type": ["string", "null"] }
+        },
+        "required": ["address", "name"]
+      }
+    },
+
+    "codesys": {
+      "type": "object",
+      "required": ["compatible"],
+      "additionalProperties": false,
+      "properties": {
+        "compatible": {
+          "type": ["boolean", "string", "null"],
+          "description": "true/false veya 'indirect (Modbus üzerinden)' gibi nitelik."
+        },
+        "runtime": { "type": ["string", "null"], "description": "CODESYS runtime çalıştırıyorsa sürüm/tip" },
+        "integration_notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "applications": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Tipik uygulama senaryoları."
+    },
+
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string" },
+          "title": { "type": ["string", "null"] },
+          "reliability": {
+            "type": "string",
+            "enum": ["resmi", "distribütör", "topluluk", "belirsiz"]
+          }
+        },
+        "required": ["url", "reliability"]
+      }
+    }
+  }
+}
