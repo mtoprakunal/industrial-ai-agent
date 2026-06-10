@@ -1,0 +1,125 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "partial",
+    "notes": "Güç aralığı, voltaj, kontrol modu, aşırı yük (%150 60s), çıkış frekansı (500 Hz) ve IP20 resmi Inovance EU ürün sayfası/kullanıcı kılavuzundan alındı. Register adresleri Inovance MD ailesinin ortak Modbus şemasıdır (1000H/2000H/3000H, MD500 ile aynı yapı); MD290 non-parameter adres tablosu doğrudan tek tek fetch edilemediği için kullanıma almadan önce resmi MD290 Advanced User's Manual haberleşme bölümünden teyit edilmelidir. Çalışma sıcaklığı tam aralığı (-10…+40 °C, 40 °C üstü derating) kılavuzdan; fiziksel boyut/montaj boş bırakıldı."
+  },
+  "identity": {
+    "manufacturer": "Inovance",
+    "model": "MD290",
+    "product_family": "MD Serisi AC Sürücüler",
+    "category": "vfd",
+    "description": "Genel amaçlı, açık çevrim kompakt VFD. V/f kontrol (kayma kompanzasyonlu), otomatik tork boost ve dahili DC reaktör içerir. Dahili RS-485 Modbus RTU; opsiyonel fieldbus kartları (PROFINET, PROFIBUS-DP, CANopen, CANlink) desteklenir.",
+    "official_url": "https://www.inovance.eu/products/ac-drives-low-voltage/md290-general-purpose-ac-drive",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/MD290_Br_EN_Spreads_Web_V1.2.3.pdf"
+  },
+  "communication": {
+    "protocols": ["Modbus RTU (RS-485, dahili)", "PROFINET (opsiyonel kart)", "PROFIBUS-DP (opsiyonel kart)", "CANopen (opsiyonel kart)", "CANlink (opsiyonel kart)"],
+    "fieldbus_role": "slave",
+    "device_description_file": {
+      "type": null,
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["RS-485 (dahili, Modbus RTU)", "Opsiyonel haberleşme kartı yuvası"]
+  },
+  "electrical": {
+    "power_supply": "3AC 380–480 V (0.4–500 kW) ; 3AC 200–240 V (0.4–75 kW)",
+    "power_consumption": null,
+    "isolation": "Opsiyonel izole RS-485 kartı (MD38TX1)"
+  },
+  "environment": {
+    "operating_temp": "-10…+40 °C ; 40 °C üzerinde derating gerekir",
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": "IP20"
+  },
+  "physical": {
+    "dimensions": null,
+    "weight": null,
+    "mounting": null
+  },
+  "io": {
+    "digital_inputs": null,
+    "digital_outputs": null,
+    "analog_inputs": null,
+    "analog_outputs": null,
+    "special": "Dahili DC reaktör; otomatik tork boost; değişken DC enjeksiyonlu frenleme; 4 bağımsız S-rampa",
+    "notes": "Kontrol terminali sayıları modele göre değişir; resmi donanım kılavuzundan teyit edilmeli."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": null
+  },
+  "drive": {
+    "power_range": "0.4–500 kW (3AC 380–480 V) ; 0.4–75 kW (3AC 200–240 V)",
+    "voltage_class": "3AC 380–480 V ; 3AC 200–240 V",
+    "control_modes": "V/f açık çevrim (kayma kompanzasyonlu)",
+    "overload": "%150 nominal akım 60 s (G tipi). Çıkış frekansı 500 Hz'e kadar (parametreyle düzenlenebilir).",
+    "feedback": null
+  },
+  "register_map": [
+    {
+      "address": "0x1000",
+      "name": "Haberleşme ayar değeri (frekans/setpoint)",
+      "data_type": "INT16",
+      "access": "W",
+      "scale": "-10000…10000 = -%100…%100 (göreli set değeri)",
+      "unit": "%",
+      "description": "Frekans referansı yazma register'ı (Inovance MD ailesi ortak şeması). MD290 kullanıcı kılavuzundan teyit edilmeli."
+    },
+    {
+      "address": "0x2000",
+      "name": "Kontrol komutu",
+      "data_type": "UINT16",
+      "access": "W",
+      "scale": null,
+      "unit": null,
+      "description": "1: İleri çalış, 2: Geri çalış, 3: İleri jog, 4: Geri jog, 5: Serbest duruş, 6: Yavaşlayarak dur, 7: Hata reset (MD ailesi ortak şeması; MD290 kılavuzundan teyit edilmeli)."
+    },
+    {
+      "address": "0x3000",
+      "name": "AC sürücü çalışma durumu",
+      "data_type": "UINT16",
+      "access": "R",
+      "scale": null,
+      "unit": null,
+      "description": "1: İleri çalışıyor, 2: Geri çalışıyor, 3: Durmuş (MD ailesi ortak şeması; MD290 kılavuzundan teyit edilmeli)."
+    }
+  ],
+  "codesys": {
+    "compatible": "dolaylı (Modbus RTU/TCP veya fieldbus kartı üzerinden)",
+    "runtime": null,
+    "integration_notes": "MD290 CODESYS runtime çalıştırmaz; CODESYS PLC'ye dahili RS-485 üzerinden Modbus RTU slave olarak veya opsiyonel fieldbus kartıyla entegre edilir. Çalış/dur/frekans için 0x2000 komut, 0x1000 frekans setpoint, 0x3000 durum register'ları kullanılır. Grup F/A parametre adresi = yüksek 8 bit grup + düşük 8 bit parametre SN (F0-16 = F010H). Adresler resmi MD290 Advanced User's Manual'dan teyit edilmeli."
+  },
+  "applications": [
+    "Pompa ve fan (değişken tork)",
+    "Konveyör ve genel amaçlı endüstriyel sürüş",
+    "HVAC ve su/atıksu",
+    "Maliyet-odaklı, açık çevrim genel amaç uygulamalar"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/products/ac-drives-low-voltage/md290-general-purpose-ac-drive",
+      "title": "Inovance EU — MD290 General Purpose AC Drive (ürün sayfası)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/1903810/Inovance-Md290-Series.html",
+      "title": "Inovance MD290 Series User Manual (ManualsLib aynası)",
+      "reliability": "topluluk"
+    },
+    {
+      "url": "https://www.manualslib.com/manual/1976485/Inovance-Md290-Series.html",
+      "title": "Inovance MD290 Series Advanced User's Manual — Communication (ManualsLib aynası)",
+      "reliability": "topluluk"
+    }
+  ]
+}
