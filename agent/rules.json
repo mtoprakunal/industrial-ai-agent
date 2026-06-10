@@ -1,63 +1,134 @@
 {
-  "version": "2.0.0",
-  "description": "Agent'ın her projede uyguladığı mühendislik kuralları",
+  "version": "3.0.0",
+  "description": "Agent'ın her projede uyguladığı, ihlal edilemez mühendislik kuralları. 'never' ile işaretli kurallar mutlaktır; ihlal gerektiğinde gerekçe project_report.md'ye yazılır.",
 
   "knowledge": {
+    "search_order": ["knowledge_base", "web_research", "say_i_dont_know"],
+    "read_synthesis_first": true,
+    "follow_connections": true,
     "never_guess": true,
     "always_cite_source": true,
     "synthesize_multiple_sources": true,
-    "honest_about_maturity_level": true
+    "analyze_conflicting_sources": true,
+    "honest_about_maturity_level": true,
+    "offer_to_save_new_knowledge": true
   },
 
-  "codesys": {
-    "task_rules": {
-      "safety_signals_max_cycle_ms": 1,
-      "drive_control_max_cycle_ms": 2,
-      "analog_pid_max_cycle_ms": 10,
-      "digital_sequencing_max_cycle_ms": 20,
-      "hmi_comms_max_cycle_ms": 500
+  "timing": {
+    "principle": "Her sinyalin gecikme toleransı, atandığı task'ın cycle time'ını belirler. Hızlı sinyal yavaş task'a, yavaş sinyal hızlı task'a konmaz.",
+    "task_cycle_targets_ms": {
+      "safety_signals": { "max_ms": 1, "task": "Safety / en yüksek öncelik", "örnek": "E-Stop izleme, ışık perdesi durumu" },
+      "motion_drive_control": { "max_ms": 2, "task": "Task_Motion", "örnek": "Servo/VFD hız-konum kontrolü, EtherCAT senkron" },
+      "fast_interlock": { "max_ms": 4, "task": "Task_Fast", "örnek": "Hızlı interlock, sayıcı, encoder" },
+      "analog_pid": { "max_ms": 10, "task": "Task_Control", "örnek": "PID döngüsü, analog ölçekleme, sıcaklık" },
+      "digital_sequencing": { "max_ms": 20, "task": "Task_Control", "örnek": "Dijital sıralama, durum makineleri" },
+      "hmi_comms": { "max_ms": 500, "task": "Task_Comm / Background", "örnek": "OPC-UA, Modbus slave güncelleme, HMI" },
+      "logging_telemetry": { "max_ms": 1000, "task": "Task_Background / Freewheeling", "örnek": "MQTT publish, dosya loglama, raporlama" }
     },
-    "naming": {
-      "format": "{Area}_{DeviceType}_{Number}_{Signal}",
-      "max_length": 24,
-      "allowed_chars": "A-Z, a-z, 0-9, _",
-      "no_spaces": true,
-      "no_leading_numbers": true
-    },
-    "safety": {
-      "watchdog_disable_requires_justification": true,
-      "safety_io_on_standard_modules_forbidden": true,
-      "all_outputs_deenergize_on_cpu_fault": true
-    },
-    "documentation": {
-      "every_fb_must_have_description": true,
-      "every_io_must_have_tag": true,
-      "alarm_list_required": true,
-      "io_list_required": true
+    "rules": {
+      "blocking_io_in_freewheeling_only": true,
+      "blocking_io_examples": ["SysSockConnect", "MQTT broker bağlantısı", "dosya yazma", "seri port", "OPC-UA session açma"],
+      "task_exec_time_must_be_below_cycle_time": true,
+      "total_cpu_load_target_percent_max": 70,
+      "ethercat_bus_task_priority_max": 5,
+      "never_disable_watchdog_to_fix_overrun": true
     }
+  },
+
+  "safety": {
+    "principle": "Emniyet yazılım mantığına bağımlı OLMAMALIDIR. Yazılım emniyeti destekler, garanti etmez. Garanti donanımsal emniyet zincirinden gelir.",
+    "never_violate": {
+      "safety_io_on_standard_modules_forbidden": true,
+      "all_outputs_deenergize_on_cpu_fault": true,
+      "estop_is_hardwired_not_software": true,
+      "fail_safe_default_is_stop_not_run": true,
+      "watchdog_always_enabled": true
+    },
+    "watchdog_disable_requires_written_justification": true,
+    "analog_inputs_range_checked_namur_ne107": true,
+    "interlocks_centralized_and_commented": true,
+    "estop_stop_time_must_be_verifiable": true,
+    "ask_before_assuming_safety_requirement": true,
+    "pre_delivery_question": "Bu sistemde tek bir yazılım hatası birini yaralayabilir mi? Evet ise o fonksiyon donanımsal emniyet zincirine taşınır."
+  },
+
+  "code_quality": {
+    "no_magic_numbers_use_constants": true,
+    "single_responsibility_per_fb": true,
+    "explicit_state_machines_use_case": true,
+    "every_fb_must_have_description": true,
+    "error_handling_explicit": true,
+    "no_blocking_calls_in_control_task": true,
+    "pointers_recalculated_each_scan_never_stored": true,
+    "no_try_catch_on_64bit_runtime": true,
+    "retain_variables_added_at_end_only": true,
+    "use_persistent_for_data_surviving_cold_start": true,
+    "real_division_checked_for_nan_and_div_zero": true
+  },
+
+  "naming": {
+    "format": "{Area}_{DeviceType}_{Number}_{Signal}",
+    "örnek": "ZN1_MTR_01_RunCmd, TNK_LVL_02_PV",
+    "max_length": 24,
+    "allowed_chars": "A-Z, a-z, 0-9, _",
+    "no_spaces": true,
+    "no_leading_numbers": true,
+    "no_reserved_keywords": true,
+    "consistent_across_gvl_iolist_hmi_network": true,
+    "opcua_nodeid_treated_as_frozen": true
+  },
+
+  "documentation": {
+    "every_fb_must_have_description": true,
+    "every_io_must_have_tag": true,
+    "io_list_required": true,
+    "alarm_list_required": true,
+    "project_report_required": true,
+    "risk_assessment_required": true,
+    "decisions_use_triple_format": ["KARAR", "GEREKÇE", "TAKAS"],
+    "mark_assumptions_explicitly": true
   },
 
   "protocol_selection": {
     "evaluate_from_deep_understanding": true,
     "never_use_rigid_rules": true,
     "always_explain_reasoning": true,
+    "axes": {
+      "richness_vs_simplicity": "OPC-UA (zengin tip/model) ↔ Modbus (16-bit register) ↔ ham TCP (byte)",
+      "security": "OPC-UA (yerleşik PKI) ↔ MQTT (TLS opsiyonel) ↔ Modbus/TCP (yok, ağ-seviyesi zorunlu)",
+      "push_vs_poll": "MQTT (broker push) ↔ OPC-UA (subscription) ↔ Modbus (poll)"
+    },
+    "common_principles": {
+      "single_writer_per_datapoint": "Her register/node/topic'in tek yazarı olmalı",
+      "blocking_io_separated": "Ağ çağrıları kontrol döngüsünü dondurmamalı",
+      "reporting_not_control": "Bu 4 protokol raporlama/komuta katmanı; <1ms motion için EtherCAT/PROFINET"
+    },
     "consider": [
       "data_complexity",
-      "number_of_tags",
       "number_of_clients",
       "security_requirements",
+      "existing_device_support",
       "developer_background",
       "realtime_vs_periodic",
+      "cloud_integration",
       "system_lifetime",
       "maintenance_team"
-    ]
+    ],
+    "modbus_never_exposed_to_internet": true,
+    "opcua_never_left_anonymous_in_production": true,
+    "mqtt_always_uses_lwt": true
   },
 
-  "hmi_generation": {
+  "hmi_design": {
     "language_agnostic": true,
     "framework_agnostic": true,
     "bridge_is_always_protocol": true,
-    "respect_developer_preference": true
+    "logic_never_embedded_in_hmi": true,
+    "respect_developer_preference": true,
+    "must_show_all_critical_signals": true,
+    "must_handle_connection_loss": true,
+    "must_show_alarms_with_ack": true,
+    "user_authentication_for_control_actions": true
   },
 
   "project_output": {
@@ -69,6 +140,9 @@
       "program/",
       "hmi/",
       "docs/"
-    ]
+    ],
+    "generation_formats": ["script_engine", "plcopen_xml", "st_source"],
+    "default_format": "st_source",
+    "must_pass_quality_checklist": true
   }
 }
