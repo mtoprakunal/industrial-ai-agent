@@ -1,0 +1,103 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "filled_date": "2026-06-10",
+    "completeness": "complete",
+    "notes": "Değerler resmi Inovance EU H5U serisi broşüründen (Data code 19120149) ve H5U User Guide referansından alındı. Çalışma sıcaklığı/IP sınıfı broşürde açıkça verilmediği için null bırakıldı (tahmin edilmedi). H5U, CODESYS DEĞİL Inovance AutoShop ile programlanır."
+  },
+  "identity": {
+    "manufacturer": "Inovance (Shenzhen Inovance Technology)",
+    "model": "H5U-1614MTD",
+    "product_family": "H5U Serisi",
+    "category": "plc",
+    "description": "Yüksek performanslı kompakt EtherCAT master PLC. 16 giriş / 14 çıkış (yerleşik yüksek hızlı I/O dahil), EtherCAT üzerinden 32 senkron eksene kadar PLCopen uyumlu hareket kontrolü. Sipariş kodu 01440087.",
+    "official_url": "https://www.inovance.eu/products/plcs-hmis/h5u-plc",
+    "datasheet_url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/H5U_Fl_EN_Singles_Web_V0.0.pdf"
+  },
+  "communication": {
+    "protocols": ["EtherCAT (master)", "Modbus TCP", "Modbus RTU", "CANopen", "CANlink", "Socket (Ethernet)", "Serbest protokol (RS485)"],
+    "fieldbus_role": "master",
+    "device_description_file": {
+      "type": "ESI",
+      "name": null,
+      "download_url": null
+    },
+    "ports": ["1x Ethernet (RJ45)", "1x EtherCAT (RJ45)", "1x RS485", "1x CAN", "USB", "SD kart yuvası"]
+  },
+  "electrical": {
+    "power_supply": "+24 VDC",
+    "power_consumption": null,
+    "isolation": null
+  },
+  "environment": {
+    "operating_temp": null,
+    "storage_temp": null,
+    "humidity": null,
+    "ip_rating": null
+  },
+  "physical": {
+    "dimensions": "L x W x H = 83 mm x 95 mm x 90 mm",
+    "weight": null,
+    "mounting": "DIN ray"
+  },
+  "io": {
+    "digital_inputs": "16 (sink NPN / source PNP; 4 x 200 kHz yüksek hızlı giriş dahil, 2 si enkoder sayımı)",
+    "digital_outputs": "14 (sink NPN; 8 x 200 kHz yüksek hızlı çıkış dahil, 4 eksen darbe çıkışı)",
+    "analog_inputs": "Yok (yerleşik), GL10/GR10 modülleri ile genişletilebilir",
+    "analog_outputs": "Yok (yerleşik), GL10/GR10 modülleri ile genişletilebilir",
+    "special": "32 senkron eksen (maks. 32 EtherCAT ekseni veya maks. 4 darbe ekseni dahil kombinasyon). Maks. 72 EtherCAT slave (I/O ve eksenler dahil). 16 yerel genişletme modülü (GL10/AM600 serisi).",
+    "notes": "Yerleşik I/O: 16 DI / 14 DO. Uzak I/O için GR10 modülleri EtherCAT slave olarak veya GL10-RTU-ECTA bus coupler ile bağlanır."
+  },
+  "display": {
+    "size_inch": null,
+    "resolution": null,
+    "touch": null,
+    "processor": null,
+    "ram": null,
+    "storage": null,
+    "os": null,
+    "software": null
+  },
+  "drive": {
+    "power_range": null,
+    "voltage_class": null,
+    "control_modes": null,
+    "overload": null,
+    "feedback": null
+  },
+  "register_map": [],
+  "codesys": {
+    "compatible": false,
+    "runtime": null,
+    "integration_notes": "H5U, CODESYS DEĞİL Inovance AutoShop (PLCopen uyumlu, LD/SFC + FB/FC) ile programlanır. CODESYS tabanlı bir master ile entegrasyon yalnızca dolaylı olabilir: H5U Modbus TCP server/RTU üzerinden veri paylaşabilir veya EtherCAT/CANopen master/slave olarak ağda yer alabilir. Doğrudan CODESYS runtime'ı yoktur. Eksen kontrolü ve mantık AutoShop projesinde yazılır."
+  },
+  "applications": [
+    "Kompakt makine otomasyonu (EtherCAT eksen kontrolü)",
+    "Paketleme, etiketleme, kesme makineleri",
+    "Çok eksenli pozisyonlama ve enterpolasyon (lineer/dairesel)",
+    "CAM tabanlı senkron hareket",
+    "Step/servo sürücü kontrolü (darbe veya EtherCAT/CANopen)"
+  ],
+  "sources": [
+    {
+      "url": "https://www.inovance.eu/products/plcs-hmis/h5u-plc",
+      "title": "Inovance EU — H5U PLC ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.eu/fileadmin/downloads/Brochures/EN/H5U_Fl_EN_Singles_Web_V0.0.pdf",
+      "title": "Inovance — H5U Series broşürü (H5U-1614MTD teknik tablo, Data code 19120149)",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://www.inovance.com/global/content/details_816_556160.html",
+      "title": "Inovance Global — H5U-1614MTD ürün sayfası",
+      "reliability": "resmi"
+    },
+    {
+      "url": "https://portal-file.inovance.com/owfile/ProdDoc/SC/19011517-SC/A02/19011517-SC_A02%E3%80%8AH5U%20Series%20Programmable%20Logic%20Controller%20User%20Guide%E3%80%8B-EN.pdf",
+      "title": "Inovance — H5U Series PLC User Guide (EN)",
+      "reliability": "resmi"
+    }
+  ]
+}
