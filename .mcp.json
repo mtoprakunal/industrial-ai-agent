@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "exa": {
-      "type": "url",
-      "url": "https://mcp.exa.ai/mcp",
-      "headers": {
-        "x-api-key": "${EXA_API_KEY}"
-      }
-    },
     "opcua": {
       "type": "stdio",
       "command": "python3",
