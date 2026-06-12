@@ -41,5 +41,6 @@ bin/
 obj/
 
 # Gizli
+.env
 *.env
 secrets.json

@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "exa": {
+      "type": "url",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {
+        "x-api-key": "${EXA_API_KEY}"
+      }
+    },
+    "opcua": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["mcp_servers/opcua_mcp/server.py"]
+    },
+    "modbus": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["mcp_servers/modbus_mcp/server.py"]
+    },
+    "codesys": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["mcp_servers/codesys_mcp/server.py"]
+    },
+    "inoproshop": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["mcp_servers/inoproshop_mcp/server.py"]
+    },
+    "ixdeveloper": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["mcp_servers/ixdeveloper_mcp/server.py"]
+    }
+  }
+}
